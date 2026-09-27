@@ -1,0 +1,21 @@
+{
+  "name": "directory-services-portal",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"npm:dev -w server\" \"npm:dev -w web\"",
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "npm start -w server",
+    "test": "npm test -w server && npm test -w web",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0"
+  }
+}
