@@ -7,3 +7,4 @@ data/
 coverage/
 test-results/
 target/
+certs/

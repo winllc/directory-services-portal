@@ -2072,3 +2072,24 @@ textarea.input {
   padding: 10px 12px;
   line-height: 1.7;
 }
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.demo-hint code {
+  white-space: nowrap;
+  word-break: normal;
+}

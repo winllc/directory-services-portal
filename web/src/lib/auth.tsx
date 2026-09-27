@@ -8,6 +8,10 @@ interface AuthState {
   user: SessionUser | null;
   loading: boolean;
   login(username: string, password: string): Promise<void>;
+  /** Sign in with the TLS client certificate the browser presented. */
+  loginWithCertificate(): Promise<void>;
+  /** Why automatic certificate sign-in failed, if it was attempted. */
+  certificateError: string | null;
   logout(): Promise<void>;
 }
 
@@ -16,13 +20,18 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [certificateError, setCertificateError] = useState<string | null>(null);
   const qc = useQueryClient();
 
   useEffect(() => {
     let cancelled = false;
     api
-      .get<{ user: SessionUser | null }>('/api/auth/me')
-      .then((r) => !cancelled && setUser(r.user))
+      .get<{ user: SessionUser | null; certificateError?: string }>('/api/auth/me')
+      .then((r) => {
+        if (cancelled) return;
+        setUser(r.user);
+        setCertificateError(r.certificateError ?? null);
+      })
       .catch((e) => {
         if (!(e instanceof ApiError && e.status === 401)) console.error(e);
       })
@@ -48,6 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [qc],
   );
 
+  const loginWithCertificate = useCallback(async () => {
+    const r = await api.post<{ user: SessionUser }>('/api/auth/x509');
+    qc.clear();
+    setCertificateError(null);
+    setUser(r.user);
+  }, [qc]);
+
   const logout = useCallback(async () => {
     try {
       await api.post('/api/auth/logout');
@@ -57,7 +73,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [qc]);
 
-  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading, login, logout]);
+  const value = useMemo(
+    () => ({ user, loading, login, loginWithCertificate, certificateError, logout }),
+    [user, loading, login, loginWithCertificate, certificateError, logout],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

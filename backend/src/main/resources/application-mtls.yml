@@ -1,0 +1,35 @@
+# Mutual TLS terminated by the portal itself. Activate with SPRING_PROFILES_ACTIVE=mtls and
+# provide PEM files:
+#   TLS_CERT_FILE       server certificate (chain)
+#   TLS_KEY_FILE        server private key
+#   TLS_CLIENT_CA_FILE  CA certificate(s) that issue user certificates
+# Browsers are asked for a certificate ("want"), so password sign-in keeps working without one.
+server:
+  port: ${PORT:8443}
+  ssl:
+    enabled: true
+    bundle: portal
+    client-auth: want
+  servlet:
+    session:
+      cookie:
+        secure: true
+
+spring:
+  ssl:
+    bundle:
+      pem:
+        portal:
+          keystore:
+            certificate: file:${TLS_CERT_FILE}
+            private-key: file:${TLS_KEY_FILE}
+          truststore:
+            certificate: file:${TLS_CLIENT_CA_FILE}
+
+portal:
+  x509:
+    enabled: ${X509_ENABLED:true}
+    source: servlet
+    # Tomcat already validates the chain against TLS_CLIENT_CA_FILE; validating again in the
+    # portal also enables optional revocation checking.
+    trusted-ca-file: ${X509_TRUSTED_CA_FILE:${TLS_CLIENT_CA_FILE}}

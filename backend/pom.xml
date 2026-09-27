@@ -53,6 +53,13 @@
       <artifactId>spring-boot-starter-security-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Generates CA and client certificates for the X.509 authentication tests. -->
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <version>1.86</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

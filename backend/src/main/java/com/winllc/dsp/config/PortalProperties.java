@@ -15,6 +15,9 @@ public class PortalProperties {
   private String directoryMode = "memory";
 
   private final Ldap ldap = new Ldap();
+  private final X509 x509 = new X509();
+  /** Allow username/password sign-in (disable for certificate-only deployments). */
+  private boolean passwordLoginEnabled = true;
   private String baseDn = "dc=example,dc=com";
   private String userSearchBase = "";
   /** {@code {{username}}} is replaced with the escaped login name. */
@@ -55,6 +58,59 @@ public class PortalProperties {
     public void setPoolSize(int poolSize) { this.poolSize = poolSize; }
   }
 
+  /** X.509 client-certificate sign-in. */
+  public static class X509 {
+    private boolean enabled;
+    /** "servlet": this server terminates mutual TLS; "header": a trusted reverse proxy forwards the certificate. */
+    private String source = "servlet";
+    /** Header carrying the client certificate in header mode (PEM, URL-encoded PEM, base64 DER or Envoy XFCC). */
+    private String header = "X-SSL-Client-Cert";
+    /** Addresses/CIDRs allowed to send the certificate header, separated by ";" or ",". */
+    private String trustedProxies = "127.0.0.1/32;::1/128";
+    /** Optional PEM file of CA certificates; when set the portal validates the chain itself. */
+    private String trustedCaFile = "";
+    /** Check revocation (OCSP / CRL distribution points) during chain validation. */
+    private boolean checkRevocation;
+    /** "filter": search with {@link #userFilter}; "subject-dn": the subject DN is the user's entry DN. */
+    private String mapping = "filter";
+    /** Placeholders: {{cn}} {{uid}} {{email}} {{upn}} {{subject}} {{serial}} (values are filter-escaped). */
+    private String userFilter = "(&(objectClass=inetOrgPerson)(uid={{cn}}))";
+    /** Also require the presented certificate to be stored in the user's userCertificate attribute. */
+    private boolean requireCertificateMatch;
+    /** Sign users in automatically when their browser presents a valid certificate. */
+    private boolean autoLogin;
+
+    public boolean isEnabled() { return enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
+    public String getHeader() { return header; }
+    public void setHeader(String header) { this.header = header; }
+    public String getTrustedProxies() { return trustedProxies; }
+    public void setTrustedProxies(String trustedProxies) { this.trustedProxies = trustedProxies; }
+    public String getTrustedCaFile() { return trustedCaFile; }
+    public void setTrustedCaFile(String trustedCaFile) { this.trustedCaFile = trustedCaFile; }
+    public boolean isCheckRevocation() { return checkRevocation; }
+    public void setCheckRevocation(boolean checkRevocation) { this.checkRevocation = checkRevocation; }
+    public String getMapping() { return mapping; }
+    public void setMapping(String mapping) { this.mapping = mapping; }
+    public String getUserFilter() { return userFilter; }
+    public void setUserFilter(String userFilter) { this.userFilter = userFilter; }
+    public boolean isRequireCertificateMatch() { return requireCertificateMatch; }
+    public void setRequireCertificateMatch(boolean v) { this.requireCertificateMatch = v; }
+    public boolean isAutoLogin() { return autoLogin; }
+    public void setAutoLogin(boolean autoLogin) { this.autoLogin = autoLogin; }
+
+    public boolean headerSource() {
+      return "header".equalsIgnoreCase(source);
+    }
+
+    public List<String> trustedProxyList() {
+      return trustedProxies == null ? List.of()
+          : Arrays.stream(trustedProxies.split("[;,\\s]+")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+  }
+
   public boolean isMemoryMode() {
     return "memory".equalsIgnoreCase(directoryMode);
   }
@@ -87,6 +143,9 @@ public class PortalProperties {
   public String getDirectoryMode() { return directoryMode; }
   public void setDirectoryMode(String directoryMode) { this.directoryMode = directoryMode; }
   public Ldap getLdap() { return ldap; }
+  public X509 getX509() { return x509; }
+  public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
+  public void setPasswordLoginEnabled(boolean passwordLoginEnabled) { this.passwordLoginEnabled = passwordLoginEnabled; }
   public String getBaseDn() { return baseDn; }
   public void setBaseDn(String baseDn) { this.baseDn = baseDn; }
   public String getUserSearchBase() { return userSearchBase; }

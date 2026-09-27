@@ -123,6 +123,56 @@ portal. Sign in as `admin` / `admin`.
 - **My profile** shows every definition that can locate the user, and lets them edit their own
   self-service fields.
 
+### X.509 client-certificate sign-in
+Users can sign in with a client certificate (smart cards such as CAC/PIV, or any PKI-issued user
+certificate), alongside or instead of passwords. Set `X509_ENABLED=true` and choose where the
+certificate comes from:
+
+- **The portal terminates mutual TLS** (`X509_SOURCE=servlet`): run with the `mtls` profile.
+  Tomcat requests a client certificate (`client-auth: want`, so password sign-in still works
+  without one) and verifies it against `TLS_CLIENT_CA_FILE`.
+  ```bash
+  scripts/generate-dev-certs.sh certs          # throw-away CA, server cert, admin/alice/bob .p12 (password: password)
+  SPRING_PROFILES_ACTIVE=mtls TLS_CERT_FILE=certs/server.pem TLS_KEY_FILE=certs/server.key \
+    TLS_CLIENT_CA_FILE=certs/ca.pem java -jar backend/target/directory-services-portal.jar
+  # import certs/alice.p12 into the browser, open https://localhost:8443, "Sign in with certificate"
+  ```
+- **A reverse proxy terminates mutual TLS** (`X509_SOURCE=header`): the proxy forwards the
+  certificate in `X509_HEADER`. The formats understood are PEM, URL-encoded PEM (nginx
+  `$ssl_client_escaped_cert`, AWS ALB), base64 DER and Envoy `x-forwarded-client-cert`. The
+  header is **ignored unless the request comes from `X509_TRUSTED_PROXIES`**. The proxy must
+  overwrite any incoming copy of the header. Also set `X509_TRUSTED_CA_FILE` so the portal
+  validates the chain itself.
+
+Every certificate is checked before it is accepted:
+- It must be within its validity period.
+- It must be allowed for TLS client authentication (extended/key usage).
+- When `X509_TRUSTED_CA_FILE` is set, it must chain to one of those CAs. Revocation is also
+  checked (OCSP / CRL distribution points) when `X509_CHECK_REVOCATION=true`.
+
+It is then mapped to exactly one directory user:
+
+| `X509_MAPPING` | how the user is found |
+|---|---|
+| `filter` (default) | `X509_USER_FILTER` with placeholders `{{cn}}`, `{{uid}}`, `{{email}}` (rfc822 SAN, else the emailAddress attribute), `{{upn}}` (Microsoft UPN SAN, common on smart cards), `{{subject}}`, `{{serial}}`. Values are filter-escaped. Examples: `(uid={{cn}})`, `(mail={{email}})`, `(userPrincipalName={{upn}})` |
+| `subject-dn` | the certificate subject DN is the user's entry DN (it must also match the user filter's shape) |
+
+Options:
+- `X509_REQUIRE_CERTIFICATE_MATCH=true` also requires the presented certificate to be published
+  in the user's `userCertificate` attribute. Certificates that aren't registered on the account
+  are then refused.
+- `X509_AUTO_LOGIN=true` signs users in as soon as their browser presents a valid certificate.
+  After an explicit sign-out, automatic sign-in stays off until the user clicks "Sign in with
+  certificate".
+- `PASSWORD_LOGIN_ENABLED=false` makes the portal certificate-only.
+
+Certificate sign-ins and rejections are logged with the certificate subject, serial and issuer.
+Group membership, admin status and permissions work exactly as they do for password sign-ins.
+
+> With TLS 1.3, Java cannot request a client certificate after the handshake. The certificate
+> must be presented when the connection is established, which is how `client-auth: want`
+> works. Tomcat logs a warning about this at startup.
+
 ## Security notes
 - LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
   Admin-configured filter templates get their values escaped with `Filter.encodeValue`. DNs are
@@ -132,6 +182,9 @@ portal. Sign in as `admin` / `admin`.
   rules in `shared/`).
 - Password attributes are never returned to the browser. Empty passwords are rejected before
   any bind, so anonymous binds can't be used to log in.
+- Certificate sign-in validates the certificate (dates, key usage, optional chain and revocation)
+  before mapping it to exactly one directory user. Forwarded certificate headers are only
+  honoured from trusted proxy addresses.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
   `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`). The session ID is rotated at login,
   and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).
@@ -155,6 +208,7 @@ Layout:
   - `service/`: auth, permissions, entries and validation
   - `web/`: REST controllers and DTOs
   - `store/`: the JSON config store
+  - `x509/`: client-certificate parsing, validation and user mapping
   - `config/`: security and SPA serving
 - `shared/`: TypeScript types, DN utilities, validation and schema helpers used by the client.
 - `web/`: the React client (`src/pages` for user and admin pages, `src/components`).

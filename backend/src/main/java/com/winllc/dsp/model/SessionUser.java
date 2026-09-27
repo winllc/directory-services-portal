@@ -5,7 +5,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.io.Serializable;
 import java.util.List;
 
-/** The authenticated user, stored in the HTTP session. */
+/**
+ * The authenticated user, stored in the HTTP session. {@code authMethod} is "password" or
+ * "x509"; {@code certificateSubject} is set for certificate sign-ins.
+ */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record SessionUser(
     String username,
@@ -13,5 +16,7 @@ public record SessionUser(
     String displayName,
     String mail,
     List<String> groups,
-    @JsonProperty("isAdmin") boolean isAdmin)
+    @JsonProperty("isAdmin") boolean isAdmin,
+    String authMethod,
+    String certificateSubject)
     implements Serializable {}

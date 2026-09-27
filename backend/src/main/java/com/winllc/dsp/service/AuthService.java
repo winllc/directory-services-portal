@@ -44,7 +44,7 @@ public class AuthService {
   }
 
   /** Substitute placeholders with filter-escaped values and parse. */
-  static Filter template(String template, Map<String, String> values) {
+  public static Filter template(String template, Map<String, String> values) {
     String f = template;
     for (Map.Entry<String, String> e : values.entrySet()) {
       f = f.replace("{{" + e.getKey() + "}}", Filter.encodeValue(e.getValue()));
@@ -63,6 +63,7 @@ public class AuthService {
   }
 
   public SessionUser login(String username, String password, String clientKey) {
+    if (!props.isPasswordLoginEnabled()) throw ApiException.forbidden("Password sign-in is disabled");
     String throttleKey = clientKey + "|" + username.toLowerCase();
     Failures f = failures.get(throttleKey);
     if (f != null && System.currentTimeMillis() - f.first() < FAILURE_WINDOW_MS && f.count() >= MAX_FAILURES) {
@@ -74,7 +75,7 @@ public class AuthService {
       throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
     }
     failures.remove(throttleKey);
-    return buildUser(dn, username);
+    return buildUser(dn, username, "password", null);
   }
 
   private void recordFailure(String key) {
@@ -88,7 +89,7 @@ public class AuthService {
     failures.entrySet().removeIf(e -> now - e.getValue().first() > FAILURE_WINDOW_MS);
   }
 
-  public SessionUser buildUser(String dn, String username) {
+  public SessionUser buildUser(String dn, String username, String authMethod, String certificateSubject) {
     String ua = props.getUsernameAttribute();
     DirectoryEntry entry = directory.get(dn, List.of("cn", "displayName", "mail", ua, "memberOf"));
     Set<String> groups = new LinkedHashSet<>(entry == null ? List.of() : entry.values("memberOf"));
@@ -108,6 +109,7 @@ public class AuthService {
     String displayName = entry == null ? canonical
         : entry.first("displayName") != null ? entry.first("displayName")
         : entry.first("cn") != null ? entry.first("cn") : canonical;
-    return new SessionUser(canonical, entry != null ? entry.dn() : dn, displayName, entry == null ? null : entry.first("mail"), List.copyOf(groups), isAdmin);
+    return new SessionUser(canonical, entry != null ? entry.dn() : dn, displayName, entry == null ? null : entry.first("mail"), List.copyOf(groups), isAdmin,
+        authMethod, certificateSubject);
   }
 }

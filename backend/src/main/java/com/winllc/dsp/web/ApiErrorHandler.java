@@ -1,6 +1,7 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.ldap.DirectoryException;
+import com.winllc.dsp.x509.CertificateRejectedException;
 import jakarta.validation.ConstraintViolationException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -32,6 +33,11 @@ public class ApiErrorHandler {
   @ExceptionHandler(ApiException.class)
   ResponseEntity<Map<String, Object>> api(ApiException e) {
     return body(e.status(), e.getMessage(), e.details());
+  }
+
+  @ExceptionHandler(CertificateRejectedException.class)
+  ResponseEntity<Map<String, Object>> certificate(CertificateRejectedException e) {
+    return body(HttpStatus.UNAUTHORIZED, e.getMessage(), null);
   }
 
   @ExceptionHandler(DirectoryException.class)

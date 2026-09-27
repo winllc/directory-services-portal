@@ -39,3 +39,15 @@ portal:
   admin-groups: ${ADMIN_GROUPS:}
   data-dir: ${DATA_DIR:./data}
   seed-demo-config: ${SEED_DEMO_CONFIG:}
+  password-login-enabled: ${PASSWORD_LOGIN_ENABLED:true}
+  x509:
+    enabled: ${X509_ENABLED:false}
+    source: ${X509_SOURCE:servlet}
+    header: ${X509_HEADER:X-SSL-Client-Cert}
+    trusted-proxies: ${X509_TRUSTED_PROXIES:127.0.0.1/32;::1/128}
+    trusted-ca-file: ${X509_TRUSTED_CA_FILE:}
+    check-revocation: ${X509_CHECK_REVOCATION:false}
+    mapping: ${X509_MAPPING:filter}
+    user-filter: ${X509_USER_FILTER:(&(objectClass=inetOrgPerson)(uid={{cn}}))}
+    require-certificate-match: ${X509_REQUIRE_CERTIFICATE_MATCH:false}
+    auto-login: ${X509_AUTO_LOGIN:false}

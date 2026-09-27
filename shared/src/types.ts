@@ -222,6 +222,10 @@ export interface SessionUser {
   mail?: string;
   groups: string[];
   isAdmin: boolean;
+  /** How the user signed in. */
+  authMethod?: 'password' | 'x509';
+  /** Subject DN of the client certificate, for certificate sign-ins. */
+  certificateSubject?: string;
 }
 
 /** Definition as seen by a specific user, including their effective access. */
@@ -246,6 +250,8 @@ export interface ServerInfo {
   connected: boolean;
   error?: string;
   version: string;
+  /** Sign-in methods offered by the server. */
+  auth?: { password: boolean; x509: boolean; x509AutoLogin: boolean };
 }
 
 export interface SubjectSearchResult {

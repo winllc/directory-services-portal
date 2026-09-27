@@ -106,6 +106,16 @@ export function MyProfilePage() {
               )}
               <span className="muted">Distinguished name</span>
               <code>{user.dn}</code>
+              <span className="muted">Signed in with</span>
+              <span>
+                {user.authMethod === 'x509' ? (
+                  <>
+                    Certificate <code title="Certificate subject">{user.certificateSubject}</code>
+                  </>
+                ) : (
+                  'Password'
+                )}
+              </span>
               <span className="muted">Groups</span>
               <span className="chips">
                 {user.groups.length ? user.groups.map((g) => <span key={g} className="chip chip-static" title={g}>{rdnValue(g)}</span>) : <span className="muted">None</span>}
