@@ -1,0 +1,854 @@
+{
+  "forms": [
+    {
+      "id": "form-person",
+      "name": "Employee",
+      "description": "inetOrgPerson with the ACME employee extension",
+      "objectClasses": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "inetOrgPerson",
+        "acmePerson"
+      ],
+      "rdnAttribute": "uid",
+      "fields": [
+        {
+          "id": "f-uid",
+          "attribute": "uid",
+          "label": "Username",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Identity",
+          "pattern": "[a-z][a-z0-9._-]{1,31}",
+          "helpText": "Lower case login name; also names the entry."
+        },
+        {
+          "id": "f-givenname",
+          "attribute": "givenName",
+          "label": "First name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Identity"
+        },
+        {
+          "id": "f-sn",
+          "attribute": "sn",
+          "label": "Last name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Identity"
+        },
+        {
+          "id": "f-cn",
+          "attribute": "cn",
+          "label": "Full name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Identity"
+        },
+        {
+          "id": "f-displayname",
+          "attribute": "displayName",
+          "label": "Display name",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "section": "Identity"
+        },
+        {
+          "id": "f-acmepronouns",
+          "attribute": "acmePronouns",
+          "label": "Pronouns",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "section": "Identity",
+          "allowCustomValues": true,
+          "dropdown": {
+            "type": "static",
+            "options": [
+              {
+                "value": "she/her"
+              },
+              {
+                "value": "he/him"
+              },
+              {
+                "value": "they/them"
+              }
+            ]
+          }
+        },
+        {
+          "id": "f-mail",
+          "attribute": "mail",
+          "label": "E-mail",
+          "widget": "text",
+          "multiValued": true,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "format": "email",
+          "section": "Contact"
+        },
+        {
+          "id": "f-telephonenumber",
+          "attribute": "telephoneNumber",
+          "label": "Work phone",
+          "widget": "text",
+          "multiValued": true,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "format": "phone",
+          "section": "Contact"
+        },
+        {
+          "id": "f-mobile",
+          "attribute": "mobile",
+          "label": "Mobile",
+          "widget": "text",
+          "multiValued": true,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "format": "phone",
+          "section": "Contact"
+        },
+        {
+          "id": "f-title",
+          "attribute": "title",
+          "label": "Job title",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Organization"
+        },
+        {
+          "id": "f-departmentnumber",
+          "attribute": "departmentNumber",
+          "label": "Department",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Organization",
+          "dropdown": {
+            "type": "static",
+            "options": [
+              {
+                "value": "Engineering"
+              },
+              {
+                "value": "Sales"
+              },
+              {
+                "value": "Marketing"
+              },
+              {
+                "value": "Design"
+              },
+              {
+                "value": "IT"
+              },
+              {
+                "value": "Human Resources"
+              },
+              {
+                "value": "Finance"
+              }
+            ]
+          }
+        },
+        {
+          "id": "f-manager",
+          "attribute": "manager",
+          "label": "Manager",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Organization",
+          "dropdown": {
+            "type": "ldap",
+            "baseDn": "ou=people,dc=example,dc=com",
+            "scope": "one",
+            "filter": "(objectClass=inetOrgPerson)",
+            "valueAttribute": "dn",
+            "labelAttribute": "cn"
+          }
+        },
+        {
+          "id": "f-acmeofficelocation",
+          "attribute": "acmeOfficeLocation",
+          "label": "Office",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "section": "Organization",
+          "dropdown": {
+            "type": "static",
+            "options": [
+              {
+                "value": "HQ"
+              },
+              {
+                "value": "Denver"
+              },
+              {
+                "value": "Austin"
+              },
+              {
+                "value": "Remote"
+              }
+            ]
+          }
+        },
+        {
+          "id": "f-acmecostcenter",
+          "attribute": "acmeCostCenter",
+          "label": "Cost center",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "section": "Organization",
+          "pattern": "CC-[0-9]{3}",
+          "placeholder": "CC-000"
+        },
+        {
+          "id": "f-acmebadgenumber",
+          "attribute": "acmeBadgeNumber",
+          "label": "Badge number",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": true,
+          "selfEditable": false,
+          "section": "Organization"
+        },
+        {
+          "id": "f-acmeskill",
+          "attribute": "acmeSkill",
+          "label": "Skills",
+          "widget": "dropdown",
+          "multiValued": true,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "section": "About",
+          "allowCustomValues": true,
+          "dropdown": {
+            "type": "static",
+            "options": [
+              {
+                "value": "TypeScript"
+              },
+              {
+                "value": "Go"
+              },
+              {
+                "value": "Kubernetes"
+              },
+              {
+                "value": "LDAP"
+              },
+              {
+                "value": "Security"
+              },
+              {
+                "value": "Leadership"
+              },
+              {
+                "value": "Figma"
+              },
+              {
+                "value": "Research"
+              }
+            ]
+          }
+        },
+        {
+          "id": "f-description",
+          "attribute": "description",
+          "label": "About me",
+          "widget": "textarea",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "section": "About",
+          "maxLength": 1000
+        }
+      ]
+    },
+    {
+      "id": "form-device",
+      "name": "Managed device",
+      "description": "Hardware inventory using the non-standard acmeDevice class",
+      "objectClasses": [
+        "top",
+        "acmeDevice"
+      ],
+      "rdnAttribute": "cn",
+      "fields": [
+        {
+          "id": "f-cn",
+          "attribute": "cn",
+          "label": "Device name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "placeholder": "LT-0000"
+        },
+        {
+          "id": "f-acmedeviceserial",
+          "attribute": "acmeDeviceSerial",
+          "label": "Serial number",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-acmedevicetype",
+          "attribute": "acmeDeviceType",
+          "label": "Type",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "dropdown": {
+            "type": "static",
+            "options": [
+              {
+                "value": "Laptop"
+              },
+              {
+                "value": "Desktop"
+              },
+              {
+                "value": "Phone"
+              },
+              {
+                "value": "Tablet"
+              },
+              {
+                "value": "Monitor"
+              }
+            ]
+          }
+        },
+        {
+          "id": "f-acmedevicestatus",
+          "attribute": "acmeDeviceStatus",
+          "label": "Status",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "dropdown": {
+            "type": "static",
+            "options": [
+              {
+                "value": "In stock"
+              },
+              {
+                "value": "In use"
+              },
+              {
+                "value": "In repair"
+              },
+              {
+                "value": "Retired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "f-acmeassignedto",
+          "attribute": "acmeAssignedTo",
+          "label": "Assigned to",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "dropdown": {
+            "type": "ldap",
+            "baseDn": "ou=people,dc=example,dc=com",
+            "scope": "one",
+            "filter": "(objectClass=inetOrgPerson)",
+            "valueAttribute": "dn",
+            "labelAttribute": "cn"
+          }
+        },
+        {
+          "id": "f-acmeoperatingsystem",
+          "attribute": "acmeOperatingSystem",
+          "label": "Operating system",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-acmeassettag",
+          "attribute": "acmeAssetTag",
+          "label": "Asset tag",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-description",
+          "attribute": "description",
+          "label": "Notes",
+          "widget": "textarea",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false
+        }
+      ]
+    },
+    {
+      "id": "form-group",
+      "name": "Group",
+      "description": "groupOfNames",
+      "objectClasses": [
+        "top",
+        "groupOfNames"
+      ],
+      "rdnAttribute": "cn",
+      "fields": [
+        {
+          "id": "f-cn",
+          "attribute": "cn",
+          "label": "Group name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-description",
+          "attribute": "description",
+          "label": "Description",
+          "widget": "textarea",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-member",
+          "attribute": "member",
+          "label": "Members",
+          "widget": "dropdown",
+          "multiValued": true,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false,
+          "dropdown": {
+            "type": "ldap",
+            "baseDn": "dc=example,dc=com",
+            "scope": "sub",
+            "filter": "(objectClass=inetOrgPerson)",
+            "valueAttribute": "dn",
+            "labelAttribute": "cn"
+          }
+        },
+        {
+          "id": "f-owner",
+          "attribute": "owner",
+          "label": "Owners",
+          "widget": "dropdown",
+          "multiValued": true,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "dropdown": {
+            "type": "ldap",
+            "baseDn": "ou=people,dc=example,dc=com",
+            "scope": "one",
+            "filter": "(objectClass=inetOrgPerson)",
+            "valueAttribute": "dn",
+            "labelAttribute": "cn"
+          }
+        }
+      ]
+    },
+    {
+      "id": "form-partner",
+      "name": "Partner contact",
+      "description": "External contractors (acmePartner auxiliary class)",
+      "objectClasses": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "inetOrgPerson",
+        "acmePartner"
+      ],
+      "rdnAttribute": "uid",
+      "fields": [
+        {
+          "id": "f-uid",
+          "attribute": "uid",
+          "label": "Username",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-cn",
+          "attribute": "cn",
+          "label": "Full name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-givenname",
+          "attribute": "givenName",
+          "label": "First name",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-sn",
+          "attribute": "sn",
+          "label": "Last name",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-mail",
+          "attribute": "mail",
+          "label": "E-mail",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "format": "email"
+        },
+        {
+          "id": "f-telephonenumber",
+          "attribute": "telephoneNumber",
+          "label": "Phone",
+          "widget": "text",
+          "multiValued": true,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": true,
+          "format": "phone"
+        },
+        {
+          "id": "f-title",
+          "attribute": "title",
+          "label": "Role",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-acmepartnercompany",
+          "attribute": "acmePartnerCompany",
+          "label": "Company",
+          "widget": "text",
+          "multiValued": false,
+          "required": true,
+          "readOnly": false,
+          "selfEditable": false
+        },
+        {
+          "id": "f-acmecontractend",
+          "attribute": "acmeContractEnd",
+          "label": "Contract end",
+          "widget": "text",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "pattern": "\\d{4}-\\d{2}-\\d{2}",
+          "placeholder": "YYYY-MM-DD"
+        },
+        {
+          "id": "f-acmesponsor",
+          "attribute": "acmeSponsor",
+          "label": "Sponsor",
+          "widget": "dropdown",
+          "multiValued": false,
+          "required": false,
+          "readOnly": false,
+          "selfEditable": false,
+          "dropdown": {
+            "type": "ldap",
+            "baseDn": "ou=people,dc=example,dc=com",
+            "scope": "one",
+            "filter": "(objectClass=inetOrgPerson)",
+            "valueAttribute": "dn",
+            "labelAttribute": "cn"
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "id": "def-staff",
+      "name": "Staff Directory",
+      "slug": "staff",
+      "description": "Manage employee records (HR and administrators).",
+      "formId": "form-person",
+      "baseDn": "ou=people,dc=example,dc=com",
+      "scope": "one",
+      "filter": "(objectClass=inetOrgPerson)",
+      "mode": "readwrite",
+      "everyoneCanRead": false,
+      "listAttributes": [
+        "cn",
+        "title",
+        "departmentNumber",
+        "mail",
+        "telephoneNumber"
+      ],
+      "searchAttributes": [
+        "cn",
+        "uid",
+        "mail",
+        "title",
+        "departmentNumber"
+      ],
+      "titleAttribute": "cn",
+      "createContainers": [
+        "ou=people,dc=example,dc=com"
+      ],
+      "selfMatch": {
+        "type": "dn"
+      },
+      "icon": "users"
+    },
+    {
+      "id": "def-whitepages",
+      "name": "White Pages",
+      "slug": "white-pages",
+      "description": "Company-wide phone book. Read only for everyone.",
+      "formId": "form-person",
+      "baseDn": "dc=example,dc=com",
+      "scope": "sub",
+      "filter": "(objectClass=inetOrgPerson)",
+      "mode": "readonly",
+      "everyoneCanRead": true,
+      "listAttributes": [
+        "cn",
+        "title",
+        "departmentNumber",
+        "telephoneNumber",
+        "mail"
+      ],
+      "searchAttributes": [
+        "cn",
+        "mail",
+        "title",
+        "departmentNumber",
+        "telephoneNumber"
+      ],
+      "titleAttribute": "cn",
+      "createContainers": [],
+      "selfMatch": {
+        "type": "dn"
+      },
+      "icon": "book"
+    },
+    {
+      "id": "def-devices",
+      "name": "Devices",
+      "slug": "devices",
+      "description": "IT asset inventory in ou=devices.",
+      "formId": "form-device",
+      "baseDn": "ou=devices,dc=example,dc=com",
+      "scope": "one",
+      "mode": "readwrite",
+      "everyoneCanRead": false,
+      "listAttributes": [
+        "cn",
+        "acmeDeviceType",
+        "acmeDeviceStatus",
+        "acmeOperatingSystem",
+        "acmeAssignedTo"
+      ],
+      "searchAttributes": [
+        "cn",
+        "acmeDeviceSerial",
+        "acmeAssetTag",
+        "acmeOperatingSystem"
+      ],
+      "titleAttribute": "cn",
+      "createContainers": [
+        "ou=devices,dc=example,dc=com"
+      ],
+      "selfMatch": {
+        "type": "attribute",
+        "entryAttribute": "acmeAssignedTo",
+        "userAttribute": "dn"
+      },
+      "icon": "laptop"
+    },
+    {
+      "id": "def-groups",
+      "name": "Groups",
+      "slug": "groups",
+      "description": "Security and distribution groups.",
+      "formId": "form-group",
+      "baseDn": "ou=groups,dc=example,dc=com",
+      "scope": "one",
+      "mode": "readwrite",
+      "everyoneCanRead": true,
+      "listAttributes": [
+        "cn",
+        "description"
+      ],
+      "searchAttributes": [
+        "cn",
+        "description"
+      ],
+      "titleAttribute": "cn",
+      "createContainers": [
+        "ou=groups,dc=example,dc=com"
+      ],
+      "selfMatch": {
+        "type": "attribute",
+        "entryAttribute": "member",
+        "userAttribute": "dn"
+      },
+      "icon": "group"
+    },
+    {
+      "id": "def-partners",
+      "name": "Partners",
+      "slug": "partners",
+      "description": "External contractors, scoped to ou=partners.",
+      "formId": "form-partner",
+      "baseDn": "ou=partners,dc=example,dc=com",
+      "scope": "sub",
+      "mode": "readwrite",
+      "everyoneCanRead": false,
+      "listAttributes": [
+        "cn",
+        "acmePartnerCompany",
+        "mail",
+        "acmeContractEnd"
+      ],
+      "searchAttributes": [
+        "cn",
+        "mail",
+        "acmePartnerCompany"
+      ],
+      "titleAttribute": "cn",
+      "createContainers": [
+        "ou=partners,dc=example,dc=com"
+      ],
+      "selfMatch": {
+        "type": "dn"
+      },
+      "icon": "briefcase"
+    }
+  ],
+  "grants": [
+    {
+      "id": "g-hr-staff",
+      "definitionId": "def-staff",
+      "subjectType": "group",
+      "subject": "cn=hr,ou=groups,dc=example,dc=com",
+      "subjectLabel": "hr",
+      "access": "write"
+    },
+    {
+      "id": "g-eng-staff",
+      "definitionId": "def-staff",
+      "subjectType": "group",
+      "subject": "cn=engineering,ou=groups,dc=example,dc=com",
+      "subjectLabel": "engineering",
+      "access": "read"
+    },
+    {
+      "id": "g-helpdesk-devices",
+      "definitionId": "def-devices",
+      "subjectType": "group",
+      "subject": "cn=helpdesk,ou=groups,dc=example,dc=com",
+      "subjectLabel": "helpdesk",
+      "access": "write"
+    },
+    {
+      "id": "g-alice-devices",
+      "definitionId": "def-devices",
+      "subjectType": "user",
+      "subject": "alice",
+      "subjectLabel": "Alice Anderson",
+      "access": "read"
+    },
+    {
+      "id": "g-carol-partners",
+      "definitionId": "def-partners",
+      "subjectType": "user",
+      "subject": "carol",
+      "subjectLabel": "Carol Chen",
+      "access": "write"
+    },
+    {
+      "id": "g-bob-partners",
+      "definitionId": "def-partners",
+      "subjectType": "user",
+      "subject": "bob",
+      "subjectLabel": "Bob Baker",
+      "access": "read"
+    }
+  ]
+}

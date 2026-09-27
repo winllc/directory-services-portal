@@ -1,0 +1,362 @@
+# Demo organisation for the in-memory directory. All passwords are "password".
+
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+dc: example
+o: Example Corp
+
+dn: ou=people,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+description: People container
+
+dn: ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+description: Groups container
+
+dn: ou=devices,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: devices
+description: Devices container
+
+dn: ou=partners,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: partners
+description: Partners container
+
+dn: ou=system,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: system
+description: System container
+
+dn: cn=portal,ou=system,dc=example,dc=com
+objectClass: top
+objectClass: device
+objectClass: simpleSecurityObject
+cn: portal
+userPassword: portal-secret
+description: Portal service account
+
+dn: uid=admin,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: admin
+cn: Ada Admin
+givenName: Ada
+sn: Admin
+displayName: Ada Admin
+mail: admin@example.com
+title: Directory Administrator
+departmentNumber: IT
+telephoneNumber: +1 555 0100
+employeeType: Full time
+acmeOfficeLocation: HQ
+acmeSkill: LDAP
+acmeSkill: Security
+acmeCostCenter: CC-100
+acmePronouns: she/her
+acmeBadgeNumber: B-1000
+userPassword: password
+
+dn: uid=alice,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: alice
+cn: Alice Anderson
+givenName: Alice
+sn: Anderson
+displayName: Alice Anderson
+mail: alice@example.com
+title: Senior Software Engineer
+departmentNumber: Engineering
+telephoneNumber: +1 555 0101
+employeeType: Full time
+acmeOfficeLocation: HQ
+acmeSkill: TypeScript
+acmeSkill: Go
+acmeCostCenter: CC-200
+acmePronouns: she/her
+manager: uid=carol,ou=people,dc=example,dc=com
+acmeBadgeNumber: B-1001
+userPassword: password
+
+dn: uid=bob,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: bob
+cn: Bob Baker
+givenName: Bob
+sn: Baker
+displayName: Bob Baker
+mail: bob@example.com
+title: Account Executive
+departmentNumber: Sales
+telephoneNumber: +1 555 0102
+employeeType: Full time
+acmeOfficeLocation: Denver
+acmeSkill: Negotiation
+acmeCostCenter: CC-300
+acmeBadgeNumber: B-1002
+userPassword: password
+
+dn: uid=carol,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: carol
+cn: Carol Chen
+givenName: Carol
+sn: Chen
+displayName: Carol Chen
+mail: carol@example.com
+title: Engineering Manager
+departmentNumber: Engineering
+telephoneNumber: +1 555 0103
+employeeType: Full time
+acmeOfficeLocation: HQ
+acmeSkill: Leadership
+acmeSkill: Kubernetes
+acmeCostCenter: CC-200
+acmeBadgeNumber: B-1003
+userPassword: password
+
+dn: uid=dave,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: dave
+cn: Dave Diaz
+givenName: Dave
+sn: Diaz
+displayName: Dave Diaz
+mail: dave@example.com
+title: Helpdesk Technician
+departmentNumber: IT
+telephoneNumber: +1 555 0104
+employeeType: Full time
+acmeOfficeLocation: Austin
+acmeSkill: Hardware
+acmeCostCenter: CC-100
+acmeBadgeNumber: B-1004
+userPassword: password
+
+dn: uid=erin,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: erin
+cn: Erin Evans
+givenName: Erin
+sn: Evans
+displayName: Erin Evans
+mail: erin@example.com
+title: HR Business Partner
+departmentNumber: Human Resources
+telephoneNumber: +1 555 0105
+employeeType: Full time
+acmeOfficeLocation: Remote
+acmeCostCenter: CC-400
+acmeBadgeNumber: B-1005
+userPassword: password
+
+dn: uid=fatima,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: fatima
+cn: Fatima Farouk
+givenName: Fatima
+sn: Farouk
+displayName: Fatima Farouk
+mail: fatima@example.com
+title: Product Designer
+departmentNumber: Design
+telephoneNumber: +1 555 0106
+employeeType: Full time
+acmeOfficeLocation: Denver
+acmeSkill: Figma
+acmeSkill: Research
+acmeCostCenter: CC-200
+manager: uid=carol,ou=people,dc=example,dc=com
+acmeBadgeNumber: B-1006
+userPassword: password
+
+dn: uid=george,ou=people,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: george
+cn: George Gupta
+givenName: George
+sn: Gupta
+displayName: George Gupta
+mail: george@example.com
+title: Marketing Lead
+departmentNumber: Marketing
+telephoneNumber: +1 555 0107
+employeeType: Full time
+acmeOfficeLocation: HQ
+acmeCostCenter: CC-500
+acmeBadgeNumber: B-1007
+userPassword: password
+
+dn: uid=frank,ou=partners,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePartner
+uid: frank
+cn: Frank Fischer
+givenName: Frank
+sn: Fischer
+mail: frank@partner.example.net
+title: Consultant
+o: Fischer Consulting
+acmePartnerCompany: Fischer Consulting
+acmeContractEnd: 2027-06-30
+acmeSponsor: uid=carol,ou=people,dc=example,dc=com
+telephoneNumber: +49 30 555 0199
+userPassword: password
+
+dn: uid=hana,ou=partners,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: acmePartner
+uid: hana
+cn: Hana Hoshino
+givenName: Hana
+sn: Hoshino
+mail: hana@vendor.example.org
+title: Implementation Specialist
+o: Vendor Co
+acmePartnerCompany: Vendor Co
+acmeContractEnd: 2026-12-31
+acmeSponsor: uid=bob,ou=people,dc=example,dc=com
+userPassword: password
+
+dn: cn=directory-admins,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: directory-admins
+description: Portal administrators
+member: uid=admin,ou=people,dc=example,dc=com
+owner: uid=admin,ou=people,dc=example,dc=com
+
+dn: cn=engineering,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: engineering
+description: Engineering department
+member: uid=alice,ou=people,dc=example,dc=com
+member: uid=carol,ou=people,dc=example,dc=com
+member: uid=fatima,ou=people,dc=example,dc=com
+owner: uid=admin,ou=people,dc=example,dc=com
+
+dn: cn=sales,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: sales
+description: Sales team
+member: uid=bob,ou=people,dc=example,dc=com
+owner: uid=admin,ou=people,dc=example,dc=com
+
+dn: cn=helpdesk,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: helpdesk
+description: IT helpdesk
+member: uid=dave,ou=people,dc=example,dc=com
+member: uid=admin,ou=people,dc=example,dc=com
+owner: uid=admin,ou=people,dc=example,dc=com
+
+dn: cn=hr,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: hr
+description: Human resources
+member: uid=erin,ou=people,dc=example,dc=com
+owner: uid=admin,ou=people,dc=example,dc=com
+
+dn: cn=LT-0001,ou=devices,dc=example,dc=com
+objectClass: top
+objectClass: acmeDevice
+cn: LT-0001
+acmeDeviceSerial: SN-8842-A
+acmeDeviceType: Laptop
+acmeOperatingSystem: macOS 15
+acmeDeviceStatus: In use
+acmeAssetTag: AT-LT-0001
+acmeAssignedTo: uid=alice,ou=people,dc=example,dc=com
+
+dn: cn=LT-0002,ou=devices,dc=example,dc=com
+objectClass: top
+objectClass: acmeDevice
+cn: LT-0002
+acmeDeviceSerial: SN-8842-B
+acmeDeviceType: Laptop
+acmeOperatingSystem: Windows 11
+acmeDeviceStatus: In use
+acmeAssetTag: AT-LT-0002
+acmeAssignedTo: uid=bob,ou=people,dc=example,dc=com
+
+dn: cn=PH-0001,ou=devices,dc=example,dc=com
+objectClass: top
+objectClass: acmeDevice
+cn: PH-0001
+acmeDeviceSerial: SN-1177-P
+acmeDeviceType: Phone
+acmeOperatingSystem: iOS 18
+acmeDeviceStatus: In use
+acmeAssetTag: AT-PH-0001
+acmeAssignedTo: uid=alice,ou=people,dc=example,dc=com
+
+dn: cn=LT-0003,ou=devices,dc=example,dc=com
+objectClass: top
+objectClass: acmeDevice
+cn: LT-0003
+acmeDeviceSerial: SN-9001-C
+acmeDeviceType: Laptop
+acmeOperatingSystem: Ubuntu 24.04
+acmeDeviceStatus: In repair
+acmeAssetTag: AT-LT-0003
+acmeAssignedTo: uid=carol,ou=people,dc=example,dc=com
+
+dn: cn=TB-0001,ou=devices,dc=example,dc=com
+objectClass: top
+objectClass: acmeDevice
+cn: TB-0001
+acmeDeviceSerial: SN-5521-T
+acmeDeviceType: Tablet
+acmeOperatingSystem: iPadOS 18
+acmeDeviceStatus: In stock
+acmeAssetTag: AT-TB-0001

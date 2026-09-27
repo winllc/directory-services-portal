@@ -7,27 +7,32 @@ and groups. Every user gets a **My profile** page that shows where they appear a
 directories, and lets them edit fields marked self-service.
 
 ```
-┌───────────── web (React + Vite) ─────────────┐     ┌──────── server (Express) ────────┐     ┌──────────┐
-│ directories · entry CRUD · my profile        │ ──▶ │ auth (LDAP bind) · sessions       │ ──▶ │  LDAP    │
-│ admin: schema · forms · definitions · perms  │ /api│ permission checks · namespace     │     │ server   │
-└──────────────────────────────────────────────┘     │ scoping · validation · config DB  │     └──────────┘
-                    shared/ (types, DN utils, validation, schema helpers)                          or in-memory demo
+┌──────── web (React + Vite) ─────────┐        ┌────── backend (Spring Boot 4, Java 21) ──────┐        ┌──────────┐
+│ directories · entry CRUD · profile  │  /api  │ Spring Security sessions · LDAP-bind login   │  LDAP  │  LDAP    │
+│ admin: schema · forms · definitions │ ─────▶ │ permissions · namespace scoping · validation │ ─────▶ │  server  │
+│        · permissions                │        │ UnboundID LDAP SDK · JSON config store       │        │          │
+└─────────────────────────────────────┘        └──────────────────────────────────────────────┘        └──────────┘
 ```
 
-Browsers can't speak LDAP, so a small Node server sits in between. It talks to the directory with a
-service account and enforces the portal's own permissions. The same validation code runs in the
-browser and on the server.
+Browsers can't speak LDAP, so a Spring Boot service sits in between. It talks to the directory
+with a pooled service-account connection ([UnboundID LDAP SDK](https://github.com/pingidentity/ldapsdk))
+and enforces the portal's own permissions. The production build is a single executable jar that
+also serves the React client.
 
 ## Quick start (demo directory, no LDAP server needed)
 
+Requirements: Java 21 and Node.js 20+. Maven is not needed; the backend ships the Maven wrapper.
+
 ```bash
 npm install
-npm run dev            # server on :3001, web on http://localhost:5173
+npm run dev            # Spring Boot API on :3001, web on http://localhost:5173
 ```
 
-The in-memory demo directory includes standard schema, a non-standard `acme*` schema
-(`acmePerson`, `acmeDevice`, `acmePartner`), about ten people, groups and devices, plus example
-forms, directories and permissions. Every demo password is `password`:
+In demo mode (the default, `DIRECTORY_MODE=memory`) the backend starts an **embedded LDAP server**
+(UnboundID in-memory directory) on a loopback port. The portal talks to it over the LDAP protocol,
+exactly as it would to a production server. The demo server loads the standard schema, a
+non-standard `acme*` schema (`acmePerson`, `acmeDevice`, `acmePartner`), about ten people, groups
+and devices, plus example forms, directories and permissions. Every demo password is `password`:
 
 | user    | what they see                                                              |
 |---------|----------------------------------------------------------------------------|
@@ -38,15 +43,17 @@ forms, directories and permissions. Every demo password is `password`:
 | `bob`   | can view Partners; white pages and groups only otherwise                    |
 | `frank` | external partner (ou=partners)                                              |
 
-Production build: `npm run build && npm start` (the server serves `web/dist` on port 3001).
+Production build: `npm run build && npm start`. This builds the client, packages
+`backend/target/directory-services-portal.jar` (client included) and runs it on port 3001.
 
 ## Connecting to a real directory
 
-Copy `.env.example` to `.env` (or set the variables yourself) and set `DIRECTORY_MODE=ldap`:
+Set the environment variables from `.env.example` (they map onto `backend/src/main/resources/application.yml`)
+and set `DIRECTORY_MODE=ldap`:
 
 | variable | meaning |
 |---|---|
-| `LDAP_URL` | `ldap://` or `ldaps://` URL; `LDAP_STARTTLS=true` upgrades plain connections |
+| `LDAP_URL` | `ldap://` or `ldaps://` URL; `LDAP_STARTTLS=true` upgrades plain connections. Certificates are verified against the JVM trust store unless `LDAP_TLS_REJECT_UNAUTHORIZED=false` |
 | `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account used for every read and write |
 | `LDAP_BASE_DN` | default suffix (used by the DN browser) |
 | `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER` | how to find a user at login (`{{username}}` is escaped) |
@@ -54,6 +61,7 @@ Copy `.env.example` to `.env` (or set the variables yourself) and set `DIRECTORY
 | `LDAP_GROUP_SEARCH_BASE`, `LDAP_GROUP_FILTER` | group lookup (`{{dn}}`, `{{username}}`); `memberOf` is also used |
 | `ADMIN_USERS`, `ADMIN_GROUPS` | portal administrators, separated by `;` |
 | `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) is stored |
+| `PORT`, `SESSION_TTL_MINUTES`, `COOKIE_SECURE`, `FORWARD_HEADERS_STRATEGY` | HTTP settings |
 
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
 The service account needs read access to the schema and to the namespaces you expose, and write
@@ -116,24 +124,37 @@ portal. Sign in as `admin` / `admin`.
   self-service fields.
 
 ## Security notes
-- Every LDAP filter value built from user input is escaped (RFC 4515), and DNs are built with
-  RFC 4514 escaping.
+- LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
+  Admin-configured filter templates get their values escaped with `Filter.encodeValue`. DNs are
+  parsed and built with RFC 4514 escaping, and namespace checks compare parsed DNs.
 - Writes are limited to the form's writable fields. The server re-checks required fields,
-  single-value rules, options, formats and patterns.
-- Password attributes are never returned to the browser.
-- Sessions are random 256-bit IDs in `HttpOnly`, `SameSite=Strict` cookies. Every mutating
-  request must carry a custom header (CSRF defence). Failed logins are throttled.
-- Sessions are held in server memory. Run a single instance, or put a shared session store in
-  front before scaling out.
+  single-value rules, options, formats and patterns (`FormValidator`, which mirrors the client
+  rules in `shared/`).
+- Password attributes are never returned to the browser. Empty passwords are rejected before
+  any bind, so anonymous binds can't be used to log in.
+- Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
+  `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`). The session ID is rotated at login,
+  and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).
+  `/api/admin/**` requires `ROLE_ADMIN`. Failed logins are throttled.
+- Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
+  Redis or JDBC) before scaling out.
 
 ## Development
 
 ```bash
-npm test            # server (API integration, parsers) + web (component) tests
-npm run typecheck
-npm run build
+npm test            # backend: JUnit + MockMvc against the embedded LDAP server; web: Vitest
+npm run typecheck   # shared + web TypeScript
+npm run build       # web bundle + Spring Boot jar
+cd backend && ./mvnw spring-boot:run   # API only
 ```
 
-Layout: `shared/` (types, DN utilities, validation, schema helpers), `server/src/ldap`
-(ldapts client, in-memory directory, filter and schema parsers), `server/src/services`,
-`web/src/pages` (user and admin pages), `web/src/components`.
+Layout:
+- `backend/`: the Spring Boot service, package `com.winllc.dsp`:
+  - `ldap/`: gateway, embedded demo server, DN and schema helpers
+  - `schema/`: schema service, index and form linter
+  - `service/`: auth, permissions, entries and validation
+  - `web/`: REST controllers and DTOs
+  - `store/`: the JSON config store
+  - `config/`: security and SPA serving
+- `shared/`: TypeScript types, DN utilities, validation and schema helpers used by the client.
+- `web/`: the React client (`src/pages` for user and admin pages, `src/components`).

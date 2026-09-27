@@ -1,0 +1,41 @@
+# Directory Services Portal. Every setting can be supplied through the environment
+# variables shown in ${...} (see .env.example).
+server:
+  port: ${PORT:3001}
+  servlet:
+    session:
+      timeout: ${SESSION_TTL_MINUTES:480}m
+      cookie:
+        name: DSP_SESSION
+        http-only: true
+        same-site: strict
+        secure: ${COOKIE_SECURE:false}
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
+
+spring:
+  application:
+    name: directory-services-portal
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: false
+
+portal:
+  directory-mode: ${DIRECTORY_MODE:memory}
+  ldap:
+    url: ${LDAP_URL:ldap://localhost:389}
+    bind-dn: ${LDAP_BIND_DN:}
+    bind-password: ${LDAP_BIND_PASSWORD:}
+    start-tls: ${LDAP_STARTTLS:false}
+    tls-reject-unauthorized: ${LDAP_TLS_REJECT_UNAUTHORIZED:true}
+    timeout-ms: ${LDAP_TIMEOUT_MS:10000}
+    pool-size: ${LDAP_POOL_SIZE:10}
+  base-dn: ${LDAP_BASE_DN:dc=example,dc=com}
+  user-search-base: ${LDAP_USER_SEARCH_BASE:}
+  user-filter: ${LDAP_USER_FILTER:(&(objectClass=inetOrgPerson)(uid={{username}}))}
+  username-attribute: ${LDAP_USERNAME_ATTRIBUTE:uid}
+  group-search-base: ${LDAP_GROUP_SEARCH_BASE:}
+  group-filter: ${LDAP_GROUP_FILTER:(|(member={{dn}})(uniqueMember={{dn}}))}
+  admin-users: ${ADMIN_USERS:}
+  admin-groups: ${ADMIN_GROUPS:}
+  data-dir: ${DATA_DIR:./data}
+  seed-demo-config: ${SEED_DEMO_CONFIG:}

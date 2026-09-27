@@ -4,15 +4,15 @@
   "version": "0.1.0",
   "workspaces": [
     "shared",
-    "server",
     "web"
   ],
   "scripts": {
-    "dev": "concurrently -k -n server,web -c blue,green \"npm:dev -w server\" \"npm:dev -w web\"",
-    "build": "npm run build -w web && npm run build -w server",
-    "start": "npm start -w server",
-    "test": "npm test -w server && npm test -w web",
-    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w web"
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev -w web\"",
+    "dev:api": "cd backend && ./mvnw -q spring-boot:run",
+    "build": "npm run build -w web && cd backend && ./mvnw -q -B package -DskipTests",
+    "start": "java -jar backend/target/directory-services-portal.jar",
+    "test": "cd backend && ./mvnw -q -B test && cd .. && npm test -w web",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w web"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
