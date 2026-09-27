@@ -318,3 +318,11 @@ describe('admin configuration', () => {
     expect(groups.body).toEqual([expect.objectContaining({ type: 'group', label: 'engineering' })]);
   });
 });
+
+describe('session probe', () => {
+  it('returns a null user when signed out', async () => {
+    const res = await request(env.app).get('/api/auth/me');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ user: null });
+  });
+});

@@ -1,0 +1,45 @@
+dn: ou=people,dc=example,dc=com
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=example,dc=com
+objectClass: organizationalUnit
+ou: groups
+
+dn: ou=devices,dc=example,dc=com
+objectClass: organizationalUnit
+ou: devices
+
+dn: uid=admin,ou=people,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: admin
+cn: Ada Admin
+sn: Admin
+mail: admin@example.com
+userPassword: admin
+
+dn: uid=alice,ou=people,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: acmePerson
+uid: alice
+cn: Alice Anderson
+givenName: Alice
+sn: Anderson
+mail: alice@example.com
+title: Software Engineer
+acmeSkill: TypeScript
+acmeOfficeLocation: HQ
+userPassword: alice
+
+dn: cn=directory-admins,ou=groups,dc=example,dc=com
+objectClass: groupOfNames
+cn: directory-admins
+member: uid=admin,ou=people,dc=example,dc=com
+
+dn: cn=LT-0001,ou=devices,dc=example,dc=com
+objectClass: acmeDevice
+cn: LT-0001
+acmeDeviceSerial: SN-8842-A
+acmeDeviceType: Laptop
+acmeAssignedTo: uid=alice,ou=people,dc=example,dc=com

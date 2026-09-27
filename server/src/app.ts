@@ -189,8 +189,9 @@ export function createApp(ctx: AppContext): express.Express {
     res.json({ ok: true });
   });
 
-  app.get('/api/auth/me', requireAuth, (req, res) => {
-    res.json({ user: req.user });
+  /** Current session; `user` is null when signed out (avoids a 401 on every page load). */
+  app.get('/api/auth/me', (req, res) => {
+    res.json({ user: req.user ?? null });
   });
 
   // ---------------------------------------------------------------------------
