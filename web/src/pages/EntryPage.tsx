@@ -6,6 +6,7 @@ import { useDefinition, useEntry, useEntryMutations } from '../api/hooks';
 import { EntryDetails } from '../components/EntryDetails';
 import { EntryForm } from '../components/EntryForm';
 import { DefinitionIcon } from '../components/Layout';
+import { DirectoryNotFound } from '../components/DirectoryNotFound';
 import { Badge, Button, Card, ConfirmDialog, ErrorAlert, FormRow, PageHeader, Spinner, useToast } from '../components/ui';
 
 export function EntryPage() {
@@ -18,13 +19,13 @@ export function EntryPage() {
   const def = useDefinition(slug);
   const definition = def.data?.definition;
   const form = def.data?.form;
-  const entry = useEntry(definition?.id ?? slug, dn);
+  const entry = useEntry(definition?.id, dn);
   const { update, remove } = useEntryMutations(definition?.id ?? slug);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
 
   if (def.isLoading || entry.isLoading) return <Spinner label="Loading…" />;
-  if (!definition || !form) return <div className="page"><ErrorAlert error={def.error ?? new Error('Directory not found')} /></div>;
+  if (!definition || !form) return <DirectoryNotFound slug={slug} error={def.error} />;
   if (entry.error || !entry.data) {
     return (
       <div className="page">
@@ -181,7 +182,7 @@ export function CreateEntryPage() {
   const [parent, setParent] = useState<string>('');
 
   if (def.isLoading) return <Spinner />;
-  if (!definition || !form) return <div className="page"><ErrorAlert error={def.error ?? new Error('Directory not found')} /></div>;
+  if (!definition || !form) return <DirectoryNotFound slug={slug} error={def.error} />;
   if (definition.access !== 'write') {
     return (
       <div className="page">

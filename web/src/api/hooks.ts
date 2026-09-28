@@ -54,19 +54,21 @@ export interface EntryQuery {
   order?: 'asc' | 'desc';
 }
 
-export const useEntries = (id: string, params: EntryQuery) =>
+/** Entries of a directory; waits until the definition id is known (undefined = not loaded). */
+export const useEntries = (id: string | undefined, params: EntryQuery) =>
   useQuery({
-    queryKey: keys.entries(id, params),
+    queryKey: keys.entries(id ?? '', params),
     queryFn: () =>
-      api.get<EntryListResponse>(`/api/directories/${encodeURIComponent(id)}/entries${qs({ ...params })}`),
+      api.get<EntryListResponse>(`/api/directories/${encodeURIComponent(id!)}/entries${qs({ ...params })}`),
     placeholderData: (prev) => prev,
+    enabled: !!id,
   });
 
-export const useEntry = (id: string, dn: string | null) =>
+export const useEntry = (id: string | undefined, dn: string | null) =>
   useQuery({
-    queryKey: keys.entry(id, dn ?? ''),
-    queryFn: () => api.get<DirectoryEntry>(`/api/directories/${encodeURIComponent(id)}/entry?${dnParam(dn!)}`),
-    enabled: !!dn,
+    queryKey: keys.entry(id ?? '', dn ?? ''),
+    queryFn: () => api.get<DirectoryEntry>(`/api/directories/${encodeURIComponent(id!)}/entry?${dnParam(dn!)}`),
+    enabled: !!id && !!dn,
   });
 
 export const useFieldOptions = (definitionId: string, fieldId: string, enabled: boolean) =>

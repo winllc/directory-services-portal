@@ -5,6 +5,7 @@ import type { DirectoryEntry, FormDefinition, FormField } from '@dsp/shared';
 import { getAttr, rdnValue } from '@dsp/shared';
 import { useDefinition, useEntries } from '../api/hooks';
 import { DefinitionIcon } from '../components/Layout';
+import { DirectoryNotFound } from '../components/DirectoryNotFound';
 import { FieldValue } from '../components/EntryDetails';
 import { Alert, Button, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced } from '../components/ui';
 import { AccessBadge } from './HomePage';
@@ -57,7 +58,7 @@ function DirectoryView({ slug }: { slug: string }) {
     );
   }, [debounced, setParams]);
 
-  const entries = useEntries(definition?.id ?? slug, { q, page, pageSize: PAGE_SIZE, sort, order });
+  const entries = useEntries(definition?.id, { q, page, pageSize: PAGE_SIZE, sort, order });
   const columns = useMemo(() => definition?.listAttributes ?? [], [definition]);
 
   const setParam = (updates: Record<string, string | undefined>) => {
@@ -76,7 +77,7 @@ function DirectoryView({ slug }: { slug: string }) {
   };
 
   if (def.isLoading) return <Spinner label="Loading directory…" />;
-  if (def.error || !definition || !form) return <div className="page"><ErrorAlert error={def.error ?? new Error('Directory not found')} /></div>;
+  if (def.error || !definition || !form) return <DirectoryNotFound slug={slug} error={def.error} />;
 
   const total = entries.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
