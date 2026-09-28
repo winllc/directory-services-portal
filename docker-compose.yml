@@ -72,7 +72,7 @@ services:
     environment:
       API_URL: http://api:3001
     ports:
-      - "8080:80"
+      - "8181:80"
 
 volumes:
   portal-data:
