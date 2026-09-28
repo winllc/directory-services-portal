@@ -1,0 +1,76 @@
+# HTTPS with optional X.509 client certificates (select with
+# NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates-mtls). nginx verifies the client certificate
+# against /etc/nginx/tls/ca.pem and forwards it to the API in X-SSL-Client-Cert, which the API
+# accepts with X509_SOURCE=header. Mount server.pem, server.key and ca.pem into /etc/nginx/tls.
+
+# Only forward certificates nginx verified; anything else is sent as an empty header.
+map $ssl_client_verify $dsp_client_cert {
+    SUCCESS $ssl_client_escaped_cert;
+    default "";
+}
+
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host${HTTPS_PORT_SUFFIX}$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name _;
+    server_tokens off;
+
+    ssl_certificate         /etc/nginx/tls/server.pem;
+    ssl_certificate_key     /etc/nginx/tls/server.key;
+    ssl_client_certificate  /etc/nginx/tls/ca.pem;
+    # "optional": browsers without a certificate can still use password sign-in.
+    ssl_verify_client       optional;
+    ssl_verify_depth        3;
+    ssl_protocols           TLSv1.2 TLSv1.3;
+    root /usr/share/nginx/html;
+
+    # Schema imports can be large.
+    client_max_body_size 5m;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy same-origin always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # Resolve the API host at request time so the web container starts even if the API isn't
+    # up yet, and follows it if its address changes.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+    location ^~ /api/ {
+        set $api_upstream ${API_URL};
+        proxy_pass $api_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # nginx is the edge: overwrite (don't append) so clients can't spoof their address.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_read_timeout 120s;
+        proxy_set_header X-SSL-Client-Cert $dsp_client_cert;
+    }
+
+    # Hashed build assets never change.
+    location ^~ /assets/ {
+        expires 1y;
+        try_files $uri =404;
+    }
+
+    # Other files (favicon, ...) are served as-is; missing ones are a real 404.
+    location ~ \.[A-Za-z0-9]+$ {
+        try_files $uri =404;
+    }
+
+    # Client-side routes (/d/staff, /admin/forms, ...) all load the app shell, which is never cached.
+    location / {
+        expires -1;
+        try_files $uri /index.html;
+    }
+}

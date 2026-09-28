@@ -1,0 +1,32 @@
+# Overlay: HTTPS with X.509 client-certificate sign-in, terminated by the web proxy (nginx).
+#   scripts/generate-dev-certs.sh certs        # dev CA, server cert, admin/alice/bob .p12
+#   docker compose -f docker-compose.yml -f docker-compose.mtls.yml up --build
+#   -> https://localhost:8443  (import certs/alice.p12 into the browser, password "password")
+# nginx verifies client certificates against certs/ca.pem and forwards verified ones to the API
+# in X-SSL-Client-Cert; password sign-in keeps working for browsers without a certificate.
+services:
+  web:
+    environment:
+      NGINX_ENVSUBST_TEMPLATE_DIR: /etc/nginx/templates-mtls
+      HTTPS_PORT_SUFFIX: ":8443"
+    volumes:
+      - ./certs/server.pem:/etc/nginx/tls/server.pem:ro
+      - ./certs/server.key:/etc/nginx/tls/server.key:ro
+      - ./certs/ca.pem:/etc/nginx/tls/ca.pem:ro
+    ports:
+      - "8443:443"
+
+  api:
+    environment:
+      COOKIE_SECURE: "true"
+      X509_ENABLED: "true"
+      X509_SOURCE: header
+      X509_HEADER: X-SSL-Client-Cert
+      # Only the proxy on the compose network may send the certificate header.
+      X509_TRUSTED_PROXIES: "10.0.0.0/8;172.16.0.0/12;192.168.0.0/16"
+      # Validate the chain again in the API (defence in depth).
+      X509_TRUSTED_CA_FILE: /certs/ca.pem
+      # The dev certificates use CN=<username>.
+      X509_USER_FILTER: "(&(objectClass=inetOrgPerson)(uid={{cn}}))"
+    volumes:
+      - ./certs/ca.pem:/certs/ca.pem:ro

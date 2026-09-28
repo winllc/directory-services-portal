@@ -195,6 +195,17 @@ class X509AuthTest extends ApiTestSupport {
     assertThat(status(spoofed)).isEqualTo(401);
     assertThat(error(spoofed)).isEqualTo("No client certificate was presented");
 
+    // X-Forwarded-For must not influence the proxy trust decision: the connecting peer decides.
+    MvcResult forgedFor = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", nginx)
+        .header("X-Forwarded-For", "127.0.0.1").with(r -> {
+          r.setRemoteAddr("203.0.113.9");
+          return r;
+        })).andReturn();
+    assertThat(status(forgedFor)).isEqualTo(401);
+    MvcResult viaProxy = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", nginx)
+        .header("X-Forwarded-For", "198.51.100.7")).andReturn();
+    assertThat(status(viaProxy)).as(viaProxy.getResponse().getContentAsString()).isEqualTo(200);
+
     // Envoy's x-forwarded-client-cert format.
     props.getX509().setHeader("x-forwarded-client-cert");
     String xfcc = "By=spiffe://portal;Hash=abc;Cert=\"" + URLEncoder.encode(TestCertificates.pem(c), StandardCharsets.UTF_8) + "\";Subject=\"CN=alice\"";

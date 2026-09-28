@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev -w web\"",
     "dev:api": "cd backend && ./mvnw -q spring-boot:run",
-    "build": "npm run build -w web && cd backend && ./mvnw -q -B package -DskipTests",
-    "start": "java -jar backend/target/directory-services-portal.jar",
+    "build": "npm run build -w web && npm run build:api",
+    "build:api": "cd backend && ./mvnw -q -B clean package -DskipTests",
+    "start": "concurrently -k -n api,web -c blue,green \"npm:start:api\" \"npm run preview -w web\"",
+    "start:api": "java -jar backend/target/directory-services-portal.jar",
     "test": "cd backend && ./mvnw -q -B test && cd .. && npm test -w web",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w web"
   },

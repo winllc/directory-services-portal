@@ -1,8 +1,14 @@
-# Portal (web UI + API) and OpenLDAP loaded with the demo organisation.
-#   docker compose up --build   ->  http://localhost:3001
+# Directory Services Portal: web client, API and an OpenLDAP loaded with the demo organisation.
+#   docker compose up --build   ->  http://localhost:8080
 #   Sign in as admin / password (administrator), or alice, bob, erin, dave, frank / password.
-# The portal image bundles the React client, so the single "portal" service serves both the UI
-# and /api. The in-memory demo needs no containers: `npm run dev`.
+#
+#   web       nginx serving the React client; proxies /api to the api service (one origin for
+#             the browser, so session cookies and CSRF protection work unchanged)
+#   api       Spring Boot REST API (not published on the host)
+#   openldap  directory server (not published on the host)
+#
+# X.509 client-certificate sign-in: see docker-compose.mtls.yml.
+# The in-memory demo needs no containers: `npm run dev`.
 #
 # The LDIF in deploy/openldap/ldif is only loaded into an empty directory. After changing it
 # (or to start over), run `docker compose down -v` first.
@@ -12,12 +18,12 @@ services:
     build: ./deploy/openldap
     environment:
       LDAP_SUFFIX: dc=example,dc=com
-      # Password of the LDAP administrator (cn=admin,dc=example,dc=com) that the portal binds as.
+      # Password of the LDAP administrator (cn=admin,dc=example,dc=com) that the API binds as.
       # It is not a portal login; portal users are the uid=... entries in deploy/openldap/ldif.
       LDAP_ADMIN_PASSWORD: admin
     volumes:
       - ldap-data:/var/lib/ldap
-    # Not published on the host (the portal reaches it over the compose network). To inspect it
+    # Not published on the host (the API reaches it over the compose network). To inspect it
     # with ldapsearch from your machine, uncomment:
     # ports:
     #   - "1389:389"
@@ -28,8 +34,8 @@ services:
       retries: 20
       start_period: 10s
 
-  portal:
-    build: .
+  api:
+    build: ./backend
     depends_on:
       openldap:
         condition: service_healthy
@@ -47,10 +53,26 @@ services:
       SEED_DEMO_CONFIG: "true"
       LOGIN_HINT: "Demo: sign in as admin (administrator), alice, bob, erin (HR), dave (helpdesk) or frank (partner). Password: password"
       COOKIE_SECURE: "false"
-    ports:
-      - "3001:3001"
+      # Honour X-Forwarded-* set by the web proxy (which overwrites them), so the API sees the real
+      # client address (used for login throttling) and scheme. The api service is not published,
+      # so only the proxy can reach it.
+      FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
+    # To call the API directly from your machine, uncomment:
+    # ports:
+    #   - "3001:3001"
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:3001
+    ports:
+      - "8080:80"
 
 volumes:
   portal-data:

@@ -14,10 +14,17 @@ directories, and lets them edit fields marked self-service.
 └─────────────────────────────────────┘        └──────────────────────────────────────────────┘        └──────────┘
 ```
 
-Browsers can't speak LDAP, so a Spring Boot service sits in between. It talks to the directory
-with a pooled service-account connection ([UnboundID LDAP SDK](https://github.com/pingidentity/ldapsdk))
-and enforces the portal's own permissions. The production build is a single executable jar that
-also serves the React client.
+Browsers can't speak LDAP, so a Spring Boot API sits in between. It talks to the directory with a
+pooled service-account connection ([UnboundID LDAP SDK](https://github.com/pingidentity/ldapsdk))
+and enforces the portal's own permissions.
+
+The **API** (`backend/`) and the **web client** (`web/`) are built and deployed separately:
+- The API is a Spring Boot jar (or the `backend/Dockerfile` image) that serves only `/api`.
+- The web client is a static React build. The `web/Dockerfile` image serves it with nginx and
+  forwards `/api` to the API. The browser therefore sees a single origin, so the session cookie
+  (`SameSite=Strict`) and the CSRF header work without any CORS configuration.
+
+If you host the client elsewhere, route `/api` on the same origin to the API in the same way.
 
 ## Quick start (demo directory, no LDAP server needed)
 
@@ -25,7 +32,7 @@ Requirements: Java 21 and Node.js 20+. Maven is not needed; the backend ships th
 
 ```bash
 npm install
-npm run dev            # Spring Boot API on :3001, web on http://localhost:5173
+npm run dev            # API on :3001, web client on http://localhost:5173 (proxies /api)
 ```
 
 In demo mode (the default, `DIRECTORY_MODE=memory`) the backend starts an **embedded LDAP server**
@@ -43,8 +50,11 @@ and devices, plus example forms, directories and permissions. Every demo passwor
 | `bob`   | can view Partners; white pages and groups only otherwise                    |
 | `frank` | external partner (ou=partners)                                              |
 
-Production build: `npm run build && npm start`. This builds the client, packages
-`backend/target/directory-services-portal.jar` (client included) and runs it on port 3001.
+Production build without Docker: `npm run build && npm start`. This builds `web/dist` and
+`backend/target/directory-services-portal.jar`, then runs the API on :3001 and serves the client
+on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real deployment, serve
+`web/dist` from any web server that routes `/api` to the API and falls back to `index.html` for
+other paths. `web/nginx/default.conf.template` is a ready-made example.
 
 ## Connecting to a real directory
 
@@ -67,18 +77,25 @@ Users sign in with their own directory password (the portal verifies it with an 
 The service account needs read access to the schema and to the namespaces you expose, and write
 access wherever portal users should be able to edit.
 
-`docker compose up --build` starts OpenLDAP and the portal image (web UI + API) at
-http://localhost:3001. OpenLDAP is built locally from `deploy/openldap` (Ubuntu's `slapd`), so it
-runs natively on amd64 and arm64, including Apple Silicon. It is loaded with the same demo
-organisation, ACME schema and **default credentials as the built-in demo**: `admin` / `password`
-(administrator), or `alice`, `bob`, `erin`, `dave`, `frank` with password `password`. The example
-directories and permissions are seeded too.
+### Docker Compose
+
+`docker compose up --build` starts three services, then open **http://localhost:8080**:
+
+| service | image | published |
+|---|---|---|
+| `web` | `web/Dockerfile`: nginx serving the React client, proxying `/api` to `api` (`API_URL`) | `8080` |
+| `api` | `backend/Dockerfile`: the Spring Boot API | no (uncomment `3001` to call it directly) |
+| `openldap` | `deploy/openldap`: Ubuntu's `slapd`, built locally (amd64 and arm64, incl. Apple Silicon) | no (uncomment `1389`) |
+
+OpenLDAP is loaded with the same demo organisation, ACME schema and **default credentials as
+the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `erin`, `dave`,
+`frank` with password `password`. The example directories and permissions are seeded too.
 
 - The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
   `docker compose down -v` after changing it, or if you started the stack from an older version.
-- OpenLDAP is only reachable inside the compose network. Uncomment its `ports` entry to query it
-  from your machine (`ldap://localhost:1389`).
-- If a container fails to start, `docker compose logs openldap` (or `portal`) shows why.
+- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=native`, private
+  network addresses only). It therefore sees real client addresses, which login throttling relies on.
+- If a container fails to start, `docker compose logs <service>` shows why.
 
 ## Features
 
@@ -138,21 +155,28 @@ Users can sign in with a client certificate (smart cards such as CAC/PIV, or any
 certificate), alongside or instead of passwords. Set `X509_ENABLED=true` and choose where the
 certificate comes from:
 
-- **The portal terminates mutual TLS** (`X509_SOURCE=servlet`): run with the `mtls` profile.
-  Tomcat requests a client certificate (`client-auth: want`, so password sign-in still works
-  without one) and verifies it against `TLS_CLIENT_CA_FILE`.
+- **The web proxy terminates mutual TLS** (`X509_SOURCE=header`, recommended). Browsers connect
+  to the web tier, so this is how certificate sign-in works with the separate web and API
+  services. The proxy verifies the certificate and forwards it in `X509_HEADER`. The formats
+  understood are PEM, URL-encoded PEM (nginx `$ssl_client_escaped_cert`, AWS ALB), base64 DER and
+  Envoy `x-forwarded-client-cert`. The header is **ignored unless the connecting peer is in
+  `X509_TRUSTED_PROXIES`**. The check uses the actual connection, never `X-Forwarded-For`, so
+  use `FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite
+  any incoming copy of the header; the bundled nginx configs always do. Also set
+  `X509_TRUSTED_CA_FILE` so the API validates the chain itself.
+
+  Docker Compose has this ready as an overlay: the web image's `templates-mtls` nginx config
+  runs HTTPS with `ssl_verify_client optional`, so password sign-in keeps working.
   ```bash
   scripts/generate-dev-certs.sh certs          # throw-away CA, server cert, admin/alice/bob .p12 (password: password)
-  SPRING_PROFILES_ACTIVE=mtls TLS_CERT_FILE=certs/server.pem TLS_KEY_FILE=certs/server.key \
-    TLS_CLIENT_CA_FILE=certs/ca.pem java -jar backend/target/directory-services-portal.jar
+  docker compose -f docker-compose.yml -f docker-compose.mtls.yml up --build
   # import certs/alice.p12 into the browser, open https://localhost:8443, "Sign in with certificate"
   ```
-- **A reverse proxy terminates mutual TLS** (`X509_SOURCE=header`): the proxy forwards the
-  certificate in `X509_HEADER`. The formats understood are PEM, URL-encoded PEM (nginx
-  `$ssl_client_escaped_cert`, AWS ALB), base64 DER and Envoy `x-forwarded-client-cert`. The
-  header is **ignored unless the request comes from `X509_TRUSTED_PROXIES`**. The proxy must
-  overwrite any incoming copy of the header. Also set `X509_TRUSTED_CA_FILE` so the portal
-  validates the chain itself.
+- **The API terminates mutual TLS itself** (`X509_SOURCE=servlet`, `mtls` Spring profile with
+  `TLS_CERT_FILE`, `TLS_KEY_FILE`, `TLS_CLIENT_CA_FILE`). Tomcat requests a client certificate
+  (`client-auth: want`) and verifies it against `TLS_CLIENT_CA_FILE`. Use this when clients
+  connect to the API directly, for example scripts or another service. A browser only goes
+  through it if the web tier passes TLS straight through to the API.
 
 Every certificate is checked before it is accepted:
 - It must be within its validity period.
@@ -195,6 +219,9 @@ Group membership, admin status and permissions work exactly as they do for passw
 - Certificate sign-in validates the certificate (dates, key usage, optional chain and revocation)
   before mapping it to exactly one directory user. Forwarded certificate headers are only
   honoured from trusted proxy addresses.
+- The web proxy overwrites `X-Forwarded-For` (clients can't spoof their address, which login
+  throttling relies on) and always replaces `X-SSL-Client-Cert`. The API is not published in
+  Docker Compose, so only the proxy can reach it.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
   `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`). The session ID is rotated at login,
   and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).
@@ -221,4 +248,6 @@ Layout:
   - `x509/`: client-certificate parsing, validation and user mapping
   - `config/`: security and SPA serving
 - `shared/`: TypeScript types, DN utilities, validation and schema helpers used by the client.
-- `web/`: the React client (`src/pages` for user and admin pages, `src/components`).
+- `web/`: the React client (`src/pages` for user and admin pages, `src/components`), with
+  `web/Dockerfile` and the nginx configs in `web/nginx/`.
+- `backend/Dockerfile`: the API image. `deploy/openldap/`: the demo OpenLDAP image.

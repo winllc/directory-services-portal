@@ -46,6 +46,8 @@ abstract class ApiTestSupport {
     registry.add("portal.directory-mode", () -> "memory");
     registry.add("portal.data-dir", () -> tempDir());
     registry.add("portal.seed-demo-config", () -> "true");
+    // As deployed behind the web proxy: X-Forwarded-* handled by Spring's ForwardedHeaderFilter.
+    registry.add("server.forward-headers-strategy", () -> "framework");
   }
 
   private static String tempDir() {

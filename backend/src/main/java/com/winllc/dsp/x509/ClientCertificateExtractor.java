@@ -1,6 +1,8 @@
 package com.winllc.dsp.x509;
 
 import com.winllc.dsp.config.PortalProperties;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletRequestWrapper;
 import jakarta.servlet.http.HttpServletRequest;
 import java.security.cert.X509Certificate;
 import java.util.Optional;
@@ -33,11 +35,25 @@ public class ClientCertificateExtractor {
     }
     String header = request.getHeader(cfg.getHeader());
     if (header == null || header.isBlank()) return Optional.empty();
-    if (!fromTrustedProxy(request.getRemoteAddr(), cfg)) {
-      log.warn("Ignoring {} header from untrusted address {}", cfg.getHeader(), request.getRemoteAddr());
+    String peer = peerAddress(request);
+    if (!fromTrustedProxy(peer, cfg)) {
+      log.warn("Ignoring {} header from untrusted address {}", cfg.getHeader(), peer);
       return Optional.empty();
     }
     return Optional.of(new X509Certificate[] {CertificateParser.parseHeader(header)});
+  }
+
+  /**
+   * Address of the directly connected peer. Forwarded-header support
+   * ({@code FORWARD_HEADERS_STRATEGY=framework}) wraps the request and reports the original
+   * client as the remote address; the proxy trust decision must use the actual connection, so
+   * unwrap to the container's request. (Tomcat's "native" strategy rewrites the address in
+   * place and therefore cannot be combined with header-based certificates.)
+   */
+  static String peerAddress(HttpServletRequest request) {
+    ServletRequest current = request;
+    while (current instanceof ServletRequestWrapper wrapper) current = wrapper.getRequest();
+    return current.getRemoteAddr();
   }
 
   static boolean fromTrustedProxy(String remoteAddr, PortalProperties.X509 cfg) {

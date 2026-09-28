@@ -1,6 +1,9 @@
+# Build context for web/Dockerfile (repository root).
 node_modules
 **/node_modules
 **/dist
 **/target
+backend
 data
+certs
 .git

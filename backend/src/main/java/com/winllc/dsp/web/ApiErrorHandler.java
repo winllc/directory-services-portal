@@ -81,18 +81,12 @@ public class ApiErrorHandler {
     return body(HttpStatus.BAD_REQUEST, "Query parameter \"" + e.getParameterName() + "\" is required", null);
   }
 
-  static final String CLIENT_NOT_BUNDLED =
-      "The web client is not bundled in this server build. During development open the Vite dev server "
-          + "(npm run dev, http://localhost:5173); for a self-contained server run `npm run build` and start the jar.";
-
   @ExceptionHandler(NoResourceFoundException.class)
   ResponseEntity<Map<String, Object>> notFound(NoResourceFoundException e, HttpServletRequest request) {
-    String path = request.getRequestURI();
-    if (path.startsWith("/api/")) return body(HttpStatus.NOT_FOUND, "Unknown API endpoint", null);
-    String last = path.substring(path.lastIndexOf('/') + 1);
-    // An extension-less path is a client route: it only 404s when index.html isn't on the classpath.
-    if (!last.contains(".")) return body(HttpStatus.NOT_FOUND, CLIENT_NOT_BUNDLED, null);
-    return body(HttpStatus.NOT_FOUND, "Not found", null);
+    if (request.getRequestURI().startsWith("/api/")) return body(HttpStatus.NOT_FOUND, "Unknown API endpoint", null);
+    // This service only serves the API; the web client is deployed separately (web/ image or Vite dev server).
+    return body(HttpStatus.NOT_FOUND, "This is the portal API (under /api). Open the web client instead: "
+        + "http://localhost:5173 with npm run dev, or the web service in docker compose.", null);
   }
 
   @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
