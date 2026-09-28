@@ -1,6 +1,7 @@
-# Portal + OpenLDAP for local testing against a real directory.
-#   docker compose up --build   ->  http://localhost:3001  (sign in as "admin" / "admin")
-# The portal's in-memory demo needs no containers: `npm run dev`.
+# Portal (web UI + API) and OpenLDAP for testing against a real directory.
+#   docker compose up --build   ->  http://localhost:3001  (sign in as "admin" / "admin", or "alice" / "alice")
+# The portal image bundles the React client, so the single "portal" service serves both the UI
+# and /api. The in-memory demo needs no containers: `npm run dev`.
 services:
   openldap:
     image: osixia/openldap:1.5.0
@@ -13,10 +14,17 @@ services:
       - ./deploy/ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom
     ports:
       - "389:389"
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "dc=example,dc=com", "-s", "base", "-D", "cn=admin,dc=example,dc=com", "-w", "admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   portal:
     build: .
-    depends_on: [openldap]
+    depends_on:
+      openldap:
+        condition: service_healthy
     environment:
       DIRECTORY_MODE: ldap
       LDAP_URL: ldap://openldap:389

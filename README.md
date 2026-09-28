@@ -68,7 +68,9 @@ The service account needs read access to the schema and to the namespaces you ex
 access wherever portal users should be able to edit.
 
 `docker compose up --build` starts OpenLDAP with an example custom schema (`deploy/ldif`) and the
-portal. Sign in as `admin` / `admin`.
+portal image, which serves both the web UI and the API. Open http://localhost:3001 and sign in as
+`admin` / `admin` (or `alice` / `alice`). The portal starts without forms or directory
+definitions; create them under *Administration*.
 
 ## Features
 
