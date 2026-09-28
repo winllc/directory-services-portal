@@ -1,6 +1,13 @@
-# Demo organisation for docker compose. All user passwords are "password" (e.g. admin / password).
-# Generated from backend/src/main/resources/demo/demo-data.ldif (without the suffix entry,
-# which the OpenLDAP image creates) - keep them in sync.
+# Demo organisation loaded into the compose OpenLDAP. Every user password is "password".
+# Generated from backend/src/main/resources/demo/demo-data.ldif - keep them in sync.
+
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+dc: example
+o: Example Corp
+
 dn: ou=people,dc=example,dc=com
 objectClass: top
 objectClass: organizationalUnit

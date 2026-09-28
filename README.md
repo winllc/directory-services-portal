@@ -68,11 +68,17 @@ The service account needs read access to the schema and to the namespaces you ex
 access wherever portal users should be able to edit.
 
 `docker compose up --build` starts OpenLDAP and the portal image (web UI + API) at
-http://localhost:3001. OpenLDAP is loaded with the same demo organisation, ACME schema and
-**default credentials as the built-in demo**: `admin` / `password` (administrator), or `alice`,
-`bob`, `erin`, `dave`, `frank` with password `password`. The example directories and permissions
-are seeded too. The LDIF in `deploy/ldif` is only loaded into an empty database, so run
-`docker compose down -v` after changing it, or if you started the stack from an older version.
+http://localhost:3001. OpenLDAP is built locally from `deploy/openldap` (Ubuntu's `slapd`), so it
+runs natively on amd64 and arm64, including Apple Silicon. It is loaded with the same demo
+organisation, ACME schema and **default credentials as the built-in demo**: `admin` / `password`
+(administrator), or `alice`, `bob`, `erin`, `dave`, `frank` with password `password`. The example
+directories and permissions are seeded too.
+
+- The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
+  `docker compose down -v` after changing it, or if you started the stack from an older version.
+- OpenLDAP is only reachable inside the compose network. Uncomment its `ports` entry to query it
+  from your machine (`ldap://localhost:1389`).
+- If a container fails to start, `docker compose logs openldap` (or `portal`) shows why.
 
 ## Features
 

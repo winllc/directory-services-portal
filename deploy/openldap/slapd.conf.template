@@ -1,0 +1,38 @@
+# OpenLDAP configuration for the docker compose demo directory.
+include   /etc/ldap/schema/core.schema
+include   /etc/ldap/schema/cosine.schema
+include   /etc/ldap/schema/inetorgperson.schema
+include   /etc/ldap/schema/nis.schema
+include   /etc/ldap/schema/acme.schema
+
+pidfile   /run/slapd/slapd.pid
+argsfile  /run/slapd/slapd.args
+
+modulepath /usr/lib/ldap
+moduleload back_mdb
+
+# Users may change their own password and authenticate; directory data is readable by
+# authenticated users. The portal binds as the rootdn (full access) and enforces its own
+# per-directory permissions.
+access to attrs=userPassword
+  by self write
+  by anonymous auth
+  by * none
+access to dn.base=""
+  by * read
+access to dn.base="cn=Subschema"
+  by * read
+access to *
+  by users read
+  by * none
+
+database  mdb
+maxsize   1073741824
+suffix    "@SUFFIX@"
+rootdn    "@ROOT_DN@"
+rootpw    @ROOT_PW@
+directory /var/lib/ldap
+
+index objectClass                  eq
+index uid,cn,sn,givenName,mail     eq,sub
+index member,uniqueMember,manager  eq

@@ -4,33 +4,29 @@
 # The portal image bundles the React client, so the single "portal" service serves both the UI
 # and /api. The in-memory demo needs no containers: `npm run dev`.
 #
-# The LDIF in deploy/ldif is only loaded when OpenLDAP starts with an empty database. After
-# changing it (or to start over), run `docker compose down -v` first.
+# The LDIF in deploy/openldap/ldif is only loaded into an empty directory. After changing it
+# (or to start over), run `docker compose down -v` first.
 services:
   openldap:
-    image: osixia/openldap:1.5.0
+    # Built locally from deploy/openldap (Ubuntu's slapd), so it runs natively on amd64 and arm64.
+    build: ./deploy/openldap
     environment:
-      LDAP_ORGANISATION: Example Corp
-      LDAP_DOMAIN: example.com
+      LDAP_SUFFIX: dc=example,dc=com
       # Password of the LDAP administrator (cn=admin,dc=example,dc=com) that the portal binds as.
-      # It is not a portal login; portal users are the uid=... entries in deploy/ldif.
+      # It is not a portal login; portal users are the uid=... entries in deploy/openldap/ldif.
       LDAP_ADMIN_PASSWORD: admin
-    command: --copy-service
-    # slapd preallocates per file descriptor; newer Docker versions default to an enormous
-    # limit that makes this image hang or crash on startup.
-    ulimits:
-      nofile:
-        soft: 1024
-        hard: 1024
     volumes:
-      - ./deploy/ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom
-    ports:
-      - "389:389"
+      - ldap-data:/var/lib/ldap
+    # Not published on the host (the portal reaches it over the compose network). To inspect it
+    # with ldapsearch from your machine, uncomment:
+    # ports:
+    #   - "1389:389"
     healthcheck:
       test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "uid=admin,ou=people,dc=example,dc=com", "-s", "base", "-D", "cn=admin,dc=example,dc=com", "-w", "admin"]
-      interval: 5s
+      interval: 3s
       timeout: 5s
-      retries: 30
+      retries: 20
+      start_period: 10s
 
   portal:
     build: .
@@ -58,3 +54,4 @@ services:
 
 volumes:
   portal-data:
+  ldap-data:
