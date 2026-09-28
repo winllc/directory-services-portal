@@ -28,13 +28,14 @@ public class InfoController {
   public ServerInfo info() {
     String mode = props.isMemoryMode() ? "memory" : "ldap";
     String url = props.isMemoryMode() ? null : directory.url();
+    String hint = props.getLoginHint() == null || props.getLoginHint().isBlank() ? null : props.getLoginHint();
     ServerInfo.AuthOptions auth = new ServerInfo.AuthOptions(
         props.isPasswordLoginEnabled(), props.getX509().isEnabled(), props.getX509().isEnabled() && props.getX509().isAutoLogin());
     try {
       directory.ping();
-      return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth);
+      return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth, hint);
     } catch (RuntimeException e) {
-      return new ServerInfo(mode, url, props.getBaseDn(), false, e.getMessage(), VERSION, auth);
+      return new ServerInfo(mode, url, props.getBaseDn(), false, e.getMessage(), VERSION, auth, hint);
     }
   }
 }

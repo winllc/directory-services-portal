@@ -252,6 +252,8 @@ export interface ServerInfo {
   version: string;
   /** Sign-in methods offered by the server. */
   auth?: { password: boolean; x509: boolean; x509AutoLogin: boolean };
+  /** Text shown on the login page, e.g. demo credentials. */
+  loginHint?: string;
 }
 
 export interface SubjectSearchResult {

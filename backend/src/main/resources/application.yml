@@ -40,6 +40,7 @@ portal:
   data-dir: ${DATA_DIR:./data}
   seed-demo-config: ${SEED_DEMO_CONFIG:}
   password-login-enabled: ${PASSWORD_LOGIN_ENABLED:true}
+  login-hint: ${LOGIN_HINT:}
   x509:
     enabled: ${X509_ENABLED:false}
     source: ${X509_SOURCE:servlet}

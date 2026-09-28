@@ -24,6 +24,8 @@ public class EmbeddedDirectory implements AutoCloseable {
   public static final String BASE_DN = "dc=example,dc=com";
   public static final String SERVICE_DN = "cn=portal,ou=system," + BASE_DN;
   public static final String SERVICE_PASSWORD = "portal-secret";
+  public static final String LOGIN_HINT =
+      "Demo directory: sign in as admin (administrator), alice, bob, erin (HR), dave (helpdesk) or frank (partner). Password: password";
 
   private static final Logger log = LoggerFactory.getLogger(EmbeddedDirectory.class);
 

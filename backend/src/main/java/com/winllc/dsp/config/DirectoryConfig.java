@@ -18,6 +18,7 @@ public class DirectoryConfig {
     props.setBaseDn(EmbeddedDirectory.BASE_DN);
     if (props.adminUserList().isEmpty()) props.setAdminUsers("admin");
     if (props.adminGroupList().isEmpty()) props.setAdminGroups("cn=directory-admins,ou=groups," + EmbeddedDirectory.BASE_DN);
+    if (props.getLoginHint() == null || props.getLoginHint().isBlank()) props.setLoginHint(EmbeddedDirectory.LOGIN_HINT);
     return new EmbeddedDirectory();
   }
 

@@ -18,6 +18,8 @@ public class PortalProperties {
   private final X509 x509 = new X509();
   /** Allow username/password sign-in (disable for certificate-only deployments). */
   private boolean passwordLoginEnabled = true;
+  /** Optional text shown on the login page (e.g. demo credentials or a help-desk contact). */
+  private String loginHint = "";
   private String baseDn = "dc=example,dc=com";
   private String userSearchBase = "";
   /** {@code {{username}}} is replaced with the escaped login name. */
@@ -145,6 +147,8 @@ public class PortalProperties {
   public Ldap getLdap() { return ldap; }
   public X509 getX509() { return x509; }
   public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
+  public String getLoginHint() { return loginHint; }
+  public void setLoginHint(String loginHint) { this.loginHint = loginHint; }
   public void setPasswordLoginEnabled(boolean passwordLoginEnabled) { this.passwordLoginEnabled = passwordLoginEnabled; }
   public String getBaseDn() { return baseDn; }
   public void setBaseDn(String baseDn) { this.baseDn = baseDn; }

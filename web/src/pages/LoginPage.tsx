@@ -92,11 +92,7 @@ export function LoginPage() {
             </Button>
           </>
         )}
-        {info.data?.mode === 'memory' && auth.password && (
-          <div className="demo-hint">
-            <strong>Demo directory.</strong> Sign in as <code>admin</code> (administrator), <code>alice</code>, <code>bob</code>, <code>erin</code> (HR), <code>dave</code> (helpdesk) or <code>frank</code> (partner). Password: <code>password</code>
-          </div>
-        )}
+        {info.data?.loginHint && <div className="demo-hint">{info.data.loginHint}</div>}
       </form>
     </div>
   );

@@ -1,24 +1,36 @@
-# Portal (web UI + API) and OpenLDAP for testing against a real directory.
-#   docker compose up --build   ->  http://localhost:3001  (sign in as "admin" / "admin", or "alice" / "alice")
+# Portal (web UI + API) and OpenLDAP loaded with the demo organisation.
+#   docker compose up --build   ->  http://localhost:3001
+#   Sign in as admin / password (administrator), or alice, bob, erin, dave, frank / password.
 # The portal image bundles the React client, so the single "portal" service serves both the UI
 # and /api. The in-memory demo needs no containers: `npm run dev`.
+#
+# The LDIF in deploy/ldif is only loaded when OpenLDAP starts with an empty database. After
+# changing it (or to start over), run `docker compose down -v` first.
 services:
   openldap:
     image: osixia/openldap:1.5.0
     environment:
       LDAP_ORGANISATION: Example Corp
       LDAP_DOMAIN: example.com
+      # Password of the LDAP administrator (cn=admin,dc=example,dc=com) that the portal binds as.
+      # It is not a portal login; portal users are the uid=... entries in deploy/ldif.
       LDAP_ADMIN_PASSWORD: admin
     command: --copy-service
+    # slapd preallocates per file descriptor; newer Docker versions default to an enormous
+    # limit that makes this image hang or crash on startup.
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
     volumes:
       - ./deploy/ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom
     ports:
       - "389:389"
     healthcheck:
-      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "dc=example,dc=com", "-s", "base", "-D", "cn=admin,dc=example,dc=com", "-w", "admin"]
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "uid=admin,ou=people,dc=example,dc=com", "-s", "base", "-D", "cn=admin,dc=example,dc=com", "-w", "admin"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
 
   portal:
     build: .
@@ -31,10 +43,13 @@ services:
       LDAP_BIND_DN: cn=admin,dc=example,dc=com
       LDAP_BIND_PASSWORD: admin
       LDAP_BASE_DN: dc=example,dc=com
-      LDAP_USER_SEARCH_BASE: ou=people,dc=example,dc=com
+      LDAP_USER_SEARCH_BASE: dc=example,dc=com
       LDAP_GROUP_SEARCH_BASE: ou=groups,dc=example,dc=com
       ADMIN_USERS: admin
       ADMIN_GROUPS: cn=directory-admins,ou=groups,dc=example,dc=com
+      # Example forms, directories and permissions matching the demo organisation.
+      SEED_DEMO_CONFIG: "true"
+      LOGIN_HINT: "Demo: sign in as admin (administrator), alice, bob, erin (HR), dave (helpdesk) or frank (partner). Password: password"
       COOKIE_SECURE: "false"
     ports:
       - "3001:3001"

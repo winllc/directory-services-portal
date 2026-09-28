@@ -67,10 +67,12 @@ Users sign in with their own directory password (the portal verifies it with an 
 The service account needs read access to the schema and to the namespaces you expose, and write
 access wherever portal users should be able to edit.
 
-`docker compose up --build` starts OpenLDAP with an example custom schema (`deploy/ldif`) and the
-portal image, which serves both the web UI and the API. Open http://localhost:3001 and sign in as
-`admin` / `admin` (or `alice` / `alice`). The portal starts without forms or directory
-definitions; create them under *Administration*.
+`docker compose up --build` starts OpenLDAP and the portal image (web UI + API) at
+http://localhost:3001. OpenLDAP is loaded with the same demo organisation, ACME schema and
+**default credentials as the built-in demo**: `admin` / `password` (administrator), or `alice`,
+`bob`, `erin`, `dave`, `frank` with password `password`. The example directories and permissions
+are seeded too. The LDIF in `deploy/ldif` is only loaded into an empty database, so run
+`docker compose down -v` after changing it, or if you started the stack from an older version.
 
 ## Features
 
