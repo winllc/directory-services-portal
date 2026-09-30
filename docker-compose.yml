@@ -56,6 +56,10 @@ services:
       # Example forms, directories and permissions matching the demo organisation.
       SEED_DEMO_CONFIG: "true"
       LOGIN_HINT: "Demo: sign in as admin (administrator), alice, bob, erin (HR), dave (helpdesk) or frank (partner). Password: password"
+      # Optional fixed banner at the top and bottom of every page:
+      # BANNER_TEXT: "UNCLASSIFIED"
+      # BANNER_FOREGROUND: "#ffffff"
+      # BANNER_BACKGROUND: "#007a33"
       COOKIE_SECURE: "false"
       # Honour X-Forwarded-* set by the web proxy (which overwrites them), so the API sees the real
       # client address (used for login throttling) and scheme. The api service is not published,

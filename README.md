@@ -209,6 +209,21 @@ Group membership, admin status and permissions work exactly as they do for passw
 > must be presented when the connection is established, which is how `client-auth: want`
 > works. Tomcat logs a warning about this at startup.
 
+### Page banners
+An optional fixed banner can be shown at the top and bottom of every page, including the login
+page. It's typically used for a classification or environment marking. The banners stay visible
+above dialogs and menus, and the layout is offset so no content sits underneath them. They're
+configured on the API:
+
+| variable | default | meaning |
+|---|---|---|
+| `BANNER_TEXT` | *(empty: off)* | Banner text, at most 200 characters |
+| `BANNER_FOREGROUND` | `#ffffff` | Text color |
+| `BANNER_BACKGROUND` | `#007a33` | Background color |
+
+Colors may be `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`/`hsl()`/`hsla()` or a CSS color
+name. Any other value stops the API at startup with an error naming the setting.
+
 ## Security notes
 - LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
   Admin-configured filter templates get their values escaped with `Filter.encodeValue`. DNs are

@@ -16,6 +16,7 @@ public class PortalProperties {
 
   private final Ldap ldap = new Ldap();
   private final X509 x509 = new X509();
+  private final Banner banner = new Banner();
   /** Allow username/password sign-in (disable for certificate-only deployments). */
   private boolean passwordLoginEnabled = true;
   /** Optional text shown on the login page (e.g. demo credentials or a help-desk contact). */
@@ -58,6 +59,45 @@ public class PortalProperties {
     public void setTimeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; }
     public int getPoolSize() { return poolSize; }
     public void setPoolSize(int poolSize) { this.poolSize = poolSize; }
+  }
+
+  /**
+   * Optional fixed banner shown at the top and bottom of every page (e.g. a classification or
+   * environment marking). Disabled while {@code text} is empty.
+   */
+  public static class Banner {
+    /** Hex (#rgb, #rrggbb, #rrggbbaa), rgb()/rgba()/hsl()/hsla() or a CSS color name. */
+    static final java.util.regex.Pattern COLOR = java.util.regex.Pattern.compile(
+        "^(#[0-9a-fA-F]{3,4}|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{8}|[a-zA-Z]{3,20}|(rgb|rgba|hsl|hsla)\\([0-9.,%\\s/+-]{1,60}\\))$");
+    static final int MAX_TEXT = 200;
+
+    private String text = "";
+    private String foreground = "#ffffff";
+    private String background = "#007a33";
+
+    public boolean enabled() {
+      return text != null && !text.isBlank();
+    }
+
+    /** Problems with the configuration (empty when valid). */
+    public List<String> problems() {
+      List<String> out = new java.util.ArrayList<>();
+      if (text != null && text.length() > MAX_TEXT) out.add("BANNER_TEXT must be at most " + MAX_TEXT + " characters");
+      if (!isColor(foreground)) out.add("BANNER_FOREGROUND is not a valid color: " + foreground);
+      if (!isColor(background)) out.add("BANNER_BACKGROUND is not a valid color: " + background);
+      return out;
+    }
+
+    public static boolean isColor(String value) {
+      return value != null && COLOR.matcher(value.trim()).matches();
+    }
+
+    public String getText() { return text; }
+    public void setText(String text) { this.text = text; }
+    public String getForeground() { return foreground; }
+    public void setForeground(String foreground) { this.foreground = foreground; }
+    public String getBackground() { return background; }
+    public void setBackground(String background) { this.background = background; }
   }
 
   /** X.509 client-certificate sign-in. */
@@ -146,6 +186,7 @@ public class PortalProperties {
   public void setDirectoryMode(String directoryMode) { this.directoryMode = directoryMode; }
   public Ldap getLdap() { return ldap; }
   public X509 getX509() { return x509; }
+  public Banner getBanner() { return banner; }
   public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
   public String getLoginHint() { return loginHint; }
   public void setLoginHint(String loginHint) { this.loginHint = loginHint; }
