@@ -79,11 +79,13 @@ access wherever portal users should be able to edit.
 
 ### Docker Compose
 
-`docker compose up --build` starts three services, then open **http://localhost:8080**:
+`docker compose up --build` starts three services. **None of them publishes a port on the host.**
+To open the portal, either route a reverse proxy on the compose network to `web:80`, or uncomment
+the `ports` entry of the `web` service and open http://localhost:8181.
 
 | service | image | published |
 |---|---|---|
-| `web` | `web/Dockerfile`: nginx serving the React client, proxying `/api` to `api` (`API_URL`) | `8080` |
+| `web` | `web/Dockerfile`: nginx serving the React client, proxying `/api` to `api` (`API_URL`) | no (uncomment `8181`) |
 | `api` | `backend/Dockerfile`: the Spring Boot API | no (uncomment `3001` to call it directly) |
 | `openldap` | `deploy/openldap`: Ubuntu's `slapd`, built locally (amd64 and arm64, incl. Apple Silicon) | no (uncomment `1389`) |
 
