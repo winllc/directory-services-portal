@@ -54,7 +54,7 @@ Production build without Docker: `npm run build && npm start`. This builds `web/
 `backend/target/directory-services-portal.jar`, then runs the API on :3001 and serves the client
 on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real deployment, serve
 `web/dist` from any web server that routes `/api` to the API and falls back to `index.html` for
-other paths. `web/nginx/default.conf.template` is a ready-made example.
+other paths. `web/nginx/templates/default.conf.template` is a ready-made example.
 
 ## Connecting to a real directory
 
@@ -80,23 +80,29 @@ access wherever portal users should be able to edit.
 ### Docker Compose
 
 `docker compose up --build` starts three services. **None of them publishes a port on the host.**
-To open the portal, either route a reverse proxy on the compose network to `web:80`, or uncomment
+To open the portal, either route a reverse proxy on the compose network to `web:8080`, or uncomment
 the `ports` entry of the `web` service and open http://localhost:8181.
 
 | service | image | published |
 |---|---|---|
-| `web` | `web/Dockerfile`: nginx serving the React client, proxying `/api` to `api` (`API_URL`) | no (uncomment `8181`) |
-| `api` | `backend/Dockerfile`: the Spring Boot API | no (uncomment `3001` to call it directly) |
+| `web` | `web/Dockerfile`: nginx (UBI 9 `nginx-126`) serving the React client on port 8080, proxying `/api` to `api` (`API_URL`) | no (uncomment `8181`) |
+| `api` | `backend/Dockerfile`: the Spring Boot API (UBI 9 `openjdk-21-runtime`) on port 3001 | no (uncomment `3001` to call it directly) |
 | `openldap` | `deploy/openldap`: Ubuntu's `slapd`, built locally (amd64 and arm64, incl. Apple Silicon) | no (uncomment `1389`) |
 
 OpenLDAP is loaded with the same demo organisation, ACME schema and **default credentials as
 the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `erin`, `dave`,
 `frank` with password `password`. The example directories and permissions are seeded too.
 
+- The `web` and `api` images are built on Red Hat Universal Base Image 9
+  (`registry.access.redhat.com/ubi9/...`: `nodejs-22` and `openjdk-21` to build, `nginx-126` and
+  `openjdk-21-runtime` to run). Both run as unprivileged users (uid 1001 and 185, group 0) and
+  listen on unprivileged ports, so they also run under an arbitrary UID (OpenShift `restricted`).
+  The demo `openldap` image stays on Ubuntu because RHEL 9 no longer ships the OpenLDAP server.
+
 - The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
   `docker compose down -v` after changing it, or if you started the stack from an older version.
-- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=native`, private
-  network addresses only). It therefore sees real client addresses, which login throttling relies on.
+- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=framework`; the
+  `api` service is reachable only from the compose network). It therefore sees real client addresses, which login throttling relies on.
 - If a container fails to start, `docker compose logs <service>` shows why.
 
 ## Features
@@ -168,7 +174,9 @@ certificate comes from:
   `X509_TRUSTED_CA_FILE` so the API validates the chain itself.
 
   Docker Compose has this ready as an overlay: the web image's `templates-mtls` nginx config
-  runs HTTPS with `ssl_verify_client optional`, so password sign-in keeps working.
+  runs HTTPS with `ssl_verify_client optional`, so password sign-in keeps working. nginx runs
+  unprivileged (uid 1001, group 0), so the mounted `server.key` must be readable by that user or
+  group (for example `chgrp 0 server.key && chmod 0640 server.key`).
   ```bash
   scripts/generate-dev-certs.sh certs          # throw-away CA, server cert, admin/alice/bob .p12 (password: password)
   docker compose -f docker-compose.yml -f docker-compose.mtls.yml up --build
@@ -266,5 +274,6 @@ Layout:
   - `config/`: security and SPA serving
 - `shared/`: TypeScript types, DN utilities, validation and schema helpers used by the client.
 - `web/`: the React client (`src/pages` for user and admin pages, `src/components`), with
-  `web/Dockerfile` and the nginx configs in `web/nginx/`.
+  `web/Dockerfile` and its nginx setup in `web/nginx/` (`nginx.conf`, the server `templates`
+  and `entrypoint.sh`, which renders them at start).
 - `backend/Dockerfile`: the API image. `deploy/openldap/`: the demo OpenLDAP image.

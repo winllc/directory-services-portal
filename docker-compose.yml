@@ -3,13 +3,15 @@
 #   Sign in as admin / password (administrator), or alice, bob, erin, dave, frank / password.
 #
 # No service publishes a port on the host. Reach the portal through a reverse proxy on this
-# compose network (target web:80), or uncomment the ports entry of the web service
+# compose network (target web:8080), or uncomment the ports entry of the web service
 # (-> http://localhost:8181).
 #
-#   web       nginx serving the React client on port 80; proxies /api to the api service (one
+#   web       nginx serving the React client on port 8080; proxies /api to the api service (one
 #             origin for the browser, so session cookies and CSRF protection work unchanged)
 #   api       Spring Boot REST API (not published on the host)
 #   openldap  directory server (not published on the host)
+#
+# The web and api images are based on Red Hat UBI 9 and run as unprivileged users.
 #
 # X.509 client-certificate sign-in: see docker-compose.mtls.yml.
 # The in-memory demo needs no containers: `npm run dev`.
@@ -80,11 +82,11 @@ services:
     environment:
       API_URL: http://api:3001
     # Not published on the host: attach your reverse proxy to this compose network and route to
-    # web:80. To open it directly from your machine instead, uncomment:
+    # web:8080. To open it directly from your machine instead, uncomment:
     # ports:
-    #   - "8181:80"
+    #   - "8181:8080"
     expose:
-      - "80"
+      - "8080"
 
 volumes:
   portal-data:

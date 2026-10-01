@@ -4,6 +4,8 @@
 #   -> https://localhost:8443  (import certs/alice.p12 into the browser, password "password")
 # nginx verifies client certificates against certs/ca.pem and forwards verified ones to the API
 # in X-SSL-Client-Cert; password sign-in keeps working for browsers without a certificate.
+# nginx runs unprivileged (uid 1001, group 0): the mounted files, including server.key, must be
+# readable by that user or group (the dev script makes server.key world-readable).
 services:
   web:
     environment:
@@ -14,7 +16,7 @@ services:
       - ./certs/server.key:/etc/nginx/tls/server.key:ro
       - ./certs/ca.pem:/etc/nginx/tls/ca.pem:ro
     ports:
-      - "8443:443"
+      - "8443:8443"
 
   api:
     environment:
