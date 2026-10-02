@@ -6,6 +6,8 @@ import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
 import com.unboundid.ldap.sdk.RDN;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.winllc.dsp.audit.AuditEvent;
+import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
@@ -37,6 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -52,20 +55,23 @@ public class EntryService {
   private static final int LIST_LIMIT = 1000;
   private static final int OPTIONS_LIMIT = 500;
   private static final long OPTIONS_TTL_MS = 30_000;
+  private static final String REDACTED = "(redacted)";
 
   private final LdapDirectory directory;
   private final ConfigStore store;
   private final SchemaService schema;
+  private final AuditLog audit;
   private final Map<DropdownSource.Ldap, CachedOptions> optionCache = new ConcurrentHashMap<>();
 
   private record CachedOptions(long at, List<OptionItem> options) {}
 
   public record ListQuery(String q, Integer page, Integer pageSize, String sort, String order) {}
 
-  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema) {
+  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit) {
     this.directory = directory;
     this.store = store;
     this.schema = schema;
+    this.audit = audit;
   }
 
   // ---------------------------------------------------------------------------
@@ -273,6 +279,11 @@ public class EntryService {
   // ---------------------------------------------------------------------------
 
   public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
+    AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).target("entry", parentDn, null);
+    return audited(event, () -> doCreate(event, user, def, parentDn, input));
+  }
+
+  private DirectoryEntry doCreate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
     require(user, def, AccessLevel.WRITE);
     FormDefinition form = form(def);
     List<String> allowed = def.createContainers().isEmpty() ? List.of(def.baseDn()) : def.createContainers();
@@ -295,7 +306,12 @@ public class EntryService {
       List<String> v = values.get(f.attribute().toLowerCase());
       if (v != null && !v.isEmpty()) attributes.put(f.attribute(), v);
     }
+    List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), List.of());
+    event.target("entry", dn, titles.isEmpty() ? rdnValues.get(0) : titles.get(0));
+    event.changes(attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList());
     directory.add(dn, attributes);
+    // Recorded as soon as the directory accepts it: reading the entry back can still fail.
+    event.success();
     return loadEntry(def, form, dn);
   }
 
@@ -304,10 +320,16 @@ public class EntryService {
   }
 
   public DirectoryEntry update(SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
+    AuditLog.Draft event = audit.event(self ? "entry.self_update" : "entry.update").by(user).definition(def.id()).target("entry", dn, null);
+    return audited(event, () -> doUpdate(event, user, def, dn, input, self));
+  }
+
+  private DirectoryEntry doUpdate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
     if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
     if (!self) require(user, def, AccessLevel.WRITE);
     FormDefinition form = form(def);
     DirectoryEntry current = loadEntry(def, form, dn);
+    event.target("entry", current.dn(), title(def, current));
     if (self) assertSelf(user, def, form, current.dn());
 
     Map<String, List<String>> values = validate(form, input, self ? FormValidator.Mode.SELF : FormValidator.Mode.UPDATE);
@@ -329,10 +351,12 @@ public class EntryService {
       if (newRdnValues.stream().noneMatch(v -> v.equalsIgnoreCase(currentValue))) {
         if (rdnNames.length > 1) throw ApiException.badRequest("Entries with multi-valued RDNs cannot be renamed here");
         targetDn = directory.rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
+        event.detail("previousDn", current.dn()).target("entry", targetDn, title(def, current));
       }
     }
 
     List<Modification> changes = new ArrayList<>();
+    List<AuditEvent.Change> recorded = new ArrayList<>();
     // Ensure the entry carries the form's object classes (e.g. auxiliary extensions).
     Set<String> currentClasses = new LinkedHashSet<>();
     current.values("objectClass").forEach(c -> currentClasses.add(c.toLowerCase()));
@@ -340,6 +364,9 @@ public class EntryService {
     boolean writesSomething = values.entrySet().stream().anyMatch(e -> !sameSet(e.getValue(), current.values(e.getKey())));
     if (!missingClasses.isEmpty() && writesSomething) {
       changes.add(new Modification(ModificationType.ADD, "objectClass", missingClasses.toArray(String[]::new)));
+      List<String> after = new ArrayList<>(current.values("objectClass"));
+      after.addAll(missingClasses);
+      recorded.add(change("objectClass", current.values("objectClass"), after));
     }
     for (Map.Entry<String, List<String>> e : values.entrySet()) {
       String key = e.getKey();
@@ -347,20 +374,69 @@ public class EntryService {
       List<String> prev = current.values(key);
       if (sameSet(prev, next)) continue;
       String attr = form.fields().stream().filter(f -> f.attribute().equalsIgnoreCase(key)).findFirst().orElseThrow().attribute();
+      recorded.add(change(attr, prev, next));
       if (next.isEmpty()) {
         if (!prev.isEmpty()) changes.add(new Modification(ModificationType.DELETE, attr));
       } else {
         changes.add(new Modification(ModificationType.REPLACE, attr, next.toArray(String[]::new)));
       }
     }
+    event.changes(recorded);
     directory.modify(targetDn, changes);
+    // A save that changed nothing is not worth a line in the audit log.
+    if (!recorded.isEmpty()) {
+      List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
+      event.target("entry", targetDn, titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0)).success();
+    }
     return loadEntry(def, form, targetDn);
   }
 
   public void remove(SessionUser user, DirectoryDefinition def, String dn) {
-    require(user, def, AccessLevel.WRITE);
-    DirectoryEntry current = loadEntry(def, form(def), dn);
-    directory.delete(current.dn());
+    AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).target("entry", dn, null);
+    audited(event, () -> {
+      require(user, def, AccessLevel.WRITE);
+      DirectoryEntry current = loadEntry(def, form(def), dn);
+      // What the entry held, so a mistaken delete can be put back by hand.
+      event.target("entry", current.dn(), title(def, current))
+          .changes(current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList());
+      directory.delete(current.dn());
+      event.success();
+      return null;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Audit
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Run a write, recording it as denied when the portal refuses it and failed when the
+   * directory does. The operation records its own success. Input that fails validation (400) or
+   * names an entry outside the directory (404) is not recorded: nothing was attempted.
+   */
+  private <T> T audited(AuditLog.Draft event, Supplier<T> operation) {
+    try {
+      return operation.get();
+    } catch (ApiException e) {
+      if (e.status() == HttpStatus.FORBIDDEN) event.denied(e.getMessage());
+      throw e;
+    } catch (DirectoryException e) {
+      event.failed(e.getMessage());
+      throw e;
+    }
+  }
+
+  private static AuditEvent.Change change(String attribute, List<String> before, List<String> after) {
+    return new AuditEvent.Change(attribute, redact(attribute, before), redact(attribute, after));
+  }
+
+  private static List<String> redact(String attribute, List<String> values) {
+    return values.isEmpty() || !HIDDEN.contains(attribute.toLowerCase()) ? List.copyOf(values) : List.of(REDACTED);
+  }
+
+  private static String title(DirectoryDefinition def, DirectoryEntry entry) {
+    String t = entry.first(def.titleAttribute());
+    return t != null ? t : Dns.rdnValue(entry.dn());
   }
 
   // ---------------------------------------------------------------------------

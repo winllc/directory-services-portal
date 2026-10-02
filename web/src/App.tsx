@@ -12,6 +12,7 @@ import { FormEditorPage } from './pages/admin/FormEditorPage';
 import { DefinitionsPage } from './pages/admin/DefinitionsPage';
 import { DefinitionEditorPage } from './pages/admin/DefinitionEditorPage';
 import { PermissionsPage } from './pages/admin/PermissionsPage';
+import { AuditPage } from './pages/admin/AuditPage';
 import { EmptyState } from './components/ui';
 
 const admin = (el: React.ReactNode) => <RequireAdmin>{el}</RequireAdmin>;
@@ -38,6 +39,7 @@ export function App() {
         <Route path="admin/definitions" element={admin(<DefinitionsPage />)} />
         <Route path="admin/definitions/:id" element={admin(<DefinitionEditorPage />)} />
         <Route path="admin/permissions" element={admin(<PermissionsPage />)} />
+        <Route path="admin/audit" element={admin(<AuditPage />)} />
         <Route path="*" element={<EmptyState title="Page not found">The page you requested does not exist.</EmptyState>} />
       </Route>
     </Routes>

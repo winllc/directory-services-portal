@@ -9,6 +9,7 @@ import {
   Folder,
   FormInput,
   Globe,
+  History,
   Home,
   KeyRound,
   Laptop,
@@ -123,6 +124,9 @@ export function Layout() {
               </NavItem>
               <NavItem to="/admin/permissions" icon={<KeyRound size={18} />}>
                 Permissions
+              </NavItem>
+              <NavItem to="/admin/audit" icon={<History size={18} />}>
+                Audit log
               </NavItem>
             </>
           )}

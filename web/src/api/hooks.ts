@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AttributeTypeDef,
+  AuditPage,
   CustomSchema,
   DefinitionSummary,
   DirectoryDefinition,
@@ -32,6 +33,7 @@ export const keys = {
   grants: ['admin', 'grants'] as const,
   subjects: (q: string, type?: string) => ['admin', 'subjects', q, type] as const,
   browse: (base: string) => ['admin', 'browse', base] as const,
+  audit: (params: object) => ['admin', 'audit', params] as const,
 };
 
 export const useServerInfo = () => useQuery({ queryKey: keys.info, queryFn: () => api.get<ServerInfo>('/api/info'), staleTime: 60_000 });
@@ -240,3 +242,22 @@ export const useBrowse = (base: string, enabled: boolean) =>
 
 export const previewSearch = (input: { baseDn: string; scope: 'base' | 'one' | 'sub'; filter: string; attributes?: string[] }) =>
   api.post<{ entries: DirectoryEntry[]; truncated: boolean }>('/api/admin/preview', input);
+
+export interface AuditQuery {
+  q?: string;
+  action?: string;
+  outcome?: string;
+  actor?: string;
+  target?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export const useAudit = (params: AuditQuery) =>
+  useQuery({
+    queryKey: keys.audit(params),
+    queryFn: () => api.get<AuditPage>(`/api/admin/audit${qs({ ...params })}`),
+    placeholderData: (prev) => prev,
+  });

@@ -2,6 +2,7 @@ package com.winllc.dsp.x509;
 
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
@@ -36,14 +37,16 @@ public class X509AuthService {
   private final CertificateValidator validator;
   private final LdapDirectory directory;
   private final AuthService auth;
+  private final AuditLog audit;
 
   public X509AuthService(PortalProperties props, ClientCertificateExtractor extractor, CertificateValidator validator,
-      LdapDirectory directory, AuthService auth) {
+      LdapDirectory directory, AuthService auth, AuditLog audit) {
     this.props = props;
     this.extractor = extractor;
     this.validator = validator;
     this.directory = directory;
     this.auth = auth;
+    this.audit = audit;
   }
 
   public boolean enabled() {
@@ -68,6 +71,8 @@ public class X509AuthService {
     X509Certificate[] chain = extractor.extract(request)
         .orElseThrow(() -> new CertificateRejectedException("No client certificate was presented"));
     CertificateIdentity identity = CertificateIdentity.of(chain[0]);
+    AuditLog.Draft event = audit.event("auth.login").target("certificate", identity.subject(), identity.cn())
+        .detail("method", "x509").detail("certificateSerial", identity.serial()).detail("certificateIssuer", identity.issuer());
     try {
       validator.validate(chain);
       String dn = mapToUser(identity);
@@ -75,9 +80,11 @@ public class X509AuthService {
       String username = identity.cn() != null ? identity.cn() : identity.subject();
       SessionUser user = auth.buildUser(dn, username, "x509", identity.subject());
       log.info("Certificate sign-in: {} (serial {}) -> {}", identity.subject(), identity.serial(), dn);
+      event.by(user).target("user", user.dn(), user.displayName()).detail("certificateSubject", identity.subject()).success();
       return user;
     } catch (CertificateRejectedException e) {
       log.warn("Certificate sign-in rejected for {} (issuer {}): {}", identity.subject(), identity.issuer(), e.getMessage());
+      event.failed(e.getMessage());
       throw e;
     }
   }

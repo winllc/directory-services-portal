@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, History, Pencil, Trash2 } from 'lucide-react';
 import { firstAttr, getAttr, rdnValue } from '@dsp/shared';
 import { useDefinition, useEntry, useEntryMutations } from '../api/hooks';
 import { EntryDetails } from '../components/EntryDetails';
 import { EntryForm } from '../components/EntryForm';
 import { DefinitionIcon } from '../components/Layout';
 import { DirectoryNotFound } from '../components/DirectoryNotFound';
+import { useUser } from '../lib/auth';
 import { Badge, Button, Card, ConfirmDialog, ErrorAlert, FormRow, PageHeader, Spinner, useToast } from '../components/ui';
 
 export function EntryPage() {
@@ -22,6 +23,7 @@ export function EntryPage() {
   const entry = useEntry(definition?.id, dn);
   const { update, remove } = useEntryMutations(definition?.id ?? slug);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const user = useUser();
   const [showRaw, setShowRaw] = useState(false);
 
   if (def.isLoading || entry.isLoading) return <Spinner label="Loading…" />;
@@ -70,15 +72,24 @@ export function EntryPage() {
           </span>
         }
         actions={
-          canWrite &&
-          !editing && (
+          !editing &&
+          (canWrite || user.isAdmin) && (
             <>
-              <Button icon={<Pencil size={16} />} variant="primary" onClick={() => setEditing(true)}>
-                Edit
-              </Button>
-              <Button icon={<Trash2 size={16} />} variant="danger" onClick={() => setConfirmDelete(true)}>
-                Delete
-              </Button>
+              {user.isAdmin && (
+                <Button icon={<History size={16} />} onClick={() => navigate(`/admin/audit?target=${encodeURIComponent(e.dn)}`)}>
+                  History
+                </Button>
+              )}
+              {canWrite && (
+                <>
+                  <Button icon={<Pencil size={16} />} variant="primary" onClick={() => setEditing(true)}>
+                    Edit
+                  </Button>
+                  <Button icon={<Trash2 size={16} />} variant="danger" onClick={() => setConfirmDelete(true)}>
+                    Delete
+                  </Button>
+                </>
+              )}
             </>
           )
         }

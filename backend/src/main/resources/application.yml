@@ -41,6 +41,9 @@ portal:
   seed-demo-config: ${SEED_DEMO_CONFIG:}
   password-login-enabled: ${PASSWORD_LOGIN_ENABLED:true}
   login-hint: ${LOGIN_HINT:}
+  audit:
+    dir: ${AUDIT_DIR:}
+    memory-events: ${AUDIT_MEMORY_EVENTS:10000}
   x509:
     enabled: ${X509_ENABLED:false}
     source: ${X509_SOURCE:servlet}

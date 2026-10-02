@@ -70,7 +70,8 @@ and set `DIRECTORY_MODE=ldap`:
 | `LDAP_USERNAME_ATTRIBUTE` | login name attribute (`uid`, `sAMAccountName`, …) |
 | `LDAP_GROUP_SEARCH_BASE`, `LDAP_GROUP_FILTER` | group lookup (`{{dn}}`, `{{username}}`); `memberOf` is also used |
 | `ADMIN_USERS`, `ADMIN_GROUPS` | portal administrators, separated by `;` |
-| `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) is stored |
+| `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) and the audit log are stored |
+| `AUDIT_DIR`, `AUDIT_MEMORY_EVENTS` | where the audit files go (default `$DATA_DIR/audit`), and how many recent events the audit page searches (default 10,000) |
 | `PORT`, `SESSION_TTL_MINUTES`, `COOKIE_SECURE`, `FORWARD_HEADERS_STRATEGY` | HTTP settings |
 
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
@@ -152,6 +153,37 @@ the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `e
 - **My profile** shows every definition that can locate the user, and lets them edit their own
   self-service fields.
 
+### Audit log
+*Admin → Audit log*
+
+Every write goes to the directory as the portal's service account, so the directory's own logs
+can't say who made a change. The portal records it instead:
+
+| Recorded | Includes |
+|---|---|
+| Entry created, updated, renamed or deleted, through a directory or **My profile** | each changed attribute's values before and after. A delete keeps everything the entry held, so it can be put back by hand |
+| Sign-ins and sign-outs, by password or certificate | for a failed attempt: the name that was tried or the certificate's subject, serial and issuer, and why it failed |
+| Grants, directory definitions, forms and custom schema created, changed or deleted | the settings that changed, before and after |
+
+Every event carries who did it (with their DN and how they signed in), the client address, and an
+outcome: **success**, **denied** (the portal's permission checks refused it) or **failed** (the
+directory or the credentials said no). Requests that fail validation are not recorded, because
+nothing was attempted. A save that changes nothing is not recorded either.
+
+- Values of password attributes (`userPassword`, `unicodePwd`, and the others the portal never
+  returns to browsers) are recorded as `(redacted)`.
+- The audit page filters by activity, outcome, date range, person and target. An entry's
+  **History** button opens it filtered to that entry, including events from before a rename.
+- Events are appended to `audit-YYYY-MM.jsonl` (one JSON object per line) and synced to disk
+  before the request returns. The portal never rewrites or deletes these files; retention and
+  archiving are up to you. In Docker Compose they are on the `portal-data` volume.
+- Each event is also logged on the `audit` logger, so a log shipper can forward it to a SIEM.
+- The page searches the newest `AUDIT_MEMORY_EVENTS` events, reloaded from the files at startup.
+  Use the files for anything older.
+- The change has already been made by the time it is recorded. If the audit file can't be
+  written, the portal logs an error and the event still reaches the `audit` logger. The
+  request is not failed.
+
 ### X.509 client-certificate sign-in
 Users can sign in with a client certificate (smart cards such as CAC/PIV, or any PKI-issued user
 certificate), alongside or instead of passwords. Set `X509_ENABLED=true` and choose where the
@@ -230,6 +262,8 @@ Group membership, admin status and permissions work exactly as they do for passw
   `/api/admin/**` requires `ROLE_ADMIN`. Failed logins are throttled.
 - Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
   Redis or JDBC) before scaling out.
+- Changes and sign-ins are recorded in the [audit log](#audit-log). Treat the audit files as
+  sensitive: they hold the values that were changed and the names people tried to sign in with.
 
 ## Development
 

@@ -16,6 +16,7 @@ public class PortalProperties {
 
   private final Ldap ldap = new Ldap();
   private final X509 x509 = new X509();
+  private final Audit audit = new Audit();
   /** Allow username/password sign-in (disable for certificate-only deployments). */
   private boolean passwordLoginEnabled = true;
   /** Optional text shown on the login page (e.g. demo credentials or a help-desk contact). */
@@ -58,6 +59,19 @@ public class PortalProperties {
     public void setTimeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; }
     public int getPoolSize() { return poolSize; }
     public void setPoolSize(int poolSize) { this.poolSize = poolSize; }
+  }
+
+  /** The audit log of changes and sign-ins (see {@code AuditLog}). */
+  public static class Audit {
+    /** Where the monthly audit files are written; blank means {@code <dataDir>/audit}. */
+    private String dir = "";
+    /** How many of the newest events the admin API can search. Older ones stay in the files. */
+    private int memoryEvents = 10_000;
+
+    public String getDir() { return dir; }
+    public void setDir(String dir) { this.dir = dir; }
+    public int getMemoryEvents() { return memoryEvents; }
+    public void setMemoryEvents(int memoryEvents) { this.memoryEvents = memoryEvents; }
   }
 
   /** X.509 client-certificate sign-in. */
@@ -146,6 +160,7 @@ public class PortalProperties {
   public void setDirectoryMode(String directoryMode) { this.directoryMode = directoryMode; }
   public Ldap getLdap() { return ldap; }
   public X509 getX509() { return x509; }
+  public Audit getAudit() { return audit; }
   public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
   public String getLoginHint() { return loginHint; }
   public void setLoginHint(String loginHint) { this.loginHint = loginHint; }

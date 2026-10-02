@@ -1,5 +1,6 @@
 package com.winllc.dsp.web;
 
+import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
 import com.winllc.dsp.web.dto.LoginRequest;
@@ -38,11 +39,13 @@ public class AuthController {
   private final AuthService auth;
   private final X509AuthService x509;
   private final SecurityContextRepository contexts;
+  private final AuditLog audit;
 
-  public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts) {
+  public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit) {
     this.auth = auth;
     this.x509 = x509;
     this.contexts = contexts;
+    this.audit = audit;
   }
 
   @PostMapping("/login")
@@ -63,6 +66,7 @@ public class AuthController {
 
   @PostMapping("/logout")
   public Map<String, Boolean> logout(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
+    if (user != null) audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName()).success();
     HttpSession session = request.getSession(false);
     if (session != null) session.invalidate();
     SecurityContextHolder.clearContext();

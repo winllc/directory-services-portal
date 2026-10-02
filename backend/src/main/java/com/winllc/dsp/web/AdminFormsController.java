@@ -1,5 +1,6 @@
 package com.winllc.dsp.web;
 
+import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.FormDefinition;
 import com.winllc.dsp.schema.FormLinter;
@@ -11,7 +12,9 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -29,10 +32,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminFormsController {
   private final ConfigStore store;
   private final SchemaService schema;
+  private final AuditLog audit;
 
-  public AdminFormsController(ConfigStore store, SchemaService schema) {
+  public AdminFormsController(ConfigStore store, SchemaService schema, AuditLog audit) {
     this.store = store;
     this.schema = schema;
+    this.audit = audit;
+  }
+
+  private void record(String action, FormDefinition before, FormDefinition after) {
+    FormDefinition f = after != null ? after : before;
+    audit.event(action).target("form", f.id(), f.name()).changes(audit.diff(before, after, Set.of("id", "createdAt", "updatedAt"))).success();
   }
 
   public record SaveResult(FormDefinition form, List<String> warnings) {}
@@ -77,16 +87,19 @@ public class AdminFormsController {
     FormDefinition form = new FormDefinition("form-" + UUID.randomUUID(), in.name().trim(), blank(in.description()), in.objectClasses(),
         in.rdnAttribute(), in.fields(), now, now);
     store.update(d -> d.forms.add(form));
+    record("form.create", null, form);
     return ResponseEntity.status(HttpStatus.CREATED).body(new SaveResult(form, lint.warnings()));
   }
 
   @PutMapping("/{id}")
   public SaveResult update(@PathVariable String id, @Valid @RequestBody FormInput in) {
     FormLinter.Lint lint = check(in);
+    AtomicReference<FormDefinition> previous = new AtomicReference<>();
     FormDefinition saved = store.update(d -> {
       for (int i = 0; i < d.forms.size(); i++) {
         FormDefinition f = d.forms.get(i);
         if (f.id().equals(id)) {
+          previous.set(f);
           FormDefinition next = new FormDefinition(id, in.name().trim(), blank(in.description()), in.objectClasses(), in.rdnAttribute(),
               in.fields(), f.createdAt(), Instant.now().toString());
           d.forms.set(i, next);
@@ -95,19 +108,22 @@ public class AdminFormsController {
       }
       throw ApiException.notFound("Form not found");
     });
+    record("form.update", previous.get(), saved);
     return new SaveResult(saved, lint.warnings());
   }
 
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> delete(@PathVariable String id) {
-    store.update(d -> {
+    FormDefinition removed = store.update(d -> {
       List<DirectoryDefinition> used = d.definitions.stream().filter(x -> x.formId().equals(id)).toList();
       if (!used.isEmpty()) {
         throw ApiException.conflict("Form is used by: " + used.stream().map(DirectoryDefinition::name).collect(Collectors.joining(", ")));
       }
-      if (!d.forms.removeIf(f -> f.id().equals(id))) throw ApiException.notFound("Form not found");
-      return null;
+      FormDefinition f = d.forms.stream().filter(x -> x.id().equals(id)).findFirst().orElseThrow(() -> ApiException.notFound("Form not found"));
+      d.forms.remove(f);
+      return f;
     });
+    record("form.delete", removed, null);
     return ResponseEntity.noContent().build();
   }
 }

@@ -3,6 +3,7 @@ package com.winllc.dsp.service;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
@@ -36,11 +37,13 @@ public class AuthService {
 
   private final LdapDirectory directory;
   private final PortalProperties props;
+  private final AuditLog audit;
   private final Map<String, Failures> failures = new ConcurrentHashMap<>();
 
-  public AuthService(LdapDirectory directory, PortalProperties props) {
+  public AuthService(LdapDirectory directory, PortalProperties props, AuditLog audit) {
     this.directory = directory;
     this.props = props;
+    this.audit = audit;
   }
 
   /** Substitute placeholders with filter-escaped values and parse. */
@@ -63,19 +66,29 @@ public class AuthService {
   }
 
   public SessionUser login(String username, String password, String clientKey) {
-    if (!props.isPasswordLoginEnabled()) throw ApiException.forbidden("Password sign-in is disabled");
+    // The attempted name is recorded as typed (truncated): it is what an investigation searches for.
+    AuditLog.Draft event = audit.event("auth.login").target("user", username.length() > 128 ? username.substring(0, 128) : username, null)
+        .detail("method", "password");
+    if (!props.isPasswordLoginEnabled()) {
+      event.denied("Password sign-in is disabled");
+      throw ApiException.forbidden("Password sign-in is disabled");
+    }
     String throttleKey = clientKey + "|" + username.toLowerCase();
     Failures f = failures.get(throttleKey);
     if (f != null && System.currentTimeMillis() - f.first() < FAILURE_WINDOW_MS && f.count() >= MAX_FAILURES) {
+      event.denied("Too many failed attempts");
       throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed login attempts. Try again later.");
     }
     String dn = USERNAME.matcher(username).matches() && !password.isEmpty() ? findUserDn(username) : null;
     if (dn == null || !directory.authenticate(dn, password)) {
       recordFailure(throttleKey);
+      event.failed(dn == null ? "Unknown user" : "Wrong password");
       throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
     }
     failures.remove(throttleKey);
-    return buildUser(dn, username, "password", null);
+    SessionUser user = buildUser(dn, username, "password", null);
+    event.by(user).target("user", user.dn(), user.displayName()).success();
+    return user;
   }
 
   private void recordFailure(String key) {

@@ -3,6 +3,7 @@ package com.winllc.dsp.web;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
@@ -18,7 +19,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -38,12 +41,14 @@ public class AdminPermissionsController {
   private final EntryService entries;
   private final LdapDirectory directory;
   private final PortalProperties props;
+  private final AuditLog audit;
 
-  public AdminPermissionsController(ConfigStore store, EntryService entries, LdapDirectory directory, PortalProperties props) {
+  public AdminPermissionsController(ConfigStore store, EntryService entries, LdapDirectory directory, PortalProperties props, AuditLog audit) {
     this.store = store;
     this.entries = entries;
     this.directory = directory;
     this.props = props;
+    this.audit = audit;
   }
 
   @GetMapping("/grants")
@@ -61,11 +66,13 @@ public class AdminPermissionsController {
     if (def.readOnly() && "write".equals(in.access())) {
       throw ApiException.badRequest("Read-only directories cannot grant write access", Map.of("access", "Read only directory"));
     }
+    AtomicReference<PermissionGrant> previous = new AtomicReference<>();
     PermissionGrant saved = store.update(d -> {
       for (int i = 0; i < d.grants.size(); i++) {
         PermissionGrant g = d.grants.get(i);
         if (g.definitionId().equals(in.definitionId()) && g.subjectType().equals(in.subjectType()) && g.subject().equalsIgnoreCase(in.subject())) {
           PermissionGrant next = g.withAccess(in.access(), in.subjectLabel() != null ? in.subjectLabel() : g.subjectLabel());
+          previous.set(g);
           d.grants.set(i, next);
           return next;
         }
@@ -75,16 +82,32 @@ public class AdminPermissionsController {
       d.grants.add(g);
       return g;
     });
+    record("grant.save", def.id(), def.name(), previous.get(), saved);
     return ResponseEntity.status(HttpStatus.CREATED).body(saved);
   }
 
   @DeleteMapping("/grants/{id}")
   public ResponseEntity<Void> revoke(@PathVariable String id) {
-    store.update(d -> {
-      if (!d.grants.removeIf(g -> g.id().equals(id))) throw ApiException.notFound("Grant not found");
-      return null;
+    PermissionGrant removed = store.update(d -> {
+      PermissionGrant g = d.grants.stream().filter(x -> x.id().equals(id)).findFirst().orElseThrow(() -> ApiException.notFound("Grant not found"));
+      d.grants.remove(g);
+      return g;
     });
+    String defName = store.snapshot().definitions.stream().filter(d -> d.id().equals(removed.definitionId()))
+        .map(DirectoryDefinition::name).findFirst().orElse(removed.definitionId());
+    record("grant.revoke", removed.definitionId(), defName, removed, null);
     return ResponseEntity.noContent().build();
+  }
+
+  private void record(String action, String definitionId, String definitionName, PermissionGrant before, PermissionGrant after) {
+    PermissionGrant g = after != null ? after : before;
+    audit.event(action)
+        .target("grant", g.id(), (g.subjectLabel() != null ? g.subjectLabel() : g.subject()) + " on " + definitionName)
+        .definition(definitionId)
+        .detail("subjectType", g.subjectType())
+        .detail("subject", g.subject())
+        .changes(audit.diff(before, after, Set.of("id", "createdAt", "definitionId")))
+        .success();
   }
 
   private Filter userFilter(String usernameValue) {

@@ -267,3 +267,42 @@ export interface ApiError {
   error: string;
   details?: Record<string, string>;
 }
+
+/** Outcome of an audited action: refused by the portal (denied) or by the directory or credentials (failed). */
+export type AuditOutcome = 'success' | 'denied' | 'failed';
+
+export interface AuditChange {
+  attribute: string;
+  /** Secret values are recorded as "(redacted)". */
+  before: string[];
+  after: string[];
+}
+
+/** One entry in the audit log of changes and sign-ins. Empty fields are omitted. */
+export interface AuditEvent {
+  id: string;
+  at: string;
+  /** Dotted name, e.g. "entry.update", "auth.login", "grant.revoke". */
+  action: string;
+  outcome: AuditOutcome;
+  /** Absent for anonymous requests such as a failed sign-in. */
+  actor?: { username: string; dn: string; authMethod?: string };
+  sourceAddress?: string;
+  target?: { type: string; id?: string; name?: string };
+  definitionId?: string;
+  message?: string;
+  changes?: AuditChange[];
+  details?: Record<string, string>;
+}
+
+export interface AuditPage {
+  events: AuditEvent[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** How many events the server holds in memory to search, of at most {@link capacity}. */
+  retained: number;
+  capacity: number;
+  /** Timestamp of the oldest searchable event. Older ones are only in the audit files. */
+  oldest?: string;
+}

@@ -2093,3 +2093,56 @@ textarea.input {
   white-space: nowrap;
   word-break: normal;
 }
+
+/* --------------------------------------------------------------------------
+   Audit log
+   -------------------------------------------------------------------------- */
+
+.nowrap {
+  white-space: nowrap;
+}
+.audit-scope {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.audit-scope .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.audit-scope code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audit-expanded > td {
+  background: var(--surface-2);
+}
+.audit-details {
+  display: grid;
+  gap: 14px;
+  padding: 4px 0;
+}
+.audit-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+.audit-facts dt {
+  color: var(--muted);
+}
+.audit-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.audit-value {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.audit-date {
+  width: auto;
+}
