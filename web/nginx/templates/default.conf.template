@@ -1,7 +1,7 @@
-# Rendered at container start by the nginx image (envsubst): ${API_URL} and
+# Rendered at container start by web/nginx/entrypoint.sh (envsubst): ${API_URL} and
 # ${NGINX_LOCAL_RESOLVERS} (taken from the container's /etc/resolv.conf).
 server {
-    listen 80;
+    listen 8080;
     server_name _;
     server_tokens off;
     root /usr/share/nginx/html;
@@ -28,8 +28,8 @@ server {
         # nginx is the edge: overwrite (don't append) so clients can't spoof their address.
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Port $server_port;
+        # The host (and port) the browser used; the port nginx listens on is internal.
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_read_timeout 120s;
         # Never let a client supply a certificate header (see templates-mtls for X.509 sign-in).
         proxy_set_header X-SSL-Client-Cert "";

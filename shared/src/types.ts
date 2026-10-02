@@ -254,6 +254,8 @@ export interface ServerInfo {
   auth?: { password: boolean; x509: boolean; x509AutoLogin: boolean };
   /** Text shown on the login page, e.g. demo credentials. */
   loginHint?: string;
+  /** Fixed banner shown at the top and bottom of every page (absent when disabled). */
+  banner?: { text: string; foreground: string; background: string };
 }
 
 export interface SubjectSearchResult {

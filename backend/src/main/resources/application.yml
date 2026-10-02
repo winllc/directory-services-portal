@@ -44,6 +44,11 @@ portal:
   audit:
     dir: ${AUDIT_DIR:}
     memory-events: ${AUDIT_MEMORY_EVENTS:10000}
+  # Optional fixed banner at the top and bottom of every page (off while the text is empty).
+  banner:
+    text: ${BANNER_TEXT:}
+    foreground: "${BANNER_FOREGROUND:#ffffff}"
+    background: "${BANNER_BACKGROUND:#007a33}"
   x509:
     enabled: ${X509_ENABLED:false}
     source: ${X509_SOURCE:servlet}

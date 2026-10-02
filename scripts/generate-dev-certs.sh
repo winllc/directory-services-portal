@@ -30,6 +30,8 @@ for u in "${USERS[@]}"; do
   rm -f "$u.csr"
 done
 rm -f server.csr
+# The web container's nginx runs unprivileged (uid 1001), so the bind-mounted key must be readable.
+chmod 0644 server.key
 echo "Certificates written to $(pwd)"
 echo "Start the portal with mutual TLS:"
 echo "  SPRING_PROFILES_ACTIVE=mtls TLS_CERT_FILE=$(pwd)/server.pem TLS_KEY_FILE=$(pwd)/server.key TLS_CLIENT_CA_FILE=$(pwd)/ca.pem \\"

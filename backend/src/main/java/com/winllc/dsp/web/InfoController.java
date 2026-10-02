@@ -28,14 +28,19 @@ public class InfoController {
   public ServerInfo info() {
     String mode = props.isMemoryMode() ? "memory" : "ldap";
     String url = props.isMemoryMode() ? null : directory.url();
+    PortalProperties.Banner b = props.getBanner();
+    // Colors are validated at startup; re-check so an invalid value can never reach the page styles.
+    ServerInfo.Banner banner = b.enabled() && b.problems().isEmpty()
+        ? new ServerInfo.Banner(b.getText().trim(), b.getForeground().trim(), b.getBackground().trim())
+        : null;
     String hint = props.getLoginHint() == null || props.getLoginHint().isBlank() ? null : props.getLoginHint();
     ServerInfo.AuthOptions auth = new ServerInfo.AuthOptions(
         props.isPasswordLoginEnabled(), props.getX509().isEnabled(), props.getX509().isEnabled() && props.getX509().isAutoLogin());
     try {
       directory.ping();
-      return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth, hint);
+      return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth, hint, banner);
     } catch (RuntimeException e) {
-      return new ServerInfo(mode, url, props.getBaseDn(), false, e.getMessage(), VERSION, auth, hint);
+      return new ServerInfo(mode, url, props.getBaseDn(), false, e.getMessage(), VERSION, auth, hint, banner);
     }
   }
 }
