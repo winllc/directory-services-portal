@@ -58,6 +58,37 @@ on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real d
 `web/dist` from any web server that routes `/api` to the API and falls back to `index.html` for
 other paths. `web/nginx/templates/default.conf.template` is a ready-made example.
 
+## Deployment package
+
+`scripts/package.sh` (or `npm run package`) builds a standalone package: one archive with
+everything a host needs, without the source tree, build tools or internet access.
+
+```bash
+scripts/package.sh                          # dist/directory-services-portal-<version>-docker.tar.gz
+scripts/package.sh --with-openldap          # ... including the demo OpenLDAP image
+scripts/package.sh --target native          # jar + web client + systemd unit + nginx site (no Docker)
+scripts/package.sh --registry reg.example.com/dsp --push --no-images   # images in your registry
+```
+
+The **docker** package holds the images (`docker save`), compose files that use them, every
+setting in one documented `.env`, `install.sh` and `portal.sh`. On the target host:
+
+```bash
+tar xzf directory-services-portal-<version>-docker.tar.gz && cd directory-services-portal-<version>
+./install.sh --http 8080         # or --https 443 (X.509 sign-in), or nothing published; --demo to try it
+vi .env                          # LDAP connection and administrators
+./portal.sh up                   # also: status, logs, backup, restore, down
+```
+
+The **native** package installs the API as a systemd service (Java 21+, listening on
+127.0.0.1:3001 only) and the client behind nginx: `sudo ./install.sh`, then edit
+`/etc/directory-services-portal/portal.env`. Each package has its own README, a `VERSION` and
+`SHA256SUMS`, which the installers verify; the archive gets a `.sha256` file.
+
+The version defaults to the `package.json` version plus the git revision (`--version` to set
+it). Builds behind a proxy or with a corporate CA can pass `DOCKER_BUILD_ARGS`, or alternative
+Dockerfiles in `API_DOCKERFILE` / `WEB_DOCKERFILE`.
+
 ## Connecting to a real directory
 
 Set the environment variables from `.env.example` (they map onto `backend/src/main/resources/application.yml`)
@@ -424,3 +455,5 @@ Layout:
   `web/Dockerfile` and its nginx setup in `web/nginx/` (`nginx.conf`, the server `templates`
   and `entrypoint.sh`, which renders them at start).
 - `backend/Dockerfile`: the API image. `deploy/openldap/`: the demo OpenLDAP image.
+- `scripts/package.sh` and `deploy/package/`: the standalone deployment packages (templates for
+  their compose files, installers and READMEs).

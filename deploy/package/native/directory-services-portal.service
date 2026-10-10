@@ -1,0 +1,30 @@
+[Unit]
+Description=Directory Services Portal API @VERSION@
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dsp
+Group=dsp
+EnvironmentFile=/etc/directory-services-portal/portal.env
+WorkingDirectory=/var/lib/directory-services-portal
+ExecStart=@JAVA@ -XX:MaxRAMPercentage=75.0 -jar /opt/directory-services-portal/api/directory-services-portal.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the API only needs to write its data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/directory-services-portal
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

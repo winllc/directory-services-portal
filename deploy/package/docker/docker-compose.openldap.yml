@@ -1,0 +1,25 @@
+# Demo only: an OpenLDAP server loaded with the demo organisation (users admin, alice, bob,
+# erin, dave, frank; password "password"). Use with .env created by ./install.sh --demo.
+services:
+  openldap:
+    image: ${OPENLDAP_IMAGE:-@OPENLDAP_IMAGE@}
+    restart: unless-stopped
+    environment:
+      LDAP_SUFFIX: dc=example,dc=com
+      LDAP_ADMIN_PASSWORD: ${LDAP_BIND_PASSWORD:-admin}
+    volumes:
+      - ldap-data:/var/lib/ldap
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "dc=example,dc=com", "-s", "base", "-D", "cn=admin,dc=example,dc=com", "-w", "${LDAP_BIND_PASSWORD:-admin}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  api:
+    depends_on:
+      openldap:
+        condition: service_healthy
+
+volumes:
+  ldap-data:

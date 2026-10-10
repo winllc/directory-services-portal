@@ -1,0 +1,6 @@
+# Publishes the web tier over plain HTTP on the host (WEB_PORT, default 8080). Put a TLS
+# terminating proxy in front of it, or use docker-compose.mtls.yml instead.
+services:
+  web:
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"

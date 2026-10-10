@@ -14,6 +14,7 @@
     "start": "concurrently -k -n api,web -c blue,green \"npm:start:api\" \"npm run preview -w web\"",
     "start:api": "java -jar backend/target/directory-services-portal.jar",
     "test": "cd backend && ./mvnw -q -B test && cd .. && npm test -w web",
+    "package": "scripts/package.sh",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w web"
   },
   "devDependencies": {

@@ -1,0 +1,42 @@
+# Directory Services Portal @VERSION@ (standalone package).
+# Settings live in .env (created by ./install.sh). Start with ./portal.sh up
+#
+#   web  nginx serving the client on port 8080 and proxying /api to the api service
+#   api  the Spring Boot API (never published on the host)
+#
+# Neither service publishes a port unless docker-compose.publish.yml (WEB_PORT) or
+# docker-compose.mtls.yml (HTTPS_PORT) is listed in COMPOSE_FILE in .env.
+name: ${COMPOSE_PROJECT_NAME:-directory-services-portal}
+
+services:
+  api:
+    image: ${API_IMAGE:-@API_IMAGE@}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Fixed by the container layout; everything else comes from .env.
+      DATA_DIR: /data
+      PORT: "3001"
+      # Only the web proxy can reach the API, and it overwrites X-Forwarded-*.
+      FORWARD_HEADERS_STRATEGY: framework
+    volumes:
+      - portal-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3001/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  web:
+    image: ${WEB_IMAGE:-@WEB_IMAGE@}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:3001
+    expose:
+      - "8080"
+
+volumes:
+  portal-data:
