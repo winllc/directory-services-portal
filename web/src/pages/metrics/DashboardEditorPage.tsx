@@ -5,6 +5,7 @@ import type { MetricWidget } from '@dsp/shared';
 import { useDashboard, useDashboardMutations, useEvaluate, useMetricSources } from '../../api/hooks';
 import { Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinner, Toggle, useDebounced, useToast } from '../../components/ui';
 import { MetricCard } from '../../components/metrics/MetricCard';
+import { JobProgress } from '../../components/jobs/JobProgress';
 import { MetricGrid } from '../../components/metrics/MetricGrid';
 import { WidgetEditor } from '../../components/metrics/WidgetEditor';
 import { newWidget, normalizeWidget } from '../../components/metrics/widgets';
@@ -20,6 +21,7 @@ function WidgetDialog({ initial, adding, onSave, onClose }: { initial: MetricWid
   const preview = useMemo(() => (debounced.definitionId ? [{ ...normalizeWidget(debounced), id: 'preview' }] : []), [debounced]);
   const result = useEvaluate(preview, !!debounced.title);
   const outcome = result.data?.preview;
+  const job = result.job;
   return (
     <Modal
       open
@@ -37,7 +39,10 @@ function WidgetDialog({ initial, adding, onSave, onClose }: { initial: MetricWid
     >
       <div className="widget-dialog">
         <WidgetEditor value={w} onChange={setW} sources={sources.data ?? []} errors={outcome?.details} />
-        <MetricCard widget={{ ...normalizeWidget(w), width: 'full' }} outcome={outcome} loading={result.isFetching} />
+        <div className="stack">
+          {job && <JobProgress job={job} label="Computing the preview" />}
+          <MetricCard widget={{ ...normalizeWidget(w), width: 'full' }} outcome={outcome} loading={result.isFetching} />
+        </div>
       </div>
     </Modal>
   );
@@ -71,7 +76,7 @@ export function DashboardEditorPage() {
 
   const keyed = useMemo(() => widgets.map((w) => ({ ...w, id: w.id ?? draftId() })), [widgets]);
   const debounced = useDebounced(keyed, 300);
-  const preview = useEvaluate(debounced, debounced.length > 0);
+  const preview = useEvaluate(debounced, debounced.length > 0, isNew ? '/metrics' : `/metrics/dashboards/${id}/edit`);
 
   if (!loaded) return existing.isLoading ? <Spinner label="Loading…" /> : <EmptyState title="Dashboard not found" />;
 
@@ -116,6 +121,7 @@ export function DashboardEditorPage() {
         }
       />
       <ErrorAlert error={create.error ?? update.error} />
+      {preview.job && <JobProgress job={preview.job} label="Computing the previews" />}
       <Card title="General">
         <div className="form-grid">
           <FormRow label="Name" htmlFor="dash-name" required>

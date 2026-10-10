@@ -194,7 +194,8 @@ option labels (so `manager` DNs show as people's names). An extra LDAP filter na
 
 Every chart has a table view and a CSV download. Results are cached for
 `METRICS_CACHE_SECONDS` (**Refresh** recomputes them); charts that read the same directory share
-one paged scan of it.
+one paged scan of it. Charts that take longer than `METRICS_WAIT_MILLIS` to compute continue in
+the background (see [Background tasks](#background-tasks)).
 
 - Administrators may chart any attribute of a directory's object classes. Everyone else is
   limited to the attributes the directory shows them (form fields, list columns, title) and the
@@ -209,7 +210,11 @@ one paged scan of it.
 ### Data analysis
 *Admin → Data analysis*
 
-Saved analyses that run on demand against live data. A run's counts cover every entry read;
+Saved analyses that run on demand against live data, always as [background tasks](#background-tasks):
+**Run** returns at once, the page shows progress (and can be left), and the latest result of each
+saved analysis is kept on disk (`<DATA_DIR>/analysis-results/`) to reopen later. It is marked as
+out of date when the analysis settings change afterwards. Running with unsaved changes keeps the
+saved result and shows the draft's result separately. A run's counts cover every entry read;
 the list of individual findings is capped at `ANALYSIS_MAX_ISSUES` and can be filtered,
 searched and downloaded as CSV. Each finding links to the entry.
 
@@ -237,6 +242,29 @@ searched and downloaded as CSV. Each finding links to the entry.
 The demo includes two dashboards (*Workforce*, *IT assets and groups*) and two analyses
 (*Staff vs. white pages*, *People data quality*). Creating, changing and deleting dashboards
 and analyses is recorded in the audit log.
+
+### Background tasks
+*The bell in the top bar*
+
+Analyses, and metrics that take a while, run on the server independently of the browser:
+
+- Analyses always run in the background. Metrics run in the background when they take longer
+  than `METRICS_WAIT_MILLIS` (2 s by default); quicker ones are answered right away as before.
+- While a task runs, its page shows what it is doing ("Reading Devices"), how many entries it has
+  read and, once a source has been read before, how far along it is. It can be cancelled.
+- The page can be left or closed. When the task finishes, the portal announces it with a link to
+  the result: a notification in the portal and, if allowed ("Notify me on this device"), a
+  desktop notification while the tab is in the background. Tasks whose page is open are not
+  announced; the page simply shows the result.
+- The bell lists the user's recent tasks with their progress, outcome and links. Opening a result
+  shortly after it finished (15 minutes, or `METRICS_CACHE_SECONDS` if longer) shows it without
+  computing it again; asking for the same thing while it runs joins the running task.
+- Tasks belong to the user who started them. Each user can have `JOBS_MAX_ACTIVE_PER_USER` tasks
+  running or queued. Metrics and analyses have separate worker pools (`JOBS_METRICS_THREADS`,
+  `JOBS_ANALYSIS_THREADS`), so a long analysis never holds up dashboards. Finished tasks are kept
+  for `JOBS_RETAIN_MINUTES`.
+- Tasks live in the API's memory: a restart cancels running ones (saved analysis results on disk
+  are kept). Run a single API instance.
 
 ### Audit log
 *Admin → Audit log*
@@ -387,7 +415,8 @@ Layout:
   - `store/`: the JSON config store
   - `x509/`: client-certificate parsing, validation and user mapping
   - `metrics/`: metric widgets, aggregation engine and the out-of-the-box overviews
-  - `analysis/`: directory comparisons and data-quality checks
+  - `analysis/`: directory comparisons and data-quality checks, and their stored results
+  - `jobs/`: background tasks (worker pools, progress, cancellation)
   - `config/`: security and SPA serving
 - `shared/`: TypeScript types, DN utilities, validation and schema helpers used by the client.
 - `web/`: the React client (`src/pages` for user, metrics and admin pages, `src/components`,

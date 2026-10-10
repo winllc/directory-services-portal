@@ -2808,3 +2808,168 @@ textarea.input {
 .mapping-list ~ .toggles {
   margin-top: 16px;
 }
+
+/* --------------------------------------------------------------------------
+   Background jobs
+   -------------------------------------------------------------------------- */
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation-duration: 3s;
+  }
+}
+.toast-action {
+  font-weight: 650;
+  white-space: nowrap;
+}
+.job-progress {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--info-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.job-progress > svg {
+  color: var(--info);
+  margin-top: 2px;
+  flex: none;
+}
+.job-progress-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.job-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--series-1) 18%, transparent);
+  min-width: 80px;
+}
+.job-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--series-1);
+  transition: width 0.4s;
+}
+.job-bar-indeterminate .job-bar-fill {
+  position: absolute;
+  width: 35%;
+  animation: job-slide 1.4s ease-in-out infinite;
+}
+@keyframes job-slide {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .job-bar-indeterminate .job-bar-fill {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+.jobs-menu {
+  position: relative;
+  margin-right: 8px;
+}
+.jobs-button {
+  position: relative;
+}
+.jobs-button.is-running {
+  color: var(--accent);
+}
+.jobs-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.jobs-badge-new {
+  background: var(--accent);
+  color: #fff;
+}
+.jobs-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 60;
+  width: min(380px, calc(100vw - 32px));
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  animation: pop 0.12s ease-out;
+}
+.jobs-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.jobs-empty {
+  padding: 14px;
+  margin: 0;
+}
+.jobs-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.jobs-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 14px;
+}
+.jobs-item + .jobs-item {
+  border-top: 1px solid var(--border);
+}
+.jobs-item.is-new {
+  background: var(--accent-soft);
+}
+.jobs-item > svg {
+  margin-top: 2px;
+}
+.jobs-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.jobs-item-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.job-ok {
+  color: var(--status-good);
+}
+.job-failed {
+  color: var(--status-critical);
+}

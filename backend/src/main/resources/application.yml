@@ -49,6 +49,14 @@ portal:
     max-entries: ${METRICS_MAX_ENTRIES:100000}
     cache-seconds: ${METRICS_CACHE_SECONDS:60}
     max-issues: ${ANALYSIS_MAX_ISSUES:2000}
+    # Metrics that take longer than this continue in the background and notify when ready.
+    wait-millis: ${METRICS_WAIT_MILLIS:2000}
+  # Background computations: analyses always, metrics when they outlast wait-millis.
+  jobs:
+    metrics-threads: ${JOBS_METRICS_THREADS:4}
+    analysis-threads: ${JOBS_ANALYSIS_THREADS:2}
+    max-active-per-user: ${JOBS_MAX_ACTIVE_PER_USER:5}
+    retain-minutes: ${JOBS_RETAIN_MINUTES:1440}
   # Optional fixed banner at the top and bottom of every page (off while the text is empty).
   banner:
     text: ${BANNER_TEXT:}

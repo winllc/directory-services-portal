@@ -119,6 +119,26 @@ abstract class ApiTestSupport {
     return new Client((MockHttpSession) r.getRequest().getSession(false), body(r).get("user"));
   }
 
+  /**
+   * The value of a request that may run as a background job: a 200 body as is, or for a 202 the
+   * job's result once it has finished.
+   */
+  JsonNode awaitResult(Client c, MvcResult r) throws Exception {
+    if (status(r) != 202) {
+      if (status(r) != 200) throw new AssertionError(status(r) + ": " + r.getResponse().getContentAsString());
+      return body(r);
+    }
+    String id = body(r).get("job").get("id").asString();
+    for (int i = 0; i < 600; i++) {
+      JsonNode job = body(c.get("/api/jobs/" + id));
+      String st = job.get("status").asString();
+      if (st.equals("succeeded")) return body(c.get("/api/jobs/" + id + "/result")).get("result");
+      if (st.equals("failed") || st.equals("cancelled")) throw new AssertionError("job " + st + ": " + job);
+      Thread.sleep(50);
+    }
+    throw new AssertionError("job did not finish");
+  }
+
   JsonNode body(MvcResult r) throws Exception {
     String s = r.getResponse().getContentAsString();
     return s.isEmpty() ? mapper.nullNode() : mapper.readTree(s);

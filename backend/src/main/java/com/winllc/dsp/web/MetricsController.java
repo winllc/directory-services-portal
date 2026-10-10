@@ -1,5 +1,8 @@
 package com.winllc.dsp.web;
 
+import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.jobs.Job;
+import com.winllc.dsp.jobs.JobService;
 import com.winllc.dsp.metrics.Dashboard;
 import com.winllc.dsp.metrics.MetricEngine;
 import com.winllc.dsp.metrics.MetricResult;
@@ -13,12 +16,15 @@ import com.winllc.dsp.service.EntryService;
 import com.winllc.dsp.store.ConfigStore;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,6 +38,10 @@ import org.springframework.web.bind.annotation.RestController;
  * Metrics for every signed-in user: the out-of-the-box overview of a directory, ad-hoc metrics
  * (the explorer) and saved dashboards. Every widget is computed only from directories the user
  * can read (see {@link DataSources}).
+ *
+ * <p>Computations run as jobs (see {@link JobService}). Those that finish within
+ * {@code portal.metrics.wait-millis} are answered directly (200); slower ones carry on in the
+ * background and are answered with 202 and the job, which reports when the result is ready.
  */
 @RestController
 @RequestMapping("/api/metrics")
@@ -42,17 +52,34 @@ public class MetricsController {
   private final DataSources sources;
   private final EntryService entries;
   private final ConfigStore store;
+  private final JobService jobs;
+  private final Duration wait;
+  private final Duration reuse;
 
-  public MetricsController(MetricEngine engine, DataSources sources, EntryService entries, ConfigStore store) {
+  public MetricsController(MetricEngine engine, DataSources sources, EntryService entries, ConfigStore store, JobService jobs,
+      PortalProperties props) {
     this.engine = engine;
     this.sources = sources;
     this.entries = entries;
     this.store = store;
+    this.jobs = jobs;
+    this.wait = Duration.ofMillis(Math.max(0, props.getMetrics().getWaitMillis()));
+    this.reuse = Duration.ofSeconds(Math.max(0, props.getMetrics().getCacheSeconds()));
+  }
+
+  private ResponseEntity<Object> compute(SessionUser user, String title, Job.Target target, String link, String key, boolean refresh,
+      java.util.function.Supplier<Object> work) {
+    JobService.Spec spec = new JobService.Spec("metrics", title, target, link, key, JobService.Pool.METRICS, reuse);
+    return JobsController.respond(jobs.runOrWait(user, spec, work, wait, refresh));
   }
 
   public record SourceInfo(String id, String name, String slug, String icon, String description, List<DataSources.AttributeChoice> attributes) {}
 
-  public record EvaluateRequest(@NotNull @Size(min = 1, max = MAX_WIDGETS) List<@Valid MetricWidget> widgets, Boolean refresh) {}
+  /** {@code returnTo}: the page to link from the "ready" notification if this runs in the background. */
+  public record EvaluateRequest(
+      @NotNull @Size(min = 1, max = MAX_WIDGETS) List<@Valid MetricWidget> widgets,
+      Boolean refresh,
+      @Size(max = 4096) @Pattern(regexp = "^/(?![/\\\\]).*", message = "Must be a path on this site") String returnTo) {}
 
   public record DashboardSummary(String id, String name, String description, boolean shared, int widgets, String updatedAt) {}
 
@@ -85,28 +112,37 @@ public class MetricsController {
 
   /** Entry counts of every directory the user can read. */
   @GetMapping("/summary")
-  public List<SummaryRow> summary(@AuthenticationPrincipal SessionUser user, @RequestParam(defaultValue = "false") boolean refresh) {
+  public ResponseEntity<Object> summary(@AuthenticationPrincipal SessionUser user, @RequestParam(defaultValue = "false") boolean refresh) {
     List<DirectoryDefinition> defs = readable(user);
-    List<MetricWidget> widgets = defs.stream()
-        .map(d -> new MetricWidget(d.id(), d.name(), null, d.id(), null, "count", null, null, null, null, null, null, null, null, null,
-            null, null, null, null, "stat", null))
-        .toList();
-    Map<String, MetricEngine.Outcome> results = widgets.isEmpty() ? Map.of() : engine.evaluate(user, widgets, refresh);
-    return defs.stream().map(d -> {
-      MetricEngine.Outcome o = results.get(d.id());
-      MetricResult r = o == null ? null : o.result();
-      return new SummaryRow(d.id(), d.name(), d.slug(), d.icon(), r == null ? null : r.total(), r != null && r.truncated(),
-          o == null ? "Not computed" : o.error());
-    }).toList();
+    String key = "summary:" + defs.stream().map(d -> d.id() + "@" + d.updatedAt()).toList();
+    return compute(user, "Directory sizes", new Job.Target("metrics-summary", "all"), "/metrics", key, refresh, () -> {
+      List<MetricWidget> widgets = defs.stream()
+          .map(d -> new MetricWidget(d.id(), d.name(), null, d.id(), null, "count", null, null, null, null, null, null, null, null, null,
+              null, null, null, null, "stat", null))
+          .toList();
+      Map<String, MetricEngine.Outcome> results = widgets.isEmpty() ? Map.of() : engine.evaluate(user, widgets, refresh);
+      return defs.stream().map(d -> {
+        MetricEngine.Outcome o = results.get(d.id());
+        MetricResult r = o == null ? null : o.result();
+        return new SummaryRow(d.id(), d.name(), d.slug(), d.icon(), r == null ? null : r.total(), r != null && r.truncated(),
+            o == null ? "Not computed" : o.error());
+      }).toList();
+    });
   }
 
   /** The out-of-the-box dashboard of one directory. Charts with nothing to show are left out. */
   @GetMapping("/overview/{id}")
-  public OverviewResponse overview(@AuthenticationPrincipal SessionUser user, @PathVariable String id,
+  public ResponseEntity<Object> overview(@AuthenticationPrincipal SessionUser user, @PathVariable String id,
       @RequestParam(defaultValue = "false") boolean refresh) {
     DirectoryDefinition def = entries.definition(id);
     entries.require(user, def, AccessLevel.READ);
     List<MetricWidget> all = OverviewGenerator.widgets(def, entries.form(def));
+    String key = "overview:" + def.id() + "@" + def.updatedAt();
+    return compute(user, def.name() + " overview", new Job.Target("overview", def.id()), "/metrics/directories/" + def.slug(), key, refresh,
+        () -> overviewOf(user, def, all, refresh));
+  }
+
+  private OverviewResponse overviewOf(SessionUser user, DirectoryDefinition def, List<MetricWidget> all, boolean refresh) {
     Map<String, MetricEngine.Outcome> results = engine.evaluate(user, all, refresh);
     List<MetricWidget> shown = all.stream().filter(w -> {
       MetricEngine.Outcome o = results.get(w.id());
@@ -130,8 +166,13 @@ public class MetricsController {
 
   /** Compute ad-hoc widgets (the explorer and the dashboard editor's preview). */
   @PostMapping("/evaluate")
-  public Map<String, MetricEngine.Outcome> evaluate(@AuthenticationPrincipal SessionUser user, @Valid @RequestBody EvaluateRequest body) {
-    return engine.evaluate(user, body.widgets(), Boolean.TRUE.equals(body.refresh()));
+  public ResponseEntity<Object> evaluate(@AuthenticationPrincipal SessionUser user, @Valid @RequestBody EvaluateRequest body) {
+    boolean refresh = Boolean.TRUE.equals(body.refresh());
+    List<MetricWidget> widgets = body.widgets();
+    String title = widgets.size() == 1 ? widgets.get(0).title() : widgets.size() + " charts";
+    String link = body.returnTo() == null || body.returnTo().isBlank() ? "/metrics/explore" : body.returnTo();
+    return compute(user, title, new Job.Target("evaluate", null), link, "evaluate:" + widgets, refresh,
+        () -> engine.evaluate(user, widgets, refresh));
   }
 
   private static boolean visible(SessionUser user, Dashboard d) {
@@ -160,9 +201,11 @@ public class MetricsController {
   }
 
   @GetMapping("/dashboards/{id}/results")
-  public DashboardResults dashboardResults(@AuthenticationPrincipal SessionUser user, @PathVariable String id,
+  public ResponseEntity<Object> dashboardResults(@AuthenticationPrincipal SessionUser user, @PathVariable String id,
       @RequestParam(defaultValue = "false") boolean refresh) {
     Dashboard d = dashboard(user, id);
-    return new DashboardResults(d.widgets().isEmpty() ? Map.of() : engine.evaluate(user, d.widgets(), refresh));
+    if (d.widgets().isEmpty()) return ResponseEntity.ok(new DashboardResults(Map.of()));
+    return compute(user, d.name(), new Job.Target("dashboard", d.id()), "/metrics/dashboards/" + d.id(), "dashboard:" + d.id() + "@" + d.updatedAt(),
+        refresh, () -> new DashboardResults(engine.evaluate(user, d.widgets(), refresh)));
   }
 }

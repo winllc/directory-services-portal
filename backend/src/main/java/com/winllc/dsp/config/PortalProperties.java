@@ -18,6 +18,7 @@ public class PortalProperties {
   private final X509 x509 = new X509();
   private final Audit audit = new Audit();
   private final Metrics metrics = new Metrics();
+  private final Jobs jobs = new Jobs();
   private final Banner banner = new Banner();
   /** Allow username/password sign-in (disable for certificate-only deployments). */
   private boolean passwordLoginEnabled = true;
@@ -84,6 +85,8 @@ public class PortalProperties {
     private int cacheSeconds = 60;
     /** Most individual findings an analysis run returns (counts always cover every entry). */
     private int maxIssues = 2_000;
+    /** How long a request waits for metrics before they carry on in the background. */
+    private int waitMillis = 2_000;
 
     public int getMaxEntries() { return maxEntries; }
     public void setMaxEntries(int maxEntries) { this.maxEntries = maxEntries; }
@@ -91,6 +94,30 @@ public class PortalProperties {
     public void setCacheSeconds(int cacheSeconds) { this.cacheSeconds = cacheSeconds; }
     public int getMaxIssues() { return maxIssues; }
     public void setMaxIssues(int maxIssues) { this.maxIssues = maxIssues; }
+    public int getWaitMillis() { return waitMillis; }
+    public void setWaitMillis(int waitMillis) { this.waitMillis = waitMillis; }
+  }
+
+  /** Background computations (analyses, expensive metrics). */
+  public static class Jobs {
+    private int metricsThreads = 4;
+    private int analysisThreads = 2;
+    /** Computations one user may have queued or running at once. */
+    private int maxActivePerUser = 5;
+    /** How long finished jobs and their results are kept. */
+    private int retainMinutes = 24 * 60;
+    private int maxJobs = 500;
+
+    public int getMetricsThreads() { return metricsThreads; }
+    public void setMetricsThreads(int metricsThreads) { this.metricsThreads = metricsThreads; }
+    public int getAnalysisThreads() { return analysisThreads; }
+    public void setAnalysisThreads(int analysisThreads) { this.analysisThreads = analysisThreads; }
+    public int getMaxActivePerUser() { return maxActivePerUser; }
+    public void setMaxActivePerUser(int maxActivePerUser) { this.maxActivePerUser = maxActivePerUser; }
+    public int getRetainMinutes() { return retainMinutes; }
+    public void setRetainMinutes(int retainMinutes) { this.retainMinutes = retainMinutes; }
+    public int getMaxJobs() { return maxJobs; }
+    public void setMaxJobs(int maxJobs) { this.maxJobs = maxJobs; }
   }
 
   /**
@@ -220,6 +247,7 @@ public class PortalProperties {
   public X509 getX509() { return x509; }
   public Audit getAudit() { return audit; }
   public Metrics getMetrics() { return metrics; }
+  public Jobs getJobs() { return jobs; }
   public Banner getBanner() { return banner; }
   public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
   public String getLoginHint() { return loginHint; }

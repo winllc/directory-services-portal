@@ -13,6 +13,7 @@ import com.winllc.dsp.analysis.AnalysisResult.QualitySummary;
 import com.winllc.dsp.analysis.AnalysisResult.RuleStats;
 import com.winllc.dsp.analysis.AnalysisResult.SourceStats;
 import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.jobs.JobContext;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.metrics.ValueTransform;
@@ -237,6 +238,7 @@ public class AnalysisService {
       byKey.add(keyed);
     }
 
+    JobContext.current().phase("Comparing", null);
     TreeMap<String, Boolean> allKeys = new TreeMap<>();
     byKey.forEach(m -> m.keySet().forEach(k -> allKeys.put(k, true)));
     long inAll = 0;
@@ -454,6 +456,8 @@ public class AnalysisService {
 
     // dnExists: look each distinct DN up once.
     if (!references.isEmpty()) {
+      JobContext job = JobContext.current();
+      job.phase("Checking referenced entries", null);
       Map<String, Boolean> exists = new HashMap<>();
       boolean capped = false;
       for (Map<String, List<Holder>> m : references.values()) {
@@ -464,6 +468,7 @@ public class AnalysisService {
             break;
           }
           exists.put(dn, directory.get(dn, List.of("1.1")) != null);
+          job.checkCancelled();
         }
       }
       if (capped) warnings.add("Only the first " + MAX_DN_LOOKUPS + " referenced DNs were checked");

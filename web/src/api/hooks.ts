@@ -1,12 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type {
   AnalysisDefinition,
   AnalysisInput,
-  AnalysisResult,
   AttributeTypeDef,
   Dashboard,
   DashboardSummary,
   DirectorySummaryRow,
+  Job,
+  LatestAnalysisResult,
+  PendingResponse,
   MetricOutcome,
   MetricSource,
   MetricWidget,
@@ -26,7 +29,9 @@ import type {
   ServerInfo,
   SubjectSearchResult,
 } from '@dsp/shared';
+import { isPending, jobActive } from '@dsp/shared';
 import { api, dnParam, qs } from './client';
+import { watchJob } from '../lib/jobWatch';
 
 export const keys = {
   info: ['info'] as const,
@@ -53,6 +58,10 @@ export const keys = {
   evaluate: (widgets: MetricWidget[]) => ['metrics', 'evaluate', widgets] as const,
   analyses: ['admin', 'analyses'] as const,
   analysis: (id: string) => ['admin', 'analysis', id] as const,
+  analysisResult: (id: string) => ['admin', 'analysis-result', id] as const,
+  jobs: ['jobs'] as const,
+  job: (id: string) => ['jobs', id] as const,
+  jobResult: (id: string) => ['jobs', id, 'result'] as const,
 };
 
 export const useServerInfo = () => useQuery({ queryKey: keys.info, queryFn: () => api.get<ServerInfo>('/api/info'), staleTime: 60_000 });
@@ -282,6 +291,106 @@ export const useAudit = (params: AuditQuery) =>
   });
 
 // ---------------------------------------------------------------------------
+// Background jobs
+// ---------------------------------------------------------------------------
+
+/** The user's background computations; polled quickly while any is running. */
+export const useJobs = (enabled = true) =>
+  useQuery({
+    queryKey: keys.jobs,
+    queryFn: () => api.get<Job[]>('/api/jobs'),
+    enabled,
+    refetchInterval: (q) => (q.state.data?.some(jobActive) ? 1500 : 15_000),
+    refetchIntervalInBackground: true,
+    staleTime: 1000,
+  });
+
+/** One job, polled every second until it finishes. */
+export const useJob = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.job(id ?? ''),
+    queryFn: () => api.get<Job>(`/api/jobs/${encodeURIComponent(id!)}`),
+    enabled: !!id,
+    refetchInterval: (q) => (q.state.data && !jobActive(q.state.data) ? false : 1000),
+    refetchIntervalInBackground: true,
+  });
+
+export const useJobResult = <T,>(id: string | undefined, enabled = true) =>
+  useQuery({
+    queryKey: keys.jobResult(id ?? ''),
+    queryFn: () => api.get<{ job: Job; result: T }>(`/api/jobs/${encodeURIComponent(id!)}/result`),
+    enabled: !!id && enabled,
+    staleTime: Infinity,
+  });
+
+export function useJobMutations() {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: keys.jobs });
+  return {
+    cancel: useMutation({ mutationFn: (id: string) => api.post<Job>(`/api/jobs/${encodeURIComponent(id)}/cancel`), onSuccess: refresh }),
+    seen: useMutation({ mutationFn: (ids: string[]) => api.post('/api/jobs/seen', { ids }), onSuccess: refresh }),
+    dismiss: useMutation({ mutationFn: (id: string) => api.del(`/api/jobs/${encodeURIComponent(id)}`), onSuccess: refresh }),
+  };
+}
+
+/**
+ * A query whose answer may come from a background job: the endpoint returns the data (200), or
+ * the job computing it (202). While the job runs, {@code job} reports its progress; when it
+ * succeeds its result replaces the pending answer in the cache, and the job is marked seen (this
+ * page showed it, so the global notifier stays quiet).
+ */
+export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise<T | PendingResponse>, opts: { enabled?: boolean; staleTime?: number } = {}) {
+  const qc = useQueryClient();
+  const query = useQuery<T | PendingResponse>({
+    queryKey,
+    queryFn: fetcher,
+    enabled: opts.enabled ?? true,
+    staleTime: opts.staleTime ?? 30_000,
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+  const pending = isPending(query.data) ? query.data.job : undefined;
+  const job = useJob(pending?.id);
+  const current = job.data ?? pending;
+  const keyRef = useRef(queryKey);
+  keyRef.current = queryKey;
+
+  useEffect(() => (pending ? watchJob(pending.id) : undefined), [pending]);
+  useEffect(() => {
+    if (!current || current.status !== 'succeeded') return;
+    let alive = true;
+    api
+      .get<{ result: T }>(`/api/jobs/${encodeURIComponent(current.id)}/result`)
+      .then((r) => {
+        if (!alive) return;
+        qc.setQueryData(keyRef.current, r.result);
+        api.post('/api/jobs/seen', { ids: [current.id] }).then(() => qc.invalidateQueries({ queryKey: keys.jobs }));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [current?.id, current?.status, qc]);
+
+  const data = isPending(query.data) ? undefined : (query.data as T | undefined);
+  const jobError = current && (current.status === 'failed' || current.status === 'cancelled')
+    ? new Error(current.status === 'cancelled' ? 'The computation was cancelled.' : `The computation failed: ${current.error ?? 'unknown error'}`)
+    : null;
+  return {
+    data,
+    job: current && jobActive(current) ? current : undefined,
+    error: query.error ?? jobError,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching || (!!current && jobActive(current)),
+    /** Recompute on the server (bypassing caches); the answer may again be a job. */
+    refresh: async (fetchFresh: () => Promise<T | PendingResponse>) => {
+      const r = await fetchFresh();
+      qc.setQueryData(queryKey, r);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Metrics
 // ---------------------------------------------------------------------------
 
@@ -291,16 +400,15 @@ const withRefresh = (url: string, refresh: boolean) => (refresh ? `${url}${url.i
 export const useMetricSources = () =>
   useQuery({ queryKey: keys.metricSources, queryFn: () => api.get<MetricSource[]>('/api/metrics/sources'), staleTime: 60_000 });
 
+const summaryUrl = (refresh = false) => withRefresh('/api/metrics/summary', refresh);
 export const useMetricSummary = () =>
-  useQuery({ queryKey: keys.metricSummary, queryFn: () => api.get<DirectorySummaryRow[]>('/api/metrics/summary'), staleTime: 30_000 });
+  useBackgroundQuery<DirectorySummaryRow[]>(keys.metricSummary, () => api.get(summaryUrl()));
+export const fetchSummary = (refresh: boolean) => api.get<DirectorySummaryRow[] | PendingResponse>(summaryUrl(refresh));
 
+const overviewUrl = (id: string, refresh = false) => withRefresh(`/api/metrics/overview/${encodeURIComponent(id)}`, refresh);
 export const useOverview = (id: string | undefined) =>
-  useQuery({
-    queryKey: keys.overview(id ?? ''),
-    queryFn: () => api.get<OverviewResponse>(`/api/metrics/overview/${encodeURIComponent(id!)}`),
-    enabled: !!id,
-    staleTime: 30_000,
-  });
+  useBackgroundQuery<OverviewResponse>(keys.overview(id ?? ''), () => api.get(overviewUrl(id!)), { enabled: !!id });
+export const fetchOverview = (id: string, refresh: boolean) => api.get<OverviewResponse | PendingResponse>(overviewUrl(id, refresh));
 
 export const useDashboards = () =>
   useQuery({ queryKey: keys.dashboards, queryFn: () => api.get<DashboardSummary[]>('/api/metrics/dashboards') });
@@ -312,43 +420,22 @@ export const useDashboard = (id: string | undefined) =>
     enabled: !!id,
   });
 
+type DashboardResults = { results: Record<string, MetricOutcome> };
+const dashboardUrl = (id: string, refresh = false) => withRefresh(`/api/metrics/dashboards/${encodeURIComponent(id)}/results`, refresh);
 export const useDashboardResults = (id: string | undefined, enabled = true) =>
-  useQuery({
-    queryKey: keys.dashboardResults(id ?? ''),
-    queryFn: () => api.get<{ results: Record<string, MetricOutcome> }>(`/api/metrics/dashboards/${encodeURIComponent(id!)}/results`),
-    enabled: !!id && enabled,
-    staleTime: 30_000,
-  });
+  useBackgroundQuery<DashboardResults>(keys.dashboardResults(id ?? ''), () => api.get(dashboardUrl(id!)), { enabled: !!id && enabled });
+export const fetchDashboardResults = (id: string, refresh: boolean) => api.get<DashboardResults | PendingResponse>(dashboardUrl(id, refresh));
 
-/** Recompute on the server, bypassing its cache, and put the fresh results in the query cache. */
-export function useRefreshMetrics() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (target: { overview?: string; dashboard?: string }) => {
-      if (target.overview) {
-        const r = await api.get<OverviewResponse>(withRefresh(`/api/metrics/overview/${encodeURIComponent(target.overview)}`, true));
-        qc.setQueryData(keys.overview(target.overview), r);
-      }
-      if (target.dashboard) {
-        const r = await api.get<{ results: Record<string, MetricOutcome> }>(
-          withRefresh(`/api/metrics/dashboards/${encodeURIComponent(target.dashboard)}/results`, true),
-        );
-        qc.setQueryData(keys.dashboardResults(target.dashboard), r);
-      }
-    },
-  });
-}
-
-/** Compute ad-hoc widgets (explorer, editor preview). Keeps the previous result while recomputing. */
-export const useEvaluate = (widgets: MetricWidget[], enabled = true) =>
-  useQuery({
-    queryKey: keys.evaluate(widgets),
-    queryFn: () => api.post<Record<string, MetricOutcome>>('/api/metrics/evaluate', { widgets }),
-    enabled: enabled && widgets.length > 0,
-    placeholderData: (prev) => prev,
-    staleTime: 30_000,
-    retry: false,
-  });
+/**
+ * Compute ad-hoc widgets (explorer, editor preview). If it takes long, it continues on the
+ * server and {@code returnTo} is where the "ready" notification leads.
+ */
+export const useEvaluate = (widgets: MetricWidget[], enabled = true, returnTo?: string) =>
+  useBackgroundQuery<Record<string, MetricOutcome>>(
+    keys.evaluate(widgets),
+    () => api.post('/api/metrics/evaluate', { widgets, returnTo }),
+    { enabled: enabled && widgets.length > 0 },
+  );
 
 export interface DashboardInput {
   name: string;
@@ -384,6 +471,15 @@ export const useAnalysis = (id: string | undefined) =>
     enabled: !!id,
   });
 
+/** The latest stored result of a saved analysis (null until it has run). */
+export const useAnalysisResult = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.analysisResult(id ?? ''),
+    queryFn: async () => (await api.get<LatestAnalysisResult | undefined>(`/api/admin/analysis/${encodeURIComponent(id!)}/result`)) ?? null,
+    enabled: !!id,
+    retry: false,
+  });
+
 export function useAnalysisMutations() {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: keys.analyses });
@@ -397,18 +493,13 @@ export function useAnalysisMutations() {
       },
     }),
     remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/analysis/${encodeURIComponent(id)}`), onSuccess: invalidate }),
-    /** Runs a saved analysis by id, or an unsaved draft. */
+    /** Starts a saved analysis by id, or an unsaved draft, in the background; resolves to its job. */
     run: useMutation({
       mutationFn: (target: { id: string } | { draft: AnalysisInput }) =>
         'id' in target
-          ? api.post<AnalysisResult>(`/api/admin/analysis/${encodeURIComponent(target.id)}/run`)
-          : api.post<AnalysisResult>('/api/admin/analysis/run', target.draft),
-      onSuccess: (_r, target) => {
-        if ('id' in target) {
-          invalidate();
-          qc.invalidateQueries({ queryKey: keys.analysis(target.id) });
-        }
-      },
+          ? api.post<PendingResponse>(`/api/admin/analysis/${encodeURIComponent(target.id)}/run`)
+          : api.post<PendingResponse>('/api/admin/analysis/run', target.draft),
+      onSuccess: () => qc.invalidateQueries({ queryKey: keys.jobs }),
     }),
   };
 }

@@ -2,8 +2,11 @@ package com.winllc.dsp.web;
 
 import com.winllc.dsp.analysis.AnalysisDefinition;
 import com.winllc.dsp.analysis.AnalysisResult;
+import com.winllc.dsp.analysis.AnalysisResultStore;
 import com.winllc.dsp.analysis.AnalysisService;
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.jobs.Job;
+import com.winllc.dsp.jobs.JobService;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.store.ConfigStore;
 import jakarta.validation.Valid;
@@ -32,19 +35,30 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Saved comparisons and data-quality checks, and running them (saved or ad hoc). */
+/**
+ * Saved comparisons and data-quality checks, and running them (saved or ad hoc). Runs are
+ * background jobs: the request returns at once (202 with the job) and the job reports when the
+ * result is ready. The latest result of each saved analysis is kept on disk.
+ */
 @RestController
 @RequestMapping("/api/admin/analysis")
 public class AdminAnalysisController {
   private final ConfigStore store;
   private final AnalysisService analysis;
   private final AuditLog audit;
+  private final JobService jobs;
+  private final AnalysisResultStore results;
 
-  public AdminAnalysisController(ConfigStore store, AnalysisService analysis, AuditLog audit) {
+  public AdminAnalysisController(ConfigStore store, AnalysisService analysis, AuditLog audit, JobService jobs, AnalysisResultStore results) {
     this.store = store;
     this.analysis = analysis;
     this.audit = audit;
+    this.jobs = jobs;
+    this.results = results;
   }
+
+  /** The latest stored result of a saved analysis; {@code stale} when its settings changed since. */
+  public record LatestResult(AnalysisResult result, String ranBy, boolean stale) {}
 
   public record AnalysisInput(
       @NotBlank @Size(max = 128) String name,
@@ -141,27 +155,50 @@ public class AdminAnalysisController {
       s.analyses.remove(a);
       return a;
     });
+    results.delete(id);
     event("analysis.delete", removed, null).success();
     return ResponseEntity.noContent().build();
   }
 
-  /** Run an unsaved analysis (the editor's "Run" before saving). */
+  /** Run an unsaved analysis (the editor's "Run" before saving). Its result is kept with the job. */
   @PostMapping("/run")
-  public AnalysisResult runDraft(@AuthenticationPrincipal SessionUser user, @Valid @RequestBody AnalysisInput in) {
-    return analysis.run(user, build(in, null, null, null, null));
+  public ResponseEntity<Object> runDraft(@AuthenticationPrincipal SessionUser user, @Valid @RequestBody AnalysisInput in) {
+    AnalysisDefinition draft = build(in, null, null, null, null);
+    JobService.Spec spec = new JobService.Spec("analysis", draft.name(), new Job.Target("analysis-draft", null), "/admin/analysis/results/{job}",
+        null, JobService.Pool.ANALYSIS, null);
+    return JobsController.accepted(jobs.submit(user, spec, () -> analysis.run(user, draft)));
   }
 
-  /** Run a saved analysis and remember when it ran and what it found. */
+  /**
+   * Run a saved analysis in the background. A run already in progress for it is joined rather
+   * than started twice. When it finishes, the result is stored and the analysis remembers when it
+   * ran and what it found.
+   */
   @PostMapping("/{id}/run")
-  public AnalysisResult run(@AuthenticationPrincipal SessionUser user, @PathVariable String id) {
+  public ResponseEntity<Object> run(@AuthenticationPrincipal SessionUser user, @PathVariable String id) {
     AnalysisDefinition a = find(id);
-    AnalysisResult r = analysis.run(user, a);
-    AnalysisDefinition.LastRun last = lastRun(user, r);
-    store.update(s -> {
-      s.analyses.replaceAll(x -> x.id().equals(id) ? x.withLastRun(last) : x);
-      return null;
-    });
-    return r;
+    AnalysisService.check(a);
+    JobService.Spec spec = new JobService.Spec("analysis", a.name(), new Job.Target("analysis", id), "/admin/analysis/" + id,
+        "analysis:" + id, JobService.Pool.ANALYSIS, null);
+    return JobsController.accepted(jobs.submit(user, spec, () -> {
+      AnalysisResult r = analysis.run(user, a);
+      results.save(id, new AnalysisResultStore.Stored(a.updatedAt(), user.username(), r));
+      AnalysisDefinition.LastRun last = lastRun(user, r);
+      store.update(s -> {
+        s.analyses.replaceAll(x -> x.id().equals(id) ? x.withLastRun(last) : x);
+        return null;
+      });
+      return r;
+    }));
+  }
+
+  /** The latest stored result, or 204 when the analysis has not been run yet. */
+  @GetMapping("/{id}/result")
+  public ResponseEntity<LatestResult> latest(@PathVariable String id) {
+    AnalysisDefinition a = find(id);
+    AnalysisResultStore.Stored stored = results.load(id);
+    if (stored == null) return ResponseEntity.noContent().build();
+    return ResponseEntity.ok(new LatestResult(stored.result(), stored.ranBy(), !java.util.Objects.equals(stored.analysisUpdatedAt(), a.updatedAt())));
   }
 
   private static AnalysisDefinition.LastRun lastRun(SessionUser user, AnalysisResult r) {
@@ -173,6 +210,6 @@ public class AdminAnalysisController {
     }
     AnalysisResult.QualitySummary q = r.quality().summary();
     return new AnalysisDefinition.LastRun(r.ranAt(), user.username(), q.entries(), q.issues(),
-        q.issues() + " findings in " + q.entriesWithIssues() + " of " + q.entries() + " entries");
+        q.issues() + (q.issues() == 1 ? " finding in " : " findings in ") + q.entriesWithIssues() + " of " + q.entries() + " entries");
   }
 }

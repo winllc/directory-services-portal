@@ -9,6 +9,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { ApiError } from '../api/client';
 
@@ -283,20 +284,27 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
 // Toasts
 // ---------------------------------------------------------------------------
 
+export interface ToastAction {
+  label: string;
+  to: string;
+}
+
 interface Toast {
   id: number;
   tone: 'success' | 'danger' | 'info';
   message: string;
+  action?: ToastAction;
 }
 
-const ToastContext = createContext<(tone: Toast['tone'], message: string) => void>(() => undefined);
+const ToastContext = createContext<(tone: Toast['tone'], message: string, action?: ToastAction) => void>(() => undefined);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((tone: Toast['tone'], message: string) => {
+  const push = useCallback((tone: Toast['tone'], message: string, action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, tone, message }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
+    setToasts((t) => [...t, { id, tone, message, action }]);
+    // Toasts with something to open stay longer.
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 12_000 : 4500);
   }, []);
   return (
     <ToastContext.Provider value={push}>
@@ -306,6 +314,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div key={t.id} className={`toast toast-${t.tone}`}>
             {t.tone === 'success' ? <CheckCircle2 size={18} /> : t.tone === 'danger' ? <AlertTriangle size={18} /> : <Info size={18} />}
             <span>{t.message}</span>
+            {t.action && (
+              <Link className="toast-action" to={t.action.to} onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>
+                {t.action.label}
+              </Link>
+            )}
             <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>
               <X size={14} />
             </button>
@@ -322,6 +335,8 @@ export function useToast() {
     success: (m: string) => push('success', m),
     error: (e: unknown) => push('danger', e instanceof Error ? e.message : String(e)),
     info: (m: string) => push('info', m),
+    /** A notification with a link, e.g. "Analysis X is ready · View". */
+    notify: (tone: Toast['tone'], m: string, action?: ToastAction) => push(tone, m, action),
   };
 }
 

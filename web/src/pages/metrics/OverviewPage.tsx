@@ -1,6 +1,8 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Compass, RefreshCw } from 'lucide-react';
-import { useMetricSources, useMetricSummary, useOverview, useRefreshMetrics } from '../../api/hooks';
+import { useState } from 'react';
+import { fetchOverview, useMetricSources, useMetricSummary, useOverview } from '../../api/hooks';
+import { JobProgress } from '../../components/jobs/JobProgress';
 import { DefinitionIcon } from '../../components/Layout';
 import { Button, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
 import { MetricGrid } from '../../components/metrics/MetricGrid';
@@ -14,7 +16,20 @@ export function OverviewPage() {
   const def = summary.data?.find((d) => d.slug === slug);
   const overview = useOverview(def?.id);
   const sources = useMetricSources();
-  const refresh = useRefreshMetrics();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<unknown>(null);
+  const refresh = async () => {
+    if (!def) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await overview.refresh(() => fetchOverview(def.id, true));
+    } catch (e) {
+      setRefreshError(e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (summary.isLoading) return <Spinner label="Loading…" />;
   if (!def) {
@@ -47,7 +62,7 @@ export function OverviewPage() {
                 </option>
               ))}
             </select>
-            <Button icon={<RefreshCw size={16} />} loading={refresh.isPending} onClick={() => refresh.mutate({ overview: def.id })}>
+            <Button icon={<RefreshCw size={16} />} loading={refreshing || !!overview.job} onClick={refresh}>
               Refresh
             </Button>
             <Link to={`/d/${def.slug}`} className="btn btn-secondary">
@@ -56,13 +71,14 @@ export function OverviewPage() {
           </>
         }
       />
-      <ErrorAlert error={overview.error ?? refresh.error} />
+      <ErrorAlert error={overview.error ?? refreshError} />
+      {overview.job && <JobProgress job={overview.job} label="Computing the overview" />}
       {overview.isLoading && <Spinner label="Computing…" />}
       {overview.data && (
         <MetricGrid
           widgets={overview.data.widgets}
           results={overview.data.results}
-          loading={overview.isFetching || refresh.isPending}
+          loading={overview.isFetching || refreshing}
           sources={sources.data}
           actions={(w) => (
             <Link

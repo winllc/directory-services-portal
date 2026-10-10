@@ -1,6 +1,8 @@
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Compass, LayoutDashboard, Pencil, RefreshCw } from 'lucide-react';
-import { useDashboard, useDashboardResults, useMetricSources, useRefreshMetrics } from '../../api/hooks';
+import { useState } from 'react';
+import { fetchDashboardResults, useDashboard, useDashboardResults, useMetricSources } from '../../api/hooks';
+import { JobProgress } from '../../components/jobs/JobProgress';
 import { useUser } from '../../lib/auth';
 import { Badge, Button, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
 import { MetricGrid } from '../../components/metrics/MetricGrid';
@@ -12,7 +14,19 @@ export function DashboardPage() {
   const dashboard = useDashboard(id);
   const results = useDashboardResults(id, !!dashboard.data);
   const sources = useMetricSources();
-  const refresh = useRefreshMetrics();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<unknown>(null);
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await results.refresh(() => fetchDashboardResults(id!, true));
+    } catch (e) {
+      setRefreshError(e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (dashboard.isLoading) return <Spinner label="Loading…" />;
   if (!dashboard.data) {
@@ -38,7 +52,7 @@ export function DashboardPage() {
         subtitle={d.description}
         actions={
           <>
-            <Button icon={<RefreshCw size={16} />} loading={refresh.isPending} onClick={() => refresh.mutate({ dashboard: d.id })}>
+            <Button icon={<RefreshCw size={16} />} loading={refreshing || !!results.job} onClick={refresh}>
               Refresh
             </Button>
             {user.isAdmin && (
@@ -49,14 +63,15 @@ export function DashboardPage() {
           </>
         }
       />
-      <ErrorAlert error={results.error ?? refresh.error} />
+      <ErrorAlert error={results.error ?? refreshError} />
+      {results.job && <JobProgress job={results.job} label="Computing this dashboard" />}
       {d.widgets.length === 0 ? (
         <EmptyState title="This dashboard is empty">{user.isAdmin ? 'Edit it to add charts.' : 'No charts have been added yet.'}</EmptyState>
       ) : (
         <MetricGrid
           widgets={d.widgets}
           results={results.data?.results}
-          loading={results.isFetching || refresh.isPending}
+          loading={results.isFetching || refreshing}
           sources={sources.data}
           actions={(w) => (
             <Link to={`/metrics/explore?w=${encodeWidget(w)}`} className="icon-btn icon-btn-sm" title="Open in the explorer" aria-label="Open in the explorer">

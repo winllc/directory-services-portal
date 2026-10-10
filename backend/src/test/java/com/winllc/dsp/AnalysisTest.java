@@ -73,8 +73,8 @@ class AnalysisTest extends ApiTestSupport {
     legacyDirectory();
     Client admin = login("admin");
     MvcResult r = admin.post("/api/admin/analysis/run", compare(true));
-    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
-    JsonNode c = body(r).get("compare");
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(202);
+    JsonNode c = awaitResult(admin, r).get("compare");
 
     JsonNode summary = c.get("summary");
     // 8 staff + zed; alice, bob, carol, dave are in both.
@@ -101,7 +101,7 @@ class AnalysisTest extends ApiTestSupport {
     assertThat(c.get("attributes").get(1).get("differences").asLong()).isEqualTo(1);
 
     // Case-sensitive comparison also flags bob's e-mail.
-    JsonNode strict = body(admin.post("/api/admin/analysis/run", compare(false))).get("compare");
+    JsonNode strict = awaitResult(admin, admin.post("/api/admin/analysis/run", compare(false))).get("compare");
     assertThat(byKey(strict.get("rows")).get("bob").get("differences").get(0).get("label").asString()).isEqualTo("E-mail");
   }
 
@@ -117,8 +117,8 @@ class AnalysisTest extends ApiTestSupport {
 
     Client admin = login("admin");
     MvcResult r = admin.post("/api/admin/analysis/an-people-quality/run", null);
-    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
-    JsonNode q = body(r).get("quality");
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(202);
+    JsonNode q = awaitResult(admin, r).get("quality");
     Map<String, Long> violations = new HashMap<>();
     q.get("rules").forEach(rule -> violations.put(rule.get("id").asString(), rule.get("violations").asLong()));
     assertThat(violations).containsEntry("r-uid", 2L).containsEntry("r-mail-unique", 2L).containsEntry("r-mail-format", 1L)
@@ -134,10 +134,17 @@ class AnalysisTest extends ApiTestSupport {
     assertThat(q.get("summary").get("entries").asLong()).isEqualTo(11);
     assertThat(q.get("summary").get("entriesWithIssues").asLong()).isGreaterThanOrEqualTo(6);
 
-    // The run is remembered on the saved analysis.
+    // The run is remembered on the saved analysis, and its result kept for later.
     JsonNode saved = body(admin.get("/api/admin/analysis/an-people-quality"));
     assertThat(saved.get("lastRun").get("by").asString()).isEqualTo("admin");
     assertThat(saved.get("lastRun").get("issues").asLong()).isEqualTo(q.get("summary").get("issues").asLong());
+    JsonNode latest = body(admin.get("/api/admin/analysis/an-people-quality/result"));
+    assertThat(latest.get("stale").asBoolean()).isFalse();
+    assertThat(latest.get("result").get("quality").get("summary")).isEqualTo(q.get("summary"));
+    // The job shows in admin's list with a link back to the analysis.
+    JsonNode job = body(admin.get("/api/jobs")).get(0);
+    assertThat(job.get("link").asString()).isEqualTo("/admin/analysis/an-people-quality");
+    assertThat(job.get("status").asString()).isEqualTo("succeeded");
   }
 
   @Test
@@ -163,7 +170,8 @@ class AnalysisTest extends ApiTestSupport {
     JsonNode rules = body(created).get("quality").get("rules");
     assertThat(rules.get(0).get("id").asString()).isNotEqualTo(rules.get(1).get("id").asString());
 
-    JsonNode run = body(admin.post("/api/admin/analysis/" + id + "/run", null)).get("quality");
+    assertThat(status(admin.get("/api/admin/analysis/" + id + "/result"))).isEqualTo(204);
+    JsonNode run = awaitResult(admin, admin.post("/api/admin/analysis/" + id + "/run", null)).get("quality");
     assertThat(run.get("rules").get(0).get("label").asString()).isEqualTo("owner is required");
     assertThat(run.get("rules").get(1).get("violations").asLong()).isZero();
 

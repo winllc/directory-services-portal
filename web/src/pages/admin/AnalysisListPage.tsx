@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
-import { GitCompareArrows, Plus, ShieldCheck } from 'lucide-react';
+import { GitCompareArrows, Play, Plus, ShieldCheck } from 'lucide-react';
 import type { AnalysisDefinition } from '@dsp/shared';
-import { useAdminDefinitions, useAnalyses } from '../../api/hooks';
-import { Badge, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
+import { jobActive } from '@dsp/shared';
+import { useAdminDefinitions, useAnalyses, useAnalysisMutations, useJobs } from '../../api/hooks';
+import { Badge, Button, EmptyState, ErrorAlert, PageHeader, Spinner, useToast } from '../../components/ui';
+import { ProgressBar, jobDetail } from '../../components/jobs/JobProgress';
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -13,7 +15,19 @@ export function AnalysisTypeIcon({ type, size = 18 }: { type: AnalysisDefinition
 export function AnalysisListPage() {
   const analyses = useAnalyses();
   const defs = useAdminDefinitions();
+  const jobs = useJobs();
+  const { run } = useAnalysisMutations();
+  const toast = useToast();
   const name = (id: string) => defs.data?.find((d) => d.id === id)?.name ?? id;
+  const runningFor = (id: string) => jobs.data?.find((j) => j.target?.type === 'analysis' && j.target.id === id && jobActive(j));
+  const start = async (a: AnalysisDefinition) => {
+    try {
+      await run.mutateAsync({ id: a.id });
+      toast.info(`“${a.name}” is running on the server. You'll be notified when it's ready.`);
+    } catch (e) {
+      toast.error(e);
+    }
+  };
 
   return (
     <div className="page">
@@ -48,6 +62,7 @@ export function AnalysisListPage() {
                 <th>Analysis</th>
                 <th>Sources</th>
                 <th>Last run</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -64,7 +79,12 @@ export function AnalysisListPage() {
                   </td>
                   <td className="small">{a.sources.map((s) => s.label || name(s.definitionId)).join(a.type === 'compare' ? ' ↔ ' : ', ')}</td>
                   <td className="small">
-                    {a.lastRun ? (
+                    {runningFor(a.id) ? (
+                      <>
+                        <div>Running · {jobDetail(runningFor(a.id)!)}</div>
+                        <ProgressBar job={runningFor(a.id)!} />
+                      </>
+                    ) : a.lastRun ? (
                       <>
                         <div>{a.lastRun.summary}</div>
                         <div className="muted">
@@ -74,6 +94,11 @@ export function AnalysisListPage() {
                     ) : (
                       <span className="muted">Never</span>
                     )}
+                  </td>
+                  <td className="cell-actions">
+                    <Button size="sm" icon={<Play size={14} />} disabled={!!runningFor(a.id)} onClick={() => start(a)}>
+                      Run
+                    </Button>
                   </td>
                 </tr>
               ))}

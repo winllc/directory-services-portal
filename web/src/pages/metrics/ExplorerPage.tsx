@@ -8,6 +8,7 @@ import { Button, Card, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinn
 import { MetricCard } from '../../components/metrics/MetricCard';
 import { WidgetEditor } from '../../components/metrics/WidgetEditor';
 import { decodeWidget, encodeWidget, newWidget, normalizeWidget } from '../../components/metrics/widgets';
+import { JobProgress } from '../../components/jobs/JobProgress';
 
 /** Add the explored chart to an existing dashboard, or start a new one with it. */
 function AddToDashboard({ widget, onClose }: { widget: MetricWidget; onClose: () => void }) {
@@ -90,7 +91,8 @@ export function ExplorerPage() {
 
   const debounced = useDebounced(widget, 400);
   const evaluated = useMemo(() => (debounced && debounced.definitionId ? [{ ...normalizeWidget(debounced), id: 'explore' }] : []), [debounced]);
-  const result = useEvaluate(evaluated, evaluated.length > 0 && !!evaluated[0].title);
+  const returnTo = debounced ? `/metrics/explore?w=${encodeWidget(debounced)}` : undefined;
+  const result = useEvaluate(evaluated, evaluated.length > 0 && !!evaluated[0].title, returnTo);
 
   useEffect(() => {
     if (!debounced) return;
@@ -135,6 +137,7 @@ export function ExplorerPage() {
         }
       />
       <ErrorAlert error={result.error} />
+      {result.job && <JobProgress job={result.job} label="This chart reads a lot of entries" />}
       <div className="explorer">
         <Card title="Chart settings">
           <WidgetEditor value={widget} onChange={setWidget} sources={sources.data} errors={outcome?.details} showLayout={false} />

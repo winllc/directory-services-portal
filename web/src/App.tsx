@@ -15,6 +15,7 @@ import { PermissionsPage } from './pages/admin/PermissionsPage';
 import { AuditPage } from './pages/admin/AuditPage';
 import { AnalysisListPage } from './pages/admin/AnalysisListPage';
 import { AnalysisEditorPage } from './pages/admin/AnalysisEditorPage';
+import { AnalysisResultsPage } from './pages/admin/AnalysisResultsPage';
 import { MetricsHomePage } from './pages/metrics/MetricsHomePage';
 import { OverviewPage } from './pages/metrics/OverviewPage';
 import { DashboardPage } from './pages/metrics/DashboardPage';
@@ -56,6 +57,7 @@ export function App() {
           <Route path="admin/permissions" element={admin(<PermissionsPage />)} />
           <Route path="admin/audit" element={admin(<AuditPage />)} />
           <Route path="admin/analysis" element={admin(<AnalysisListPage />)} />
+          <Route path="admin/analysis/results/:jobId" element={admin(<AnalysisResultsPage />)} />
           <Route path="admin/analysis/:id" element={admin(<AnalysisEditorPage />)} />
           <Route path="*" element={<EmptyState title="Page not found">The page you requested does not exist.</EmptyState>} />
         </Route>

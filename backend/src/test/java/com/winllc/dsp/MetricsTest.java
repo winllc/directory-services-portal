@@ -29,9 +29,7 @@ class MetricsTest extends ApiTestSupport {
   }
 
   JsonNode evaluate(Client c, Object... widgets) throws Exception {
-    MvcResult r = c.post("/api/metrics/evaluate", Map.of("widgets", List.of(widgets), "refresh", true));
-    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
-    return body(r);
+    return awaitResult(c, c.post("/api/metrics/evaluate", Map.of("widgets", List.of(widgets), "refresh", true)));
   }
 
   static Map<String, Double> rows(JsonNode result) {
@@ -43,7 +41,7 @@ class MetricsTest extends ApiTestSupport {
   @Test
   void overviewDescribesADirectoryOutOfTheBox() throws Exception {
     Client admin = login("admin");
-    JsonNode body = body(admin.get("/api/metrics/overview/staff"));
+    JsonNode body = awaitResult(admin, admin.get("/api/metrics/overview/staff"));
     assertThat(body.get("definition").get("id").asString()).isEqualTo("def-staff");
     JsonNode results = body.get("results");
     assertThat(results.get("ovw-count").get("result").get("total").asLong()).isEqualTo(8);
@@ -131,7 +129,7 @@ class MetricsTest extends ApiTestSupport {
     JsonNode denied = evaluate(bob, widget("x", "def-staff", "count"));
     assertThat(denied.get("x").get("forbidden").asBoolean()).isTrue();
     List<String> summary = new ArrayList<>();
-    body(bob.get("/api/metrics/summary")).forEach(s -> summary.add(s.get("id").asString()));
+    awaitResult(bob, bob.get("/api/metrics/summary")).forEach(s -> summary.add(s.get("id").asString()));
     assertThat(summary).doesNotContain("def-staff").contains("def-whitepages", "def-partners");
 
     // alice reads staff, but only the attributes the directory shows.
@@ -200,11 +198,11 @@ class MetricsTest extends ApiTestSupport {
     shared.put("shared", true);
     assertThat(status(admin.put("/api/admin/dashboards/" + id, shared))).isEqualTo(200);
     // alice (engineering) reads staff; devices only through her user grant.
-    JsonNode results = body(alice.get("/api/metrics/dashboards/" + id + "/results")).get("results");
+    JsonNode results = awaitResult(alice, alice.get("/api/metrics/dashboards/" + id + "/results")).get("results");
     assertThat(results.size()).isEqualTo(2);
     results.forEach(o -> assertThat(o.has("result")).isTrue());
     Client bob = login("bob");
-    JsonNode bobs = body(bob.get("/api/metrics/dashboards/" + id + "/results")).get("results");
+    JsonNode bobs = awaitResult(bob, bob.get("/api/metrics/dashboards/" + id + "/results")).get("results");
     bobs.forEach(o -> assertThat(o.get("forbidden").asBoolean()).isTrue());
 
     Map<String, Object> unknown = Map.of("name", "Bad", "widgets", List.of(widget("w", "def-nope", "count")));

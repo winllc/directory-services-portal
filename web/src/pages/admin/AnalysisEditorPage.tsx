@@ -12,7 +12,9 @@ import type {
   RuleFormat,
   RuleType,
 } from '@dsp/shared';
-import { useAdminDefinitions, useAnalysis, useAnalysisMutations, useMetricSources } from '../../api/hooks';
+import { useAdminDefinitions, useAnalysis, useAnalysisMutations, useAnalysisResult, useMetricSources } from '../../api/hooks';
+import { JobProgress } from '../../components/jobs/JobProgress';
+import { useAnalysisRun } from '../../components/analysis/useAnalysisRun';
 import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, PageHeader, Spinner, Toggle, useToast } from '../../components/ui';
 import { CompareResults } from '../../components/analysis/CompareResults';
 import { QualityResults } from '../../components/analysis/QualityResults';
@@ -147,8 +149,9 @@ export function AnalysisEditorPage() {
   const { create, update, remove, run } = useAnalysisMutations();
   const [draft, setDraft] = useState<AnalysisInput | null>(null);
   const [saved, setSaved] = useState<string>('');
-  const [result, setResult] = useState<AnalysisResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const latest = useAnalysisResult(isNew ? undefined : id);
+  const runState = useAnalysisRun(isNew ? undefined : id);
   const listId = useId();
 
   useEffect(() => {
@@ -211,13 +214,17 @@ export function AnalysisEditorPage() {
 
   const runNow = async () => {
     try {
-      // Saved and unchanged: run the saved analysis so its "last run" is recorded.
+      // Saved and unchanged: run the saved analysis so its result and "last run" are kept.
       const r = !isNew && !dirty ? await run.mutateAsync({ id: id! }) : await run.mutateAsync({ draft: cleaned() });
-      setResult(r);
+      runState.start(r.job.id);
     } catch {
-      setResult(null);
+      // shown by ErrorAlert
     }
   };
+
+  // A draft run's result once it is the latest thing run here; otherwise the saved result.
+  const draftShown = runState.isDraft && runState.draftResult;
+  const result: AnalysisResult | undefined = draftShown ? runState.draftResult : (latest.data?.result ?? undefined);
 
   const minSources = isCompare ? 2 : 1;
 
@@ -240,13 +247,16 @@ export function AnalysisEditorPage() {
             <Button onClick={save} loading={create.isPending || update.isPending} disabled={!dirty && !isNew}>
               Save
             </Button>
-            <Button variant="primary" icon={<Play size={16} />} onClick={runNow} loading={run.isPending}>
+            <Button variant="primary" icon={<Play size={16} />} onClick={runNow} loading={run.isPending || runState.running}>
               Run{dirty && !isNew ? ' (unsaved)' : ''}
             </Button>
           </>
         }
       />
       <ErrorAlert error={create.error ?? update.error ?? run.error} />
+      {runState.job && runState.running && <JobProgress job={runState.job} label={`Running “${runState.job.title}”`} />}
+      {runState.job?.status === 'failed' && <Alert tone="danger" title="The run failed">{runState.job.error}</Alert>}
+      {runState.job?.status === 'cancelled' && <Alert tone="info">The run was cancelled.</Alert>}
       <datalist id={listId}>
         {attributes.map((a) => (
           <option key={a} value={a} />
@@ -405,18 +415,22 @@ export function AnalysisEditorPage() {
         </Card>
       )}
 
-      {run.isPending && <Spinner label="Running… large directories can take a while" />}
-      {result && !run.isPending && (
+      {result && (
         <section className="stack" aria-label="Results">
           <div className="toolbar">
-            <h2 className="section-title">Results</h2>
+            <h2 className="section-title">{draftShown ? 'Results (unsaved settings)' : 'Latest results'}</h2>
             <span className="muted small">
               {new Date(result.ranAt).toLocaleString()} · {(result.durationMs / 1000).toFixed(1)} s
+              {!draftShown && latest.data ? ` · run by ${latest.data.ranBy}` : ''}
             </span>
           </div>
+          {!draftShown && (latest.data?.stale || dirty) && (
+            <Alert tone="info">The settings have changed since this run. Run it again to see current results.</Alert>
+          )}
           {result.type === 'compare' ? <CompareResults result={result} definitions={defs.data} /> : <QualityResults result={result} definitions={defs.data} />}
         </section>
       )}
+      {!result && !runState.job && !isNew && latest.data === null && <p className="muted">This analysis hasn't been run yet.</p>}
       <ConfirmDialog
         open={confirmDelete}
         title="Delete analysis"

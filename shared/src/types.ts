@@ -618,3 +618,49 @@ export interface AnalysisResult {
   quality?: QualityResult;
   warnings?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Background jobs
+// ---------------------------------------------------------------------------
+
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+/** A computation running on the server independently of the page that started it. */
+export interface Job {
+  id: string;
+  kind: 'analysis' | 'metrics';
+  title: string;
+  status: JobStatus;
+  /** What the job is about, e.g. { type: 'analysis', id: 'an-…' }. */
+  target?: { type: string; id?: string };
+  /** The page that shows the result. */
+  link?: string;
+  entries: number;
+  expectedEntries?: number;
+  /** What it is doing now, e.g. "Reading Staff Directory". */
+  phase?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+  /** Its "ready" notification has been shown. */
+  seen: boolean;
+}
+
+/** 202 answer of an endpoint whose work continues in the background. */
+export interface PendingResponse {
+  pending: true;
+  job: Job;
+}
+
+export const isPending = (x: unknown): x is PendingResponse =>
+  !!x && typeof x === 'object' && (x as { pending?: unknown }).pending === true && !!(x as { job?: unknown }).job;
+
+export const jobActive = (j: Pick<Job, 'status'>) => j.status === 'queued' || j.status === 'running';
+
+export interface LatestAnalysisResult {
+  result: AnalysisResult;
+  ranBy: string;
+  /** The analysis settings changed after this run. */
+  stale: boolean;
+}

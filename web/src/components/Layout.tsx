@@ -29,6 +29,7 @@ import {
 import { useDefinitions, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
 import { Badge, cx } from './ui';
+import { JobsMenu } from './jobs/JobsMenu';
 
 export const DEFINITION_ICONS: Record<string, typeof Users> = {
   users: Users,
@@ -157,6 +158,7 @@ export function Layout() {
             <Menu size={20} />
           </button>
           <div className="topbar-spacer" />
+          <JobsMenu />
           <div className="user-menu">
             <div className="avatar" aria-hidden>
               {initials}

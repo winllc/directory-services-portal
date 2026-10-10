@@ -2,6 +2,7 @@ package com.winllc.dsp.service;
 
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.winllc.dsp.jobs.JobContext;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.model.AccessLevel;
@@ -21,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import org.springframework.stereotype.Service;
 
@@ -44,6 +46,8 @@ public class DataSources {
   private final LdapDirectory directory;
   private final EntryService entries;
   private final SchemaService schema;
+  /** Entries found by the last complete scan of each source, to estimate progress next time. */
+  private final Map<String, Integer> sizes = new ConcurrentHashMap<>();
 
   public DataSources(LdapDirectory directory, EntryService entries, SchemaService schema) {
     this.directory = directory;
@@ -140,15 +144,23 @@ public class DataSources {
     // "1.1" asks for no attributes at all (RFC 4511), for scans that only need DNs.
     List<String> requested = attrs.isEmpty() ? List.of("1.1") : new ArrayList<>(attrs.values());
     DirectoryDefinition def = source.definition();
+    String sizeKey = def.id() + "\u0000" + source.filter();
+    // Captured here: the SDK may hand entries to the consumer on another thread.
+    JobContext job = JobContext.current();
+    job.checkCancelled();
+    Integer expected = sizes.get(sizeKey);
+    job.phase("Reading " + def.name(), expected == null ? null : expected.longValue());
     int[] skipped = {0};
     LdapDirectory.ScanResult r = directory.scan(def.baseDn(), EntryService.searchScope(def), source.filter(), requested, max + 1, e -> {
       if (Dns.equal(e.dn(), def.baseDn())) {
         skipped[0]++;
         return;
       }
+      job.entryRead();
       consumer.accept(e);
     });
     int delivered = r.entries() - skipped[0];
+    if (!r.truncated()) sizes.put(sizeKey, delivered);
     // max + 1 was requested to leave room for the base entry; trim back to max.
     return new LdapDirectory.ScanResult(Math.min(delivered, max), r.truncated() || delivered > max);
   }

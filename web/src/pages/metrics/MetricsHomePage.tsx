@@ -5,6 +5,7 @@ import { useUser } from '../../lib/auth';
 import { DefinitionIcon } from '../../components/Layout';
 import { Badge, Card, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
 import { BarChart, compact } from '../../components/charts';
+import { JobProgress } from '../../components/jobs/JobProgress';
 
 export function MetricsHomePage() {
   const user = useUser();
@@ -78,6 +79,7 @@ export function MetricsHomePage() {
         <h2 className="section-title">Directory overviews</h2>
         <p className="muted small">A ready-made dashboard for each directory, built from its form: size, growth, breakdowns and completeness.</p>
         <ErrorAlert error={summary.error} />
+        {summary.job && <JobProgress job={summary.job} label="Counting entries" />}
         {summary.isLoading ? (
           <Spinner />
         ) : (
