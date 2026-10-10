@@ -850,5 +850,286 @@
       "subjectLabel": "Bob Baker",
       "access": "read"
     }
+  ],
+  "dashboards": [
+    {
+      "id": "dash-workforce",
+      "name": "Workforce",
+      "description": "Head count and how staff are spread across departments, offices and skills.",
+      "shared": true,
+      "widgets": [
+        {
+          "id": "w-staff",
+          "title": "Staff",
+          "definitionId": "def-staff",
+          "kind": "count",
+          "chart": "stat",
+          "width": "third",
+          "description": "People in the staff directory"
+        },
+        {
+          "id": "w-dept",
+          "title": "Staff by department",
+          "definitionId": "def-staff",
+          "kind": "distribution",
+          "chart": "bar",
+          "width": "two-thirds",
+          "attribute": "departmentNumber",
+          "limit": 10
+        },
+        {
+          "id": "w-office",
+          "title": "Office location",
+          "definitionId": "def-staff",
+          "kind": "distribution",
+          "chart": "donut",
+          "width": "third",
+          "attribute": "acmeOfficeLocation",
+          "limit": 6
+        },
+        {
+          "id": "w-dept-office",
+          "title": "Departments by office",
+          "definitionId": "def-staff",
+          "kind": "distribution",
+          "chart": "stacked",
+          "width": "two-thirds",
+          "attribute": "departmentNumber",
+          "splitBy": "acmeOfficeLocation",
+          "limit": 10
+        },
+        {
+          "id": "w-skills",
+          "title": "Skills",
+          "definitionId": "def-staff",
+          "kind": "distribution",
+          "chart": "bar",
+          "width": "half",
+          "attribute": "acmeSkill",
+          "limit": 12,
+          "includeMissing": false
+        },
+        {
+          "id": "w-managers",
+          "title": "Direct reports per manager",
+          "definitionId": "def-staff",
+          "kind": "distribution",
+          "chart": "bar",
+          "width": "half",
+          "attribute": "manager",
+          "transform": "dnRdn",
+          "includeMissing": false
+        },
+        {
+          "id": "w-staff-complete",
+          "title": "Profile completeness",
+          "definitionId": "def-staff",
+          "kind": "completeness",
+          "chart": "bar",
+          "width": "full",
+          "attributes": [
+            "mail",
+            "telephoneNumber",
+            "mobile",
+            "title",
+            "departmentNumber",
+            "manager",
+            "acmeOfficeLocation",
+            "acmePronouns",
+            "acmeSkill"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dash-it",
+      "name": "IT assets and groups",
+      "description": "Managed devices by type and status, and group membership.",
+      "shared": true,
+      "widgets": [
+        {
+          "id": "w-devices",
+          "title": "Devices",
+          "definitionId": "def-devices",
+          "kind": "count",
+          "chart": "stat",
+          "width": "third"
+        },
+        {
+          "id": "w-dev-type",
+          "title": "Device type",
+          "definitionId": "def-devices",
+          "kind": "distribution",
+          "chart": "donut",
+          "width": "third",
+          "attribute": "acmeDeviceType"
+        },
+        {
+          "id": "w-dev-status",
+          "title": "Lifecycle status",
+          "definitionId": "def-devices",
+          "kind": "distribution",
+          "chart": "bar",
+          "width": "third",
+          "attribute": "acmeDeviceStatus"
+        },
+        {
+          "id": "w-dev-os",
+          "title": "Operating systems",
+          "definitionId": "def-devices",
+          "kind": "distribution",
+          "chart": "bar",
+          "width": "half",
+          "attribute": "acmeOperatingSystem",
+          "transform": "regex",
+          "transformArg": "^([A-Za-z]+)"
+        },
+        {
+          "id": "w-dev-assigned",
+          "title": "Assigned devices",
+          "definitionId": "def-devices",
+          "kind": "completeness",
+          "chart": "bar",
+          "width": "half",
+          "attributes": [
+            "acmeAssignedTo",
+            "acmeAssetTag",
+            "acmeOperatingSystem"
+          ]
+        },
+        {
+          "id": "w-members",
+          "title": "Members per group",
+          "definitionId": "def-groups",
+          "kind": "numeric",
+          "chart": "column",
+          "width": "full",
+          "attribute": "member",
+          "measure": "valueCount"
+        }
+      ]
+    }
+  ],
+  "analyses": [
+    {
+      "id": "an-staff-wp",
+      "name": "Staff vs. white pages",
+      "description": "Every staff member should be listed in the white pages with the same contact details.",
+      "type": "compare",
+      "sources": [
+        {
+          "definitionId": "def-staff",
+          "keyAttribute": "uid"
+        },
+        {
+          "definitionId": "def-whitepages",
+          "keyAttribute": "uid"
+        }
+      ],
+      "compare": {
+        "attributes": [
+          {
+            "label": "E-mail",
+            "attributes": [
+              "mail"
+            ]
+          },
+          {
+            "label": "Phone",
+            "attributes": [
+              "telephoneNumber"
+            ]
+          },
+          {
+            "label": "Job title",
+            "attributes": [
+              "title"
+            ]
+          },
+          {
+            "label": "Department",
+            "attributes": [
+              "departmentNumber"
+            ]
+          }
+        ],
+        "ignoreCase": true,
+        "normalizeWhitespace": true,
+        "ignoreOrder": true,
+        "keyIgnoreCase": true
+      }
+    },
+    {
+      "id": "an-people-quality",
+      "name": "People data quality",
+      "description": "Unique identifiers, valid contact details and working manager/sponsor links across staff and partners.",
+      "type": "quality",
+      "sources": [
+        {
+          "definitionId": "def-staff"
+        },
+        {
+          "definitionId": "def-partners"
+        }
+      ],
+      "quality": {
+        "formRules": true,
+        "rules": [
+          {
+            "id": "r-uid",
+            "attribute": "uid",
+            "type": "unique",
+            "scope": "all",
+            "description": "User IDs are unique across staff and partners"
+          },
+          {
+            "id": "r-mail-unique",
+            "attribute": "mail",
+            "type": "unique",
+            "scope": "all",
+            "description": "E-mail addresses are unique"
+          },
+          {
+            "id": "r-mail-format",
+            "attribute": "mail",
+            "type": "format",
+            "format": "email"
+          },
+          {
+            "id": "r-phone",
+            "attribute": "telephoneNumber",
+            "type": "required",
+            "severity": "warning",
+            "description": "Everyone has a phone number"
+          },
+          {
+            "id": "r-manager",
+            "attribute": "manager",
+            "type": "dnExists",
+            "description": "Managers exist"
+          },
+          {
+            "id": "r-sponsor",
+            "attribute": "acmeSponsor",
+            "type": "dnExists",
+            "description": "Partner sponsors exist"
+          },
+          {
+            "id": "r-badge",
+            "attribute": "acmeBadgeNumber",
+            "type": "pattern",
+            "pattern": "B-\\d{4}",
+            "description": "Badge numbers look like B-1234"
+          },
+          {
+            "id": "r-contract",
+            "attribute": "acmeContractEnd",
+            "type": "format",
+            "format": "date",
+            "description": "Contract end is a date"
+          }
+        ]
+      }
+    }
   ]
 }

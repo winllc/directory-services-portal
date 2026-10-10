@@ -38,6 +38,9 @@ public class ConfigStore {
     try {
       StoreData loaded = mapper.readValue(file.toFile(), StoreData.class);
       if (loaded.customSchema == null) loaded.customSchema = CustomSchema.empty();
+      // Files written before dashboards and analyses existed.
+      if (loaded.dashboards == null) loaded.dashboards = new java.util.ArrayList<>();
+      if (loaded.analyses == null) loaded.analyses = new java.util.ArrayList<>();
       log.info("Loaded portal configuration from {}", file);
       return loaded;
     } catch (RuntimeException e) {

@@ -1,6 +1,8 @@
 package com.winllc.dsp.store;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.winllc.dsp.analysis.AnalysisDefinition;
+import com.winllc.dsp.metrics.Dashboard;
 import com.winllc.dsp.model.CustomSchema;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.FormDefinition;
@@ -9,7 +11,10 @@ import com.winllc.dsp.model.SchemaSnapshot;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Everything the portal persists: custom schema, cached server schema, forms, definitions, grants. */
+/**
+ * Everything the portal persists: custom schema, cached server schema, forms, definitions, grants,
+ * metric dashboards and saved analyses.
+ */
 public class StoreData {
   public int version = 1;
   public CustomSchema customSchema = CustomSchema.empty();
@@ -18,6 +23,8 @@ public class StoreData {
   public List<FormDefinition> forms = new ArrayList<>();
   public List<DirectoryDefinition> definitions = new ArrayList<>();
   public List<PermissionGrant> grants = new ArrayList<>();
+  public List<Dashboard> dashboards = new ArrayList<>();
+  public List<AnalysisDefinition> analyses = new ArrayList<>();
 
   @JsonIgnore
   public boolean isEmpty() {

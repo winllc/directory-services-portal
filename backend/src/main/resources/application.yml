@@ -44,6 +44,11 @@ portal:
   audit:
     dir: ${AUDIT_DIR:}
     memory-events: ${AUDIT_MEMORY_EVENTS:10000}
+  # Metrics dashboards and data analysis (comparisons, quality checks).
+  metrics:
+    max-entries: ${METRICS_MAX_ENTRIES:100000}
+    cache-seconds: ${METRICS_CACHE_SECONDS:60}
+    max-issues: ${ANALYSIS_MAX_ISSUES:2000}
   # Optional fixed banner at the top and bottom of every page (off while the text is empty).
   banner:
     text: ${BANNER_TEXT:}

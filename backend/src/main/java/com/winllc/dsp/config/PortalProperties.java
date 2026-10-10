@@ -17,6 +17,7 @@ public class PortalProperties {
   private final Ldap ldap = new Ldap();
   private final X509 x509 = new X509();
   private final Audit audit = new Audit();
+  private final Metrics metrics = new Metrics();
   private final Banner banner = new Banner();
   /** Allow username/password sign-in (disable for certificate-only deployments). */
   private boolean passwordLoginEnabled = true;
@@ -73,6 +74,23 @@ public class PortalProperties {
     public void setDir(String dir) { this.dir = dir; }
     public int getMemoryEvents() { return memoryEvents; }
     public void setMemoryEvents(int memoryEvents) { this.memoryEvents = memoryEvents; }
+  }
+
+  /** Limits for the metrics and analysis modules. */
+  public static class Metrics {
+    /** Most entries one metric or analysis source reads; larger directories are reported as truncated. */
+    private int maxEntries = 100_000;
+    /** How long computed metrics are reused (0 disables the cache). */
+    private int cacheSeconds = 60;
+    /** Most individual findings an analysis run returns (counts always cover every entry). */
+    private int maxIssues = 2_000;
+
+    public int getMaxEntries() { return maxEntries; }
+    public void setMaxEntries(int maxEntries) { this.maxEntries = maxEntries; }
+    public int getCacheSeconds() { return cacheSeconds; }
+    public void setCacheSeconds(int cacheSeconds) { this.cacheSeconds = cacheSeconds; }
+    public int getMaxIssues() { return maxIssues; }
+    public void setMaxIssues(int maxIssues) { this.maxIssues = maxIssues; }
   }
 
   /**
@@ -201,6 +219,7 @@ public class PortalProperties {
   public Ldap getLdap() { return ldap; }
   public X509 getX509() { return x509; }
   public Audit getAudit() { return audit; }
+  public Metrics getMetrics() { return metrics; }
   public Banner getBanner() { return banner; }
   public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
   public String getLoginHint() { return loginHint; }

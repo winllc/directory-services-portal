@@ -1,6 +1,8 @@
 package com.winllc.dsp.store;
 
+import com.winllc.dsp.analysis.AnalysisDefinition;
 import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.metrics.Dashboard;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.FormDefinition;
 import com.winllc.dsp.model.PermissionGrant;
@@ -21,7 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class DemoConfigSeeder implements ApplicationRunner {
   private static final Logger log = LoggerFactory.getLogger(DemoConfigSeeder.class);
 
-  public record DemoConfig(List<FormDefinition> forms, List<DirectoryDefinition> definitions, List<PermissionGrant> grants) {}
+  public record DemoConfig(List<FormDefinition> forms, List<DirectoryDefinition> definitions, List<PermissionGrant> grants,
+      List<Dashboard> dashboards, List<AnalysisDefinition> analyses) {}
 
   private final ConfigStore store;
   private final PortalProperties props;
@@ -41,7 +44,7 @@ public class DemoConfigSeeder implements ApplicationRunner {
       apply(demo, d);
       return null;
     });
-    log.info("Seeded demo forms, directories and permissions");
+    log.info("Seeded demo forms, directories, permissions, dashboards and analyses");
   }
 
   public static DemoConfig load(JsonMapper mapper) throws IOException {
@@ -62,6 +65,12 @@ public class DemoConfigSeeder implements ApplicationRunner {
         .toList());
     d.grants = new java.util.ArrayList<>(demo.grants().stream()
         .map(g -> new PermissionGrant(g.id(), g.definitionId(), g.subjectType(), g.subject(), g.subjectLabel(), g.access(), now))
+        .toList());
+    d.dashboards = new java.util.ArrayList<>((demo.dashboards() == null ? List.<Dashboard>of() : demo.dashboards()).stream()
+        .map(x -> new Dashboard(x.id(), x.name(), x.description(), x.shared(), x.widgets(), now, now))
+        .toList());
+    d.analyses = new java.util.ArrayList<>((demo.analyses() == null ? List.<AnalysisDefinition>of() : demo.analyses()).stream()
+        .map(x -> new AnalysisDefinition(x.id(), x.name(), x.description(), x.type(), x.sources(), x.compare(), x.quality(), now, now, null))
         .toList());
   }
 }

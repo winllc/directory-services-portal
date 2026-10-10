@@ -78,6 +78,22 @@ public class EntryService {
   // Lookups & access
   // ---------------------------------------------------------------------------
 
+  /** Password-like attributes that are never returned, aggregated or searched on. */
+  public static boolean isHidden(String attribute) {
+    String a = attribute.toLowerCase();
+    int semi = a.indexOf(';');
+    return HIDDEN.contains(a) || (semi > 0 && HIDDEN.contains(a.substring(0, semi)));
+  }
+
+  public static SearchScope searchScope(DirectoryDefinition def) {
+    return scope(def.scope());
+  }
+
+  /** The attributes a reader of the definition can see on its entries (form fields, list columns, title). */
+  public static List<String> readableAttributes(DirectoryDefinition def, FormDefinition form) {
+    return returnAttributes(def, form);
+  }
+
   public DirectoryDefinition definition(String idOrSlug) {
     return store.snapshot().definitions.stream()
         .filter(d -> d.id().equals(idOrSlug) || d.slug().equals(idOrSlug))

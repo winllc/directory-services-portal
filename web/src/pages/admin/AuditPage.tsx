@@ -15,6 +15,8 @@ const CATEGORIES: { value: string; label: string }[] = [
   { value: 'definition', label: 'Directory definitions' },
   { value: 'form', label: 'Forms' },
   { value: 'schema', label: 'Schema' },
+  { value: 'dashboard', label: 'Dashboards' },
+  { value: 'analysis', label: 'Analyses' },
 ];
 
 const ACTION_LABELS: Record<string, string> = {
@@ -37,6 +39,12 @@ const ACTION_LABELS: Record<string, string> = {
   'schema.attribute_type.delete': 'Deleted attribute type',
   'schema.object_class.save': 'Saved object class',
   'schema.object_class.delete': 'Deleted object class',
+  'dashboard.create': 'Created dashboard',
+  'dashboard.update': 'Updated dashboard',
+  'dashboard.delete': 'Deleted dashboard',
+  'analysis.create': 'Created analysis',
+  'analysis.update': 'Updated analysis',
+  'analysis.delete': 'Deleted analysis',
 };
 
 const FAILED_LABELS: Record<string, string> = { 'auth.login': 'Sign-in failed' };

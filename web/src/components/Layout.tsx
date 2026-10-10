@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
+  BarChart3,
   BookOpen,
   Briefcase,
   Building2,
@@ -19,6 +20,7 @@ import {
   Phone,
   Server,
   Shield,
+  ShieldCheck,
   UserCircle2,
   Users,
   UsersRound,
@@ -100,6 +102,9 @@ export function Layout() {
           <NavItem to="/me" icon={<UserCircle2 size={18} />}>
             My profile
           </NavItem>
+          <NavItem to="/metrics" icon={<BarChart3 size={18} />}>
+            Metrics
+          </NavItem>
 
           <div className="nav-heading">Directories</div>
           {defs.data?.map((d) => (
@@ -124,6 +129,9 @@ export function Layout() {
               </NavItem>
               <NavItem to="/admin/permissions" icon={<KeyRound size={18} />}>
                 Permissions
+              </NavItem>
+              <NavItem to="/admin/analysis" icon={<ShieldCheck size={18} />}>
+                Data analysis
               </NavItem>
               <NavItem to="/admin/audit" icon={<History size={18} />}>
                 Audit log

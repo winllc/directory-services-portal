@@ -4,7 +4,9 @@ A web frontend for LDAP directories with custom (non-standard) schemas. Administ
 **forms** for any object class, publish them as **directory definitions** scoped to a namespace
 (read/write or read-only "white pages"), and grant **read/write permissions** to specific users
 and groups. Every user gets a **My profile** page that shows where they appear across all
-directories, and lets them edit fields marked self-service.
+directories, and lets them edit fields marked self-service. **Metrics** turn any directory into
+statistics and charts, and **data analysis** compares directories with each other and checks
+them for correct and unique values.
 
 ```
 ┌──────── web (React + Vite) ─────────┐        ┌────── backend (Spring Boot 4, Java 21) ──────┐        ┌──────────┐
@@ -159,6 +161,83 @@ the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `e
 - **My profile** shows every definition that can locate the user, and lets them edit their own
   self-service fields.
 
+### Metrics
+*Metrics* (every signed-in user)
+
+Statistics and charts computed live from the directories. Every chart reads one directory
+definition, so it only ever covers entries the viewer is allowed to read.
+
+- **Directory overviews** (out of the box): a ready-made dashboard for each directory, generated
+  from its form: entry count, new entries per month (`createTimestamp`), a breakdown for every
+  drop-down field and e-mail domain, containers (sub-tree directories), values per entry for
+  multi-valued links (e.g. group members) and how completely each field is filled in.
+- **Dashboards**: administrators combine charts from any directories into dashboards, and share
+  them with all signed-in users or keep them for administrators. A viewer sees charts from
+  directories they can't read as locked.
+- **Explorer**: anyone can build a chart from a directory they can read and watch it update as
+  they configure it. The settings live in the URL, so a chart can be bookmarked or sent to a
+  colleague; administrators can add it to a dashboard. Every overview and dashboard chart has a
+  button that opens it in the explorer to customize.
+
+| Measure | Shows | Charts |
+|---|---|---|
+| Count | number of entries | number |
+| Breakdown | entries per value of an attribute, top N with the rest as "Other", entries without a value as "(none)"; optionally split by a second attribute | bars, columns, donut, stacked bars, table |
+| Completeness | share of entries with a value, per attribute | bars, table |
+| Over time | entries per day, week, month, quarter or year of a date attribute (GeneralizedTime or ISO dates), optionally as a running total | columns, line, area, table |
+| Numbers | count, average, median, lowest and highest, plus a histogram, of numeric values or of how many values each entry has | columns, number, table |
+
+Values can be grouped before counting: lower/upper case, e-mail domain, the name in a DN (e.g.
+a manager's `uid`) or its parent container, the first N characters, a regular expression's first
+group, or a date's year, quarter, month, week or day. Drop-down values are shown with their
+option labels (so `manager` DNs show as people's names). An extra LDAP filter narrows any chart.
+
+Every chart has a table view and a CSV download. Results are cached for
+`METRICS_CACHE_SECONDS` (**Refresh** recomputes them); charts that read the same directory share
+one paged scan of it.
+
+- Administrators may chart any attribute of a directory's object classes. Everyone else is
+  limited to the attributes the directory shows them (form fields, list columns, title) and the
+  entry timestamps. Extra filters follow the same rule, so a filter can't be used to probe
+  values the user couldn't otherwise see. Password attributes can never be charted or filtered
+  on.
+- User-supplied regular expressions run with a time budget, so a pathological pattern fails
+  that chart instead of tying up the server.
+- At most `METRICS_MAX_ENTRIES` entries are read per directory; larger results are marked as
+  partial.
+
+### Data analysis
+*Admin → Data analysis*
+
+Saved analyses that run on demand against live data. A run's counts cover every entry read;
+the list of individual findings is capped at `ANALYSIS_MAX_ISSUES` and can be filtered,
+searched and downloaded as CSV. Each finding links to the entry.
+
+- **Comparison** of two to six directories (or filtered parts of directories). Entries are
+  matched by a key attribute per source (e.g. `uid`, `mail` or `employeeNumber`), and the run
+  reports keys missing from some sources, keys used by more than one entry in a source, and the
+  compared attributes whose values differ. Attributes can be named differently per source.
+  Comparisons can ignore case, extra spaces and the order of multiple values; DNs always compare
+  in normalized form.
+- **Quality check** of one to six directories, with any of these rules per attribute (each an
+  error or a warning):
+
+  | Rule | Finds |
+  |---|---|
+  | Is present / has a single value | missing or multiple values |
+  | Is unique | values used by another entry, within each source or across all of them |
+  | Matches a pattern / has a valid format | values that don't match a regular expression, or aren't a valid e-mail address, phone number, URL, number, integer, date or DN |
+  | Is one of a list / has a length between | values outside a list, or too short or long |
+  | Refers to existing entries | DN values (e.g. `manager`, `member`) that point at entries that don't exist |
+
+  **Check every form field's rules** adds the rules already configured on each directory's form
+  (required, single value, format, pattern, maximum length and drop-down options), so the data
+  can be checked against what the portal would accept today.
+
+The demo includes two dashboards (*Workforce*, *IT assets and groups*) and two analyses
+(*Staff vs. white pages*, *People data quality*). Creating, changing and deleting dashboards
+and analyses is recorded in the audit log.
+
 ### Audit log
 *Admin → Audit log*
 
@@ -169,7 +248,7 @@ can't say who made a change. The portal records it instead:
 |---|---|
 | Entry created, updated, renamed or deleted, through a directory or **My profile** | each changed attribute's values before and after. A delete keeps everything the entry held, so it can be put back by hand |
 | Sign-ins and sign-outs, by password or certificate | for a failed attempt: the name that was tried or the certificate's subject, serial and issuer, and why it failed |
-| Grants, directory definitions, forms and custom schema created, changed or deleted | the settings that changed, before and after |
+| Grants, directory definitions, forms, custom schema, dashboards and analyses created, changed or deleted | the settings that changed, before and after |
 
 Every event carries who did it (with their DN and how they signed in), the client address, and an
 outcome: **success**, **denied** (the portal's permission checks refused it) or **failed** (the
@@ -285,6 +364,8 @@ name. Any other value stops the API at startup with an error naming the setting.
   `/api/admin/**` requires `ROLE_ADMIN`. Failed logins are throttled.
 - Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
   Redis or JDBC) before scaling out.
+- Metrics and analyses read through the same permission checks as browsing (see
+  [Metrics](#metrics)); comparisons and quality checks are for administrators only.
 - Changes and sign-ins are recorded in the [audit log](#audit-log). Treat the audit files as
   sensitive: they hold the values that were changed and the names people tried to sign in with.
 
@@ -305,9 +386,12 @@ Layout:
   - `web/`: REST controllers and DTOs
   - `store/`: the JSON config store
   - `x509/`: client-certificate parsing, validation and user mapping
+  - `metrics/`: metric widgets, aggregation engine and the out-of-the-box overviews
+  - `analysis/`: directory comparisons and data-quality checks
   - `config/`: security and SPA serving
 - `shared/`: TypeScript types, DN utilities, validation and schema helpers used by the client.
-- `web/`: the React client (`src/pages` for user and admin pages, `src/components`), with
+- `web/`: the React client (`src/pages` for user, metrics and admin pages, `src/components`,
+  including the SVG charts in `src/components/charts`), with
   `web/Dockerfile` and its nginx setup in `web/nginx/` (`nginx.conf`, the server `templates`
   and `entrypoint.sh`, which renders them at start).
 - `backend/Dockerfile`: the API image. `deploy/openldap/`: the demo OpenLDAP image.

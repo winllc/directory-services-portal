@@ -1,6 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  AnalysisDefinition,
+  AnalysisInput,
+  AnalysisResult,
   AttributeTypeDef,
+  Dashboard,
+  DashboardSummary,
+  DirectorySummaryRow,
+  MetricOutcome,
+  MetricSource,
+  MetricWidget,
+  OverviewResponse,
   AuditPage,
   CustomSchema,
   DefinitionSummary,
@@ -34,6 +44,15 @@ export const keys = {
   subjects: (q: string, type?: string) => ['admin', 'subjects', q, type] as const,
   browse: (base: string) => ['admin', 'browse', base] as const,
   audit: (params: object) => ['admin', 'audit', params] as const,
+  metricSources: ['metrics', 'sources'] as const,
+  metricSummary: ['metrics', 'summary'] as const,
+  overview: (id: string) => ['metrics', 'overview', id] as const,
+  dashboards: ['metrics', 'dashboards'] as const,
+  dashboard: (id: string) => ['metrics', 'dashboard', id] as const,
+  dashboardResults: (id: string) => ['metrics', 'dashboard-results', id] as const,
+  evaluate: (widgets: MetricWidget[]) => ['metrics', 'evaluate', widgets] as const,
+  analyses: ['admin', 'analyses'] as const,
+  analysis: (id: string) => ['admin', 'analysis', id] as const,
 };
 
 export const useServerInfo = () => useQuery({ queryKey: keys.info, queryFn: () => api.get<ServerInfo>('/api/info'), staleTime: 60_000 });
@@ -261,3 +280,135 @@ export const useAudit = (params: AuditQuery) =>
     queryFn: () => api.get<AuditPage>(`/api/admin/audit${qs({ ...params })}`),
     placeholderData: (prev) => prev,
   });
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+/** Results are cached on the server for a minute; "refresh" recomputes them. */
+const withRefresh = (url: string, refresh: boolean) => (refresh ? `${url}${url.includes('?') ? '&' : '?'}refresh=true` : url);
+
+export const useMetricSources = () =>
+  useQuery({ queryKey: keys.metricSources, queryFn: () => api.get<MetricSource[]>('/api/metrics/sources'), staleTime: 60_000 });
+
+export const useMetricSummary = () =>
+  useQuery({ queryKey: keys.metricSummary, queryFn: () => api.get<DirectorySummaryRow[]>('/api/metrics/summary'), staleTime: 30_000 });
+
+export const useOverview = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.overview(id ?? ''),
+    queryFn: () => api.get<OverviewResponse>(`/api/metrics/overview/${encodeURIComponent(id!)}`),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+
+export const useDashboards = () =>
+  useQuery({ queryKey: keys.dashboards, queryFn: () => api.get<DashboardSummary[]>('/api/metrics/dashboards') });
+
+export const useDashboard = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.dashboard(id ?? ''),
+    queryFn: () => api.get<Dashboard>(`/api/metrics/dashboards/${encodeURIComponent(id!)}`),
+    enabled: !!id,
+  });
+
+export const useDashboardResults = (id: string | undefined, enabled = true) =>
+  useQuery({
+    queryKey: keys.dashboardResults(id ?? ''),
+    queryFn: () => api.get<{ results: Record<string, MetricOutcome> }>(`/api/metrics/dashboards/${encodeURIComponent(id!)}/results`),
+    enabled: !!id && enabled,
+    staleTime: 30_000,
+  });
+
+/** Recompute on the server, bypassing its cache, and put the fresh results in the query cache. */
+export function useRefreshMetrics() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (target: { overview?: string; dashboard?: string }) => {
+      if (target.overview) {
+        const r = await api.get<OverviewResponse>(withRefresh(`/api/metrics/overview/${encodeURIComponent(target.overview)}`, true));
+        qc.setQueryData(keys.overview(target.overview), r);
+      }
+      if (target.dashboard) {
+        const r = await api.get<{ results: Record<string, MetricOutcome> }>(
+          withRefresh(`/api/metrics/dashboards/${encodeURIComponent(target.dashboard)}/results`, true),
+        );
+        qc.setQueryData(keys.dashboardResults(target.dashboard), r);
+      }
+    },
+  });
+}
+
+/** Compute ad-hoc widgets (explorer, editor preview). Keeps the previous result while recomputing. */
+export const useEvaluate = (widgets: MetricWidget[], enabled = true) =>
+  useQuery({
+    queryKey: keys.evaluate(widgets),
+    queryFn: () => api.post<Record<string, MetricOutcome>>('/api/metrics/evaluate', { widgets }),
+    enabled: enabled && widgets.length > 0,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+export interface DashboardInput {
+  name: string;
+  description?: string;
+  shared: boolean;
+  widgets: MetricWidget[];
+}
+
+export function useDashboardMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['metrics'] });
+  return {
+    create: useMutation({ mutationFn: (d: DashboardInput) => api.post<Dashboard>('/api/admin/dashboards', d), onSuccess: invalidate }),
+    update: useMutation({
+      mutationFn: ({ id, ...d }: DashboardInput & { id: string }) => api.put<Dashboard>(`/api/admin/dashboards/${encodeURIComponent(id)}`, d),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/dashboards/${encodeURIComponent(id)}`), onSuccess: invalidate }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Analysis
+// ---------------------------------------------------------------------------
+
+export const useAnalyses = () =>
+  useQuery({ queryKey: keys.analyses, queryFn: () => api.get<AnalysisDefinition[]>('/api/admin/analysis') });
+
+export const useAnalysis = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.analysis(id ?? ''),
+    queryFn: () => api.get<AnalysisDefinition>(`/api/admin/analysis/${encodeURIComponent(id!)}`),
+    enabled: !!id,
+  });
+
+export function useAnalysisMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: keys.analyses });
+  return {
+    create: useMutation({ mutationFn: (a: AnalysisInput) => api.post<AnalysisDefinition>('/api/admin/analysis', a), onSuccess: invalidate }),
+    update: useMutation({
+      mutationFn: ({ id, ...a }: AnalysisInput & { id: string }) => api.put<AnalysisDefinition>(`/api/admin/analysis/${encodeURIComponent(id)}`, a),
+      onSuccess: (a) => {
+        invalidate();
+        qc.setQueryData(keys.analysis(a.id), a);
+      },
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/analysis/${encodeURIComponent(id)}`), onSuccess: invalidate }),
+    /** Runs a saved analysis by id, or an unsaved draft. */
+    run: useMutation({
+      mutationFn: (target: { id: string } | { draft: AnalysisInput }) =>
+        'id' in target
+          ? api.post<AnalysisResult>(`/api/admin/analysis/${encodeURIComponent(target.id)}/run`)
+          : api.post<AnalysisResult>('/api/admin/analysis/run', target.draft),
+      onSuccess: (_r, target) => {
+        if ('id' in target) {
+          invalidate();
+          qc.invalidateQueries({ queryKey: keys.analysis(target.id) });
+        }
+      },
+    }),
+  };
+}

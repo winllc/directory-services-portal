@@ -308,3 +308,313 @@ export interface AuditPage {
   /** Timestamp of the oldest searchable event. Older ones are only in the audit files. */
   oldest?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+export type MetricKind = 'count' | 'distribution' | 'completeness' | 'timeline' | 'numeric';
+export type ChartType = 'stat' | 'bar' | 'column' | 'stacked' | 'donut' | 'line' | 'area' | 'table';
+export type ValueTransform =
+  | 'none'
+  | 'lowercase'
+  | 'uppercase'
+  | 'emailDomain'
+  | 'dnRdn'
+  | 'dnParent'
+  | 'prefix'
+  | 'regex'
+  | 'year'
+  | 'quarter'
+  | 'month'
+  | 'week'
+  | 'day';
+export type TimeBucket = 'day' | 'week' | 'month' | 'quarter' | 'year';
+export type WidgetWidth = 'third' | 'half' | 'two-thirds' | 'full';
+
+/**
+ * One chart or statistic: a source directory (plus an optional extra filter), what to measure,
+ * and how to draw it. Unused options are omitted.
+ */
+export interface MetricWidget {
+  id?: string;
+  title: string;
+  description?: string;
+  definitionId: string;
+  filter?: string;
+  kind: MetricKind;
+  /** distribution, timeline, numeric ("dn" is the entry DN). */
+  attribute?: string;
+  transform?: ValueTransform;
+  /** prefix: number of characters; regex: pattern (first group is used). */
+  transformArg?: string;
+  /** distribution: second attribute, drawn as stacked segments. */
+  splitBy?: string;
+  splitTransform?: ValueTransform;
+  /** completeness: attributes to check (default: every form field). */
+  attributes?: string[];
+  /** distribution: top N (rest folded into "Other"); timeline: last N periods. */
+  limit?: number;
+  /** distribution: count entries without a value as "(none)" (default true). */
+  includeMissing?: boolean;
+  sort?: 'count' | 'label';
+  bucket?: TimeBucket;
+  cumulative?: boolean;
+  /** numeric: the values themselves, or how many values each entry has. */
+  measure?: 'values' | 'valueCount';
+  bins?: number;
+  chart: ChartType;
+  width?: WidgetWidth;
+}
+
+export interface MetricRow {
+  key: string;
+  label: string;
+  value: number;
+  /** value / total (numeric: / number of values). */
+  share?: number;
+  other?: boolean;
+  missing?: boolean;
+}
+
+export interface MetricSeries {
+  key: string;
+  label: string;
+  other?: boolean;
+  missing?: boolean;
+}
+
+export interface MetricStats {
+  count: number;
+  min?: number;
+  max?: number;
+  mean?: number;
+  median?: number;
+  p90?: number;
+  sum?: number;
+  invalid: number;
+  missing: number;
+}
+
+export interface MetricResult {
+  kind: MetricKind;
+  /** Entries scanned. */
+  total: number;
+  truncated: boolean;
+  computedAt: string;
+  rows?: MetricRow[];
+  series?: MetricSeries[];
+  /** matrix[row][series] counts for split distributions. */
+  matrix?: number[][];
+  distinctValues?: number;
+  stats?: MetricStats;
+  warnings?: string[];
+}
+
+/** A widget's result, or why it could not be computed. */
+export interface MetricOutcome {
+  result?: MetricResult;
+  error?: string;
+  details?: Record<string, string>;
+  forbidden?: boolean;
+}
+
+export interface Dashboard {
+  id: string;
+  name: string;
+  description?: string;
+  shared: boolean;
+  widgets: MetricWidget[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardSummary {
+  id: string;
+  name: string;
+  description?: string;
+  shared: boolean;
+  widgets: number;
+  updatedAt: string;
+}
+
+export interface AttributeChoice {
+  attribute: string;
+  label: string;
+  /** form field, list column, operational timestamp, schema attribute (admins) or the entry DN. */
+  source: 'form' | 'list' | 'operational' | 'schema' | 'dn';
+  multiValued: boolean;
+  widget?: FieldWidget;
+  format?: TextFormat;
+}
+
+export interface MetricSource {
+  id: string;
+  name: string;
+  slug: string;
+  icon?: string;
+  description?: string;
+  attributes: AttributeChoice[];
+}
+
+export interface DirectorySummaryRow {
+  id: string;
+  name: string;
+  slug: string;
+  icon?: string;
+  count?: number;
+  truncated: boolean;
+  error?: string;
+}
+
+export interface OverviewResponse {
+  definition: { id: string; name: string; slug: string; icon?: string; description?: string };
+  widgets: MetricWidget[];
+  results: Record<string, MetricOutcome>;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis
+// ---------------------------------------------------------------------------
+
+export type AnalysisType = 'compare' | 'quality';
+
+export interface AnalysisSource {
+  definitionId: string;
+  filter?: string;
+  label?: string;
+  /** compare: attribute that identifies the same object in every source. */
+  keyAttribute?: string;
+}
+
+export interface AttributeMapping {
+  label?: string;
+  /** One attribute for all sources, or one per source. */
+  attributes: string[];
+}
+
+export interface CompareOptions {
+  attributes: AttributeMapping[];
+  ignoreCase: boolean;
+  normalizeWhitespace: boolean;
+  ignoreOrder: boolean;
+  keyIgnoreCase: boolean;
+}
+
+export type RuleType = 'required' | 'singleValue' | 'unique' | 'pattern' | 'format' | 'allowedValues' | 'length' | 'dnExists';
+export type RuleFormat = 'email' | 'phone' | 'url' | 'number' | 'integer' | 'date' | 'dn';
+export type Severity = 'error' | 'warning';
+
+export interface QualityRule {
+  id?: string;
+  attribute: string;
+  type: RuleType;
+  pattern?: string;
+  format?: RuleFormat;
+  values?: string[];
+  min?: number;
+  max?: number;
+  /** unique: within each source, or across all sources. */
+  scope?: 'source' | 'all';
+  ignoreCase?: boolean;
+  severity?: Severity;
+  description?: string;
+}
+
+export interface QualityOptions {
+  /** Also check every form field's rules (required, single value, format, pattern, options). */
+  formRules: boolean;
+  rules: QualityRule[];
+}
+
+export interface AnalysisLastRun {
+  at: string;
+  by: string;
+  entries: number;
+  issues: number;
+  summary: string;
+}
+
+export interface AnalysisDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  type: AnalysisType;
+  sources: AnalysisSource[];
+  compare?: CompareOptions;
+  quality?: QualityOptions;
+  createdAt: string;
+  updatedAt: string;
+  lastRun?: AnalysisLastRun;
+}
+
+export type AnalysisInput = Pick<AnalysisDefinition, 'name' | 'description' | 'type' | 'sources' | 'compare' | 'quality'>;
+
+export interface AnalysisSourceStats {
+  label: string;
+  definitionId: string;
+  definitionName: string;
+  entries: number;
+  truncated: boolean;
+  keyed?: number;
+  missingKey?: number;
+  duplicateKeys?: number;
+}
+
+export interface CompareRow {
+  key: string;
+  status: 'missing' | 'different' | 'duplicate';
+  duplicate?: boolean;
+  present: boolean[];
+  /** DNs per source (null where absent). */
+  dns: (string[] | null)[];
+  differences?: { label: string; values: (string[] | null)[] }[];
+}
+
+export interface CompareResult {
+  sources: AnalysisSourceStats[];
+  summary: { keys: number; inAll: number; identical: number; different: number; partial: number; onlyIn: number[]; duplicates: number };
+  attributes: { label: string; attributes: string[]; differences: number }[];
+  rows: CompareRow[];
+  rowCount: number;
+  rowsTruncated: boolean;
+}
+
+export interface QualityRuleStats {
+  id: string;
+  label: string;
+  attribute: string;
+  type: RuleType | 'form';
+  severity: Severity;
+  violations: number;
+  /** Index of the source a form rule belongs to. */
+  source?: number;
+}
+
+export interface QualityIssue {
+  ruleId: string;
+  source: number;
+  dn: string;
+  title: string;
+  attribute: string;
+  values: string[];
+  message: string;
+  severity: Severity;
+}
+
+export interface QualityResult {
+  sources: AnalysisSourceStats[];
+  summary: { entries: number; entriesWithIssues: number; issues: number; errors: number; warnings: number; cleanShare: number };
+  rules: QualityRuleStats[];
+  issues: QualityIssue[];
+  issuesTruncated: boolean;
+}
+
+export interface AnalysisResult {
+  type: AnalysisType;
+  ranAt: string;
+  durationMs: number;
+  compare?: CompareResult;
+  quality?: QualityResult;
+  warnings?: string[];
+}

@@ -1,5 +1,6 @@
 package com.winllc.dsp.ldap;
 
+import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.BindRequest;
 import com.unboundid.ldap.sdk.DN;
@@ -19,11 +20,14 @@ import com.unboundid.ldap.sdk.ResultCode;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResult;
 import com.unboundid.ldap.sdk.SearchResultEntry;
+import com.unboundid.ldap.sdk.SearchResultListener;
+import com.unboundid.ldap.sdk.SearchResultReference;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.unboundid.ldap.sdk.ServerSet;
 import com.unboundid.ldap.sdk.SimpleBindRequest;
 import com.unboundid.ldap.sdk.SingleServerSet;
 import com.unboundid.ldap.sdk.StartTLSPostConnectProcessor;
+import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
 import com.unboundid.ldap.sdk.schema.Schema;
 import com.unboundid.util.ssl.HostNameSSLSocketVerifier;
@@ -39,6 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
@@ -58,6 +63,11 @@ public class LdapDirectory implements AutoCloseable {
       String url, String bindDn, String bindPassword, boolean startTls, boolean tlsRejectUnauthorized, int timeoutMs, int poolSize) {}
 
   public record Result(List<DirectoryEntry> entries, boolean truncated) {}
+
+  /** Outcome of {@link #scan}: how many entries were delivered, and whether more were left out. */
+  public record ScanResult(int entries, boolean truncated) {}
+
+  private static final int SCAN_PAGE_SIZE = 500;
 
   private final Settings settings;
   private final ServerSet serverSet;
@@ -160,6 +170,79 @@ public class LdapDirectory implements AutoCloseable {
     return new Result(entries, truncated);
   }
 
+  /**
+   * Stream every matching entry to {@code consumer}, up to {@code max} entries, without holding
+   * them all in memory. Uses the simple paged results control (RFC 2696) so server-side size
+   * limits for a single response don't cut the scan short; servers that don't support the control
+   * ignore it (it is sent as non-critical) and answer in one response.
+   */
+  public ScanResult scan(String base, SearchScope scope, Filter filter, List<String> attributes, int max, Consumer<DirectoryEntry> consumer) {
+    String[] attrs = attributes == null || attributes.isEmpty() ? new String[0] : attributes.toArray(String[]::new);
+    int[] seen = {0};
+    boolean[] over = {false};
+    // The SDK may call the listener on its connection reader thread, so a consumer failure is kept
+    // and rethrown on the calling thread once the search has finished.
+    RuntimeException[] failure = {null};
+    SearchResultListener listener = new SearchResultListener() {
+      @Override
+      public void searchEntryReturned(SearchResultEntry entry) {
+        if (failure[0] != null) return;
+        if (seen[0] >= max) {
+          over[0] = true;
+          return;
+        }
+        seen[0]++;
+        try {
+          consumer.accept(toEntry(entry));
+        } catch (RuntimeException e) {
+          failure[0] = e;
+        }
+      }
+
+      @Override
+      public void searchReferenceReturned(SearchResultReference reference) {}
+    };
+    LDAPConnection connection;
+    try {
+      connection = pool().getConnection();
+    } catch (LDAPException e) {
+      throw wrap(e);
+    }
+    boolean healthy = false;
+    try {
+      ASN1OctetString cookie = null;
+      while (true) {
+        SearchRequest request = new SearchRequest(listener, base, scope, filter, attrs);
+        // One more than still wanted, so "exactly max" and "more than max" can be told apart.
+        request.setSizeLimit(Math.max(1, max - seen[0] + 1));
+        request.setTimeLimitSeconds(Math.max(1, settings.timeoutMs() / 1000) * 6);
+        request.addControl(new SimplePagedResultsControl(SCAN_PAGE_SIZE, cookie, false));
+        SearchResult result;
+        try {
+          result = connection.search(request);
+        } catch (LDAPSearchException e) {
+          if (e.getResultCode() != ResultCode.SIZE_LIMIT_EXCEEDED) throw e;
+          over[0] = true;
+          healthy = true;
+          break;
+        }
+        SimplePagedResultsControl paged = SimplePagedResultsControl.get(result);
+        if (failure[0] != null || over[0] || paged == null || !paged.moreResultsToReturn()) {
+          healthy = true;
+          break;
+        }
+        cookie = paged.getCookie();
+      }
+    } catch (LDAPException e) {
+      throw wrap(e);
+    } finally {
+      if (healthy) pool().releaseConnection(connection);
+      else pool().releaseDefunctConnection(connection);
+    }
+    if (failure[0] != null) throw failure[0];
+    return new ScanResult(seen[0], over[0]);
+  }
+
   /** Base-scope read; null when the entry does not exist. */
   public DirectoryEntry get(String dn, List<String> attributes) {
     try {
@@ -247,6 +330,13 @@ public class LdapDirectory implements AutoCloseable {
     } catch (LDAPException e) {
       throw wrap(e);
     }
+  }
+
+  /** Attributes whose values are binary (returned base64-encoded). */
+  public static boolean isBinary(String attribute) {
+    String a = attribute.toLowerCase();
+    int semi = a.indexOf(';');
+    return BINARY_ATTRIBUTES.contains(a) || (semi > 0 && BINARY_ATTRIBUTES.contains(a.substring(0, semi)));
   }
 
   static DirectoryEntry toEntry(Entry entry) {
