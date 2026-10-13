@@ -3,9 +3,11 @@
 # against /etc/nginx/tls/ca.pem and forwards it to the API in X-SSL-Client-Cert, which the API
 # accepts with X509_SOURCE=header. Mount server.pem, server.key and ca.pem into /etc/nginx/tls.
 
-# Only forward certificates nginx verified; anything else is sent as an empty header.
-map $ssl_client_verify $dsp_client_cert {
-    SUCCESS $ssl_client_escaped_cert;
+# Forward only certificates nginx verified, and only to the endpoints that use them (certificate
+# sign-in and the auto sign-in check). Every other request gets an empty header, which keeps a
+# multi-kilobyte certificate out of each API call.
+map "$ssl_client_verify:$uri" $dsp_client_cert {
+    "~^SUCCESS:/api/auth/(x509|me)$" $ssl_client_escaped_cert;
     default "";
 }
 
@@ -42,6 +44,7 @@ server {
     # Resolve the API host at request time so the web container starts even if the API isn't
     # up yet, and follows it if its address changes.
     resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+    resolver_timeout 5s;
 
     location ^~ /api/ {
         set $api_upstream ${API_URL};

@@ -7,9 +7,13 @@ set -eu
 template_dir="${NGINX_ENVSUBST_TEMPLATE_DIR:-/etc/nginx/templates}"
 output_dir=/opt/app-root/etc/dsp.d
 
-# DNS servers for runtime resolution of the API host (IPv6 addresses need brackets).
+# DNS server for runtime resolution of the API host: only the first nameserver, which is the
+# container runtime's own resolver (Docker 127.0.0.11, Podman's aardvark-dns). nginx would
+# rotate between all listed servers, and host/corporate DNS servers (which Podman also lists)
+# don't know service names such as "api": every other lookup would fail with a 502.
+# Set NGINX_LOCAL_RESOLVERS to override (IPv6 addresses in brackets).
 if [ -z "${NGINX_LOCAL_RESOLVERS:-}" ]; then
-    NGINX_LOCAL_RESOLVERS=$(awk 'BEGIN { ORS = " " } $1 == "nameserver" { if ($2 ~ ":") print "[" $2 "]"; else print $2 }' /etc/resolv.conf)
+    NGINX_LOCAL_RESOLVERS=$(awk '$1 == "nameserver" { if ($2 ~ ":") print "[" $2 "]"; else print $2; exit }' /etc/resolv.conf)
 fi
 export NGINX_LOCAL_RESOLVERS API_URL="${API_URL:-http://api:3001}" HTTPS_PORT_SUFFIX="${HTTPS_PORT_SUFFIX:-}"
 if [ -z "$(echo "$NGINX_LOCAL_RESOLVERS" | tr -d " ")" ]; then

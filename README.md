@@ -141,6 +141,13 @@ the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `e
 - The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=framework`; the
   `api` service is reachable only from the compose network). It therefore sees real client addresses, which login throttling relies on.
 - If a container fails to start, `docker compose logs <service>` shows why.
+- The web container looks up the API (`API_URL`) with the container runtime's own DNS server, the
+  first `nameserver` in its `/etc/resolv.conf` (Docker `127.0.0.11`, Podman's aardvark-dns).
+  Other listed servers (Podman adds the host's) don't know service names, so they are not used.
+  Set `NGINX_LOCAL_RESOLVERS` on the web service to choose the server yourself. In Kubernetes,
+  give `API_URL` a fully qualified service name, because nginx doesn't apply search domains.
+- Requests may carry up to 32 KB of headers (`MAX_HTTP_REQUEST_HEADER_SIZE` on the API), which
+  leaves room for large single-sign-on cookies.
 
 ## Features
 
@@ -343,7 +350,8 @@ certificate comes from:
   Envoy `x-forwarded-client-cert`. The header is **ignored unless the connecting peer is in
   `X509_TRUSTED_PROXIES`**. The check uses the actual connection, never `X-Forwarded-For`, so
   use `FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite
-  any incoming copy of the header; the bundled nginx configs always do. Also set
+  any incoming copy of the header; the bundled nginx configs always do, and forward the
+  certificate only to the sign-in endpoints (`/api/auth/x509`, `/api/auth/me`). Also set
   `X509_TRUSTED_CA_FILE` so the API validates the chain itself.
 
   Docker Compose has this ready as an overlay: the web image's `templates-mtls` nginx config

@@ -11,6 +11,8 @@ server:
         same-site: strict
         secure: ${COOKIE_SECURE:false}
   forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
+  # Room for a forwarded client certificate plus large single-sign-on cookies (default 8KB).
+  max-http-request-header-size: ${MAX_HTTP_REQUEST_HEADER_SIZE:32KB}
 
 spring:
   application:

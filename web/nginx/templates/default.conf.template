@@ -19,6 +19,7 @@ server {
     # Resolve the API host at request time so the web container starts even if the API isn't
     # up yet, and follows it if its address changes.
     resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+    resolver_timeout 5s;
 
     location ^~ /api/ {
         set $api_upstream ${API_URL};
