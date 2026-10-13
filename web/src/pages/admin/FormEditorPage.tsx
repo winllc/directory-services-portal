@@ -19,6 +19,7 @@ import { lintForm, SchemaIndex } from '@dsp/shared';
 import { useAdminSchema, useFormMutations, useForms, type FormInput } from '../../api/hooks';
 import { EntryForm } from '../../components/EntryForm';
 import { TagSelect } from '../../components/TagSelect';
+import { DirectorySearchConfig } from '../../components/DirectorySearchConfig';
 import { Alert, Badge, Button, Card, ErrorAlert, FormRow, PageHeader, Spinner, Toggle, cx, useToast } from '../../components/ui';
 
 let seq = 0;
@@ -290,26 +291,7 @@ function FieldEditor({
                 </div>
                 {dd?.type === 'static' && <OptionsEditor options={dd.options} onChange={(options) => set('dropdown', { type: 'static', options })} />}
                 {dd?.type === 'ldap' && (
-                  <div className="form-grid">
-                    <FormRow label="Search base" htmlFor={id('base')}>
-                      <input id={id('base')} className="input mono" value={dd.baseDn} onChange={(e) => set('dropdown', { ...dd, baseDn: e.target.value })} placeholder="ou=people,dc=example,dc=com" />
-                    </FormRow>
-                    <FormRow label="Scope" htmlFor={id('scope')}>
-                      <select id={id('scope')} className="input select" value={dd.scope} onChange={(e) => set('dropdown', { ...dd, scope: e.target.value as 'one' | 'sub' })}>
-                        <option value="one">One level</option>
-                        <option value="sub">Subtree</option>
-                      </select>
-                    </FormRow>
-                    <FormRow label="Filter" htmlFor={id('filter')}>
-                      <input id={id('filter')} className="input mono" value={dd.filter} onChange={(e) => set('dropdown', { ...dd, filter: e.target.value })} />
-                    </FormRow>
-                    <FormRow label="Stored value" htmlFor={id('va')} hint='Attribute stored in the entry; "dn" stores the DN (for member/manager style links).'>
-                      <input id={id('va')} className="input mono" list="attr-names" value={dd.valueAttribute} onChange={(e) => set('dropdown', { ...dd, valueAttribute: e.target.value })} />
-                    </FormRow>
-                    <FormRow label="Displayed label" htmlFor={id('la')}>
-                      <input id={id('la')} className="input mono" list="attr-names" value={dd.labelAttribute} onChange={(e) => set('dropdown', { ...dd, labelAttribute: e.target.value })} />
-                    </FormRow>
-                  </div>
+                  <DirectorySearchConfig value={dd} onChange={(v) => set('dropdown', v)} idPrefix={field.id} attributeOptions={attributeOptions} />
                 )}
                 <Toggle checked={!!field.allowCustomValues} onChange={(v) => set('allowCustomValues', v)} label="Allow values not in the list" />
               </div>

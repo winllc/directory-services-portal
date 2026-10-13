@@ -1,13 +1,13 @@
 import type { EntryAttributes, FormDefinition, FormField } from '@dsp/shared';
 import { getAttr } from '@dsp/shared';
-import { useFieldOptions } from '../api/hooks';
+import { useOptionLabels } from '../api/hooks';
 import { optionLabel } from './FieldInput';
 import { groupBySection } from './EntryForm';
 
 export function FieldValue({ field, values, definitionId }: { field: FormField; values: string[]; definitionId: string }) {
   const isLdap = field.widget === 'dropdown' && field.dropdown?.type === 'ldap';
-  const q = useFieldOptions(definitionId, field.id, isLdap && values.length > 0);
-  const options = field.dropdown?.type === 'static' ? field.dropdown.options : q.data;
+  const q = useOptionLabels(definitionId, field.id, values, isLdap);
+  const options = field.dropdown?.type === 'static' ? field.dropdown.options : q.data?.options;
   if (!values.length) return <span className="muted">—</span>;
 
   const render = (v: string) => {

@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import type { EntryAttributes, FormDefinition, FormField } from '@dsp/shared';
 import { getAttr, isFieldWritable, normalizeValues, validateFormValues, type ValidationMode } from '@dsp/shared';
 import { ApiError } from '../api/client';
-import { useFieldOptions, type Values } from '../api/hooks';
+import { useFieldOptions, useOptionLabels, type Values } from '../api/hooks';
 import { FieldInput } from './FieldInput';
 import { Alert, Button, FormRow } from './ui';
 
@@ -47,9 +47,20 @@ function ConnectedField({
   disabled: boolean;
   error?: string;
 }) {
-  const isLdap = field.widget === 'dropdown' && field.dropdown?.type === 'ldap';
-  const q = useFieldOptions(definitionId, field.id, isLdap && !!definitionId);
-  const options = field.dropdown?.type === 'static' ? field.dropdown.options : q.data;
+  const src = field.widget === 'dropdown' && field.dropdown?.type === 'ldap' ? field.dropdown : undefined;
+  const isLdap = !!src;
+  const searchMode = src?.mode === 'search';
+  const q = useFieldOptions(definitionId, field.id, isLdap && !searchMode && !!definitionId);
+  // Labels of the current values (they may not be among the options loaded up front).
+  const labels = useOptionLabels(definitionId, field.id, values, isLdap && !!definitionId);
+  // Long lists (more than their limit) are searched as you type too.
+  const typeAhead = isLdap && (searchMode || !!q.data?.truncated);
+  const options = useMemo(() => {
+    if (field.dropdown?.type === 'static') return field.dropdown.options;
+    const listed = q.data?.options ?? [];
+    const extra = (labels.data?.options ?? []).filter((o) => !listed.some((x) => x.value === o.value));
+    return [...listed, ...extra];
+  }, [field.dropdown, q.data, labels.data]);
   const id = `field-${field.id}`;
   return (
     <FormRow
@@ -70,7 +81,8 @@ function ConnectedField({
         values={values}
         onChange={onChange}
         options={options}
-        optionsLoading={isLdap && q.isLoading}
+        optionsLoading={isLdap && !searchMode && q.isLoading}
+        directorySearch={typeAhead ? { definitionId, minChars: src?.minChars ?? (searchMode ? 2 : 1) } : undefined}
         disabled={disabled}
         invalid={!!error}
       />

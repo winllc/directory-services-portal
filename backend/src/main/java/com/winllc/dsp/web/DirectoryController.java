@@ -6,13 +6,14 @@ import com.winllc.dsp.model.DefinitionSummary;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.DirectoryEntry;
 import com.winllc.dsp.model.EntryListResponse;
-import com.winllc.dsp.model.OptionItem;
 import com.winllc.dsp.model.Patterns;
 import com.winllc.dsp.model.SelfEntryResult;
 import com.winllc.dsp.model.SessionUser;
+import com.winllc.dsp.service.DirectoryOptions;
 import com.winllc.dsp.service.EntryService;
 import com.winllc.dsp.store.ConfigStore;
 import com.winllc.dsp.web.dto.EntryRequests;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.Comparator;
 import java.util.List;
@@ -107,9 +108,19 @@ public class DirectoryController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * A drop down's options: all of them, those matching typed text ({@code q}), or the options for
+   * given stored values ({@code value}, repeatable; used to label them).
+   */
   @GetMapping("/directories/{id}/options/{fieldId}")
-  public List<OptionItem> options(@AuthenticationPrincipal SessionUser user, @PathVariable String id, @PathVariable String fieldId) {
-    return entries.options(user, entries.definition(id), fieldId);
+  public DirectoryOptions.Page options(@AuthenticationPrincipal SessionUser user, @PathVariable String id, @PathVariable String fieldId,
+      @RequestParam(required = false) String q, HttpServletRequest request) {
+    // Raw parameter values: binding to a List would split DNs on their commas.
+    String[] raw = request.getParameterValues("value");
+    List<String> values = raw == null ? null : List.of(raw);
+    if (q != null && q.length() > 256) throw ApiException.badRequest("Search text is too long");
+    if (values != null && (values.size() > 200 || values.stream().anyMatch(v -> v.length() > 1024))) throw ApiException.badRequest("Too many values");
+    return entries.optionPage(user, entries.definition(id), fieldId, q, values);
   }
 
   @GetMapping("/me/entries")

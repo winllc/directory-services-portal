@@ -275,11 +275,24 @@ class ApiIntegrationTest extends ApiTestSupport {
     @Test
     void resolvesLdapBackedDropDownOptions() throws Exception {
       Client admin = login("admin");
-      MvcResult r = admin.get("/api/directories/devices/options/f-acmeassignedto");
-      assertThat(status(r)).isEqualTo(200);
-      String aliceValue = null;
-      for (JsonNode o : body(r)) if ("Alice Anderson".equals(o.get("label").asString())) aliceValue = o.get("value").asString();
-      assertThat(aliceValue).isEqualTo(ALICE);
+      // "Assigned to" searches as you type (cn, uid, mail), showing the e-mail as a second line.
+      JsonNode empty = body(admin.get("/api/directories/devices/options/f-acmeassignedto"));
+      assertThat(empty.get("options")).isEmpty();
+      JsonNode found = body(admin.get("/api/directories/devices/options/f-acmeassignedto?q=alice"));
+      assertThat(found.get("options")).hasSize(1);
+      assertThat(found.get("options").get(0).get("value").asString()).isEqualTo(ALICE);
+      assertThat(found.get("options").get(0).get("label").asString()).isEqualTo("Alice Anderson");
+      assertThat(found.get("options").get(0).get("description").asString()).isEqualTo("alice@example.com");
+      assertThat(found.has("filter")).isFalse();
+      // Stored values are labelled by looking them up.
+      JsonNode labelled = body(admin.get("/api/directories/devices/options/f-acmeassignedto" + q(ALICE).replace("?dn=", "?value=")));
+      assertThat(labelled.get("options").get(0).get("label").asString()).isEqualTo("Alice Anderson");
+      // List-mode drop downs return everything at once, sorted as configured (owner: by surname).
+      JsonNode owners = body(admin.get("/api/directories/groups/options/f-owner"));
+      List<String> names = new ArrayList<>();
+      owners.get("options").forEach(o -> names.add(o.get("label").asString()));
+      assertThat(names.get(0)).isEqualTo("Ada Admin");
+      assertThat(names).hasSizeGreaterThan(5);
     }
 
     @Test

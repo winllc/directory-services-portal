@@ -172,6 +172,19 @@ the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `e
 - Each field is **free text**, **text area** or **drop down**, and **single** or **multi-valued**.
 - Drop-down options come from a fixed list or a **directory search** (e.g. pick a manager by
   name while storing their DN). You can optionally allow values outside the list.
+- Directory-search options can be tuned:
+  - **Load all options** (small sets) or **Search as you type** (people, devices, and
+    other large sets). In search mode the form searches the directory after a set number of
+    characters.
+  - **Match typed text against** several attributes (e.g. `cn`, `uid`, `mail`). Each typed
+    word must match one of them. Matching can be *contains*, *starts with* or *exact*.
+  - **Most options shown**, **Sort by**, a **second line** under each option (e.g. `title`
+    or `mail`), and a **label template** such as `{cn} ({uid})`.
+  - How long loaded lists are reused, in seconds.
+  - **Test search** tries the settings while you edit. It shows the matches, the timing, and
+    the exact LDAP filter.
+  - Submitted values are always checked against the directory, including values beyond the
+    display limit.
 - Each field can also be required, read-only or self-service. You can add a format
   (email/phone/url/number/DN), a regex pattern, a max length, a placeholder, help text and a
   section. A live preview shows the result.

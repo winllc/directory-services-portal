@@ -3,6 +3,7 @@ import { ChevronDown, Plus, X } from 'lucide-react';
 import type { FormField, OptionItem } from '@dsp/shared';
 import { rdnValue } from '@dsp/shared';
 import { cx } from './ui';
+import { DirectorySearchSelect } from './DirectorySearchSelect';
 
 export interface FieldInputProps {
   field: FormField;
@@ -13,6 +14,8 @@ export interface FieldInputProps {
   disabled?: boolean;
   invalid?: boolean;
   id?: string;
+  /** Search the directory as the user types instead of picking from {@code options}. */
+  directorySearch?: { definitionId: string; minChars: number };
 }
 
 const inputType = (field: FormField) => {
@@ -38,6 +41,21 @@ export function optionLabel(options: OptionItem[] | undefined, value: string, fi
 /** Renders the right widget for a form field: free text or drop down, single or multi-valued. */
 export function FieldInput(props: FieldInputProps) {
   const { field } = props;
+  if (field.widget === 'dropdown' && props.directorySearch) {
+    return (
+      <DirectorySearchSelect
+        field={field}
+        values={props.values}
+        onChange={props.onChange}
+        known={props.options}
+        definitionId={props.directorySearch.definitionId}
+        minChars={props.directorySearch.minChars}
+        disabled={props.disabled}
+        invalid={props.invalid}
+        id={props.id}
+      />
+    );
+  }
   if (field.widget === 'dropdown') {
     return field.multiValued ? <MultiSelect {...props} /> : <SingleSelect {...props} />;
   }
@@ -284,7 +302,7 @@ function MultiSelect({ field, values, onChange, options, optionsLoading, disable
               onMouseEnter={() => setActive(i)}
             >
               <span>{o.label ?? o.value}</span>
-              {o.label && o.label !== o.value && <small>{o.value}</small>}
+              {(o.description || (o.label && o.label !== o.value)) && <small>{o.description ?? o.value}</small>}
             </li>
           ))}
           {canAddCustom && (

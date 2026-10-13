@@ -14,6 +14,39 @@ import java.util.regex.PatternSyntaxException;
 public final class FormLinter {
   private FormLinter() {}
 
+  private static final java.util.regex.Pattern ATTRIBUTE = java.util.regex.Pattern.compile(com.winllc.dsp.model.Patterns.ATTRIBUTE_OR_DN);
+
+  /** Settings of a directory-search drop down that would make it fail or return nothing useful. */
+  static void lintDirectorySearch(FormField f, DropdownSource.Ldap l, SchemaIndex index, List<String> errors, List<String> warnings) {
+    String name = "Drop down \"" + f.label() + "\"";
+    if (l.baseDn() == null || l.baseDn().isBlank()) errors.add(name + " needs a search base");
+    for (String a : l.templateAttributes()) {
+      if (!ATTRIBUTE.matcher(a).matches()) errors.add(name + ": \"{" + a + "}\" in the label template is not an attribute name");
+    }
+    if (l.searchAttributes() != null && l.searchAttributes().stream().anyMatch(a -> a.equalsIgnoreCase("dn"))) {
+      errors.add(name + ": the entry DN can't be searched; pick attributes");
+    }
+    if ("exact".equals(l.match()) && l.minCharsOrDefault() > 0 && l.searchMode()) {
+      // Fine, but worth knowing: exact matching needs the whole value typed.
+      warnings.add(name + " matches exactly: users must type a whole value");
+    }
+    if (!l.searchMode() && l.limitOrDefault() > 1000) {
+      warnings.add(name + " loads up to " + l.limitOrDefault() + " options at once; consider \"Search as you type\"");
+    }
+    if (index != null) {
+      java.util.Set<String> used = new java.util.LinkedHashSet<>();
+      used.add(l.labelAttribute());
+      if (!l.valueIsDn()) used.add(l.valueAttribute());
+      if (l.descriptionAttribute() != null) used.add(l.descriptionAttribute());
+      if (l.sortAttribute() != null && !"dn".equalsIgnoreCase(l.sortAttribute())) used.add(l.sortAttribute());
+      if (l.searchAttributes() != null) used.addAll(l.searchAttributes());
+      for (String a : l.templateAttributes()) if (!"dn".equalsIgnoreCase(a)) used.add(a);
+      for (String a : used) {
+        if (ATTRIBUTE.matcher(a).matches() && index.attribute(a) == null) warnings.add(name + " uses \"" + a + "\", which is not in the schema");
+      }
+    }
+  }
+
   public record Lint(List<String> errors, List<String> warnings) {}
 
   public static Lint lint(String name, List<String> objectClasses, String rdnAttribute, List<FormField> fields, SchemaIndex index) {
@@ -35,6 +68,7 @@ public final class FormLinter {
         else if (dd instanceof DropdownSource.Static s && s.options().isEmpty() && !f.allowsCustomValues()) {
           errors.add("Drop down \"" + f.label() + "\" has no options");
         }
+        else if (dd instanceof DropdownSource.Ldap l) lintDirectorySearch(f, l, index, errors, warnings);
       }
       if (f.pattern() != null && !f.pattern().isEmpty()) {
         try {

@@ -129,6 +129,14 @@ export function lintForm(form: Pick<FormDefinition, 'fields' | 'objectClasses' |
       } else if (f.dropdown.type === 'ldap') {
         if (!f.dropdown.baseDn.trim()) errors.push(`Drop down "${f.label}" needs a search base`);
         if (!f.dropdown.valueAttribute.trim()) errors.push(`Drop down "${f.label}" needs a value attribute`);
+        for (const m of (f.dropdown.labelTemplate ?? '').matchAll(/\{([^{}]*)\}/g)) {
+          if (!/^(dn|[A-Za-z][A-Za-z0-9-]*|\d+(\.\d+)+)(;[A-Za-z0-9-]+)*$/.test(m[1].trim())) {
+            errors.push(`Drop down "${f.label}": "{${m[1]}}" in the label template is not an attribute name`);
+          }
+        }
+        if (f.dropdown.searchAttributes?.some((a) => a.toLowerCase() === 'dn')) {
+          errors.push(`Drop down "${f.label}": the entry DN can't be searched; pick attributes`);
+        }
       }
     }
     if (f.pattern) {

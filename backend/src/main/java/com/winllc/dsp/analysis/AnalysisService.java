@@ -365,7 +365,10 @@ public class AnalysisService {
           List<OptionItem> options = null;
           if (f.dropdownWidget() && f.dropdown() instanceof DropdownSource.Ldap && !f.allowsCustomValues()) {
             try {
-              options = entries.fieldOptions(f);
+              options = entries.completeFieldOptions(f);
+              if (options == null) {
+                warnings.add("\"" + f.label() + "\" has more options than its limit; its values are not checked against them");
+              }
             } catch (RuntimeException e) {
               warnings.add("Could not load the options of \"" + f.label() + "\": " + e.getMessage());
               continue;

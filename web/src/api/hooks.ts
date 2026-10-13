@@ -7,6 +7,8 @@ import type {
   Dashboard,
   DashboardSummary,
   DirectorySummaryRow,
+  DropdownSource,
+  OptionPage,
   Job,
   LatestAnalysisResult,
   PendingResponse,
@@ -101,13 +103,58 @@ export const useEntry = (id: string | undefined, dn: string | null) =>
     enabled: !!id && !!dn,
   });
 
+const optionsUrl = (definitionId: string, fieldId: string) =>
+  `/api/directories/${encodeURIComponent(definitionId)}/options/${encodeURIComponent(fieldId)}`;
+
+/** A drop down's options (directory-search drop downs in list mode: up to their limit). */
 export const useFieldOptions = (definitionId: string, fieldId: string, enabled: boolean) =>
   useQuery({
     queryKey: keys.options(definitionId, fieldId),
-    queryFn: () =>
-      api.get<OptionItem[]>(`/api/directories/${encodeURIComponent(definitionId)}/options/${encodeURIComponent(fieldId)}`),
+    queryFn: () => api.get<OptionPage>(optionsUrl(definitionId, fieldId)),
     enabled,
     staleTime: 30_000,
+  });
+
+/** Options matching typed text, searched in the directory. Keeps the previous results while typing. */
+export const useOptionSearch = (definitionId: string, fieldId: string, q: string, enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.options(definitionId, fieldId), 'q', q],
+    queryFn: () => api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}${qs({ q })}`),
+    enabled,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+
+/** Labels (and descriptions) of stored values, looked up without loading every option. */
+export const useOptionLabels = (definitionId: string, fieldId: string, values: string[], enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.options(definitionId, fieldId), 'values', [...values].sort()],
+    queryFn: () => {
+      const p = new URLSearchParams();
+      values.forEach((v) => p.append('value', v));
+      return api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}?${p.toString()}`);
+    },
+    enabled: enabled && values.length > 0,
+    staleTime: 60_000,
+  });
+
+export interface OptionPreview {
+  options: OptionItem[];
+  truncated: boolean;
+  filter?: string;
+  durationMs: number;
+  error?: string;
+}
+
+/** Form editor: try a directory-search drop down's (unsaved) settings. */
+export const useOptionPreview = (source: DropdownSource | undefined, q: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ['admin', 'option-preview', source, q],
+    queryFn: () => api.post<OptionPreview>('/api/admin/forms/preview-options', { source, q: q || undefined }),
+    enabled: enabled && source?.type === 'ldap' && !!source.baseDn,
+    placeholderData: (prev) => prev,
+    staleTime: 10_000,
+    retry: false,
   });
 
 export const useMyEntries = () => useQuery({ queryKey: keys.me, queryFn: () => api.get<SelfEntryResult[]>('/api/me/entries') });

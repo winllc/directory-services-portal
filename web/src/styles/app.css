@@ -993,6 +993,10 @@ textarea.input {
   color: var(--text);
   padding: 3px 4px;
 }
+/* The surrounding box already shows focus. */
+.chip-input:focus-visible {
+  box-shadow: none;
+}
 .combo-list {
   position: absolute;
   left: -1px;
@@ -2972,4 +2976,107 @@ textarea.input {
 }
 .job-failed {
   color: var(--status-critical);
+}
+
+/* --------------------------------------------------------------------------
+   Directory-search drop downs
+   -------------------------------------------------------------------------- */
+
+.dir-search .chips {
+  align-items: center;
+}
+.dir-search-icon {
+  color: var(--muted);
+  flex: none;
+  margin-left: 2px;
+}
+.dir-search .combo-list li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.dir-search .combo-list li small {
+  font-family: var(--font);
+  max-width: 100%;
+}
+.combo-list li.combo-hint {
+  cursor: default;
+  color: var(--muted);
+  font-size: 12px;
+}
+.combo-list.is-loading li:not(.combo-hint) {
+  opacity: 0.6;
+}
+.dir-config {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dir-config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.dir-config-section .form-hint {
+  margin: 0;
+}
+.dir-test {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+}
+.dir-test-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dir-test-head .form-label {
+  margin: 0;
+  white-space: nowrap;
+}
+.dir-test-head .input {
+  flex: 1;
+  min-width: 0;
+}
+.dir-test-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity 0.15s;
+}
+.dir-test-results.is-loading {
+  opacity: 0.55;
+}
+.dir-test-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow: auto;
+}
+.dir-test-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.dir-test-list li code {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dir-test-filter {
+  overflow-wrap: anywhere;
+  font-size: 12px;
 }

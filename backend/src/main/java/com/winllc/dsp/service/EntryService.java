@@ -53,22 +53,19 @@ public class EntryService {
   /** Attributes that are never returned to clients. */
   private static final Set<String> HIDDEN = Set.of("userpassword", "unicodepwd", "sambantpassword", "sambalmpassword", "krbprincipalkey");
   private static final int LIST_LIMIT = 1000;
-  private static final int OPTIONS_LIMIT = 500;
-  private static final long OPTIONS_TTL_MS = 30_000;
   private static final String REDACTED = "(redacted)";
 
   private final LdapDirectory directory;
   private final ConfigStore store;
   private final SchemaService schema;
   private final AuditLog audit;
-  private final Map<DropdownSource.Ldap, CachedOptions> optionCache = new ConcurrentHashMap<>();
-
-  private record CachedOptions(long at, List<OptionItem> options) {}
+  private final DirectoryOptions options;
 
   public record ListQuery(String q, Integer page, Integer pageSize, String sort, String order) {}
 
-  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit) {
+  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options) {
     this.directory = directory;
+    this.options = options;
     this.store = store;
     this.schema = schema;
     this.audit = audit;
@@ -236,56 +233,56 @@ public class EntryService {
   // Drop-down options
   // ---------------------------------------------------------------------------
 
+  /** All options of a drop down (directory searches: up to their limit, see {@link #optionPage}). */
   public List<OptionItem> fieldOptions(FormField field) {
     if (field.dropdown() == null) return List.of();
     if (field.dropdown() instanceof DropdownSource.Static s) return s.options();
-    DropdownSource.Ldap src = (DropdownSource.Ldap) field.dropdown();
-    CachedOptions cached = optionCache.get(src);
-    if (cached != null && System.currentTimeMillis() - cached.at() < OPTIONS_TTL_MS) return cached.options();
-
-    Filter filter;
-    try {
-      filter = src.filter() == null || src.filter().isBlank() ? Filter.createPresenceFilter("objectClass") : Filter.create(src.filter());
-    } catch (LDAPException e) {
-      throw ApiException.badRequest("Drop down \"" + field.label() + "\" has an invalid filter");
-    }
-    List<String> attrs = src.valueIsDn() ? List.of(src.labelAttribute()) : List.of(src.labelAttribute(), src.valueAttribute());
-    List<DirectoryEntry> entries = directory.search(src.baseDn(), scope(src.scope()), filter, OPTIONS_LIMIT, attrs).entries();
-    Map<String, OptionItem> options = new LinkedHashMap<>();
-    for (DirectoryEntry e : entries) {
-      String label = e.first(src.labelAttribute());
-      List<String> values = src.valueIsDn() ? List.of(e.dn()) : e.values(src.valueAttribute());
-      for (String v : values) options.putIfAbsent(v, new OptionItem(v, label != null ? label : v));
-    }
-    List<OptionItem> sorted = options.values().stream().sorted(Comparator.comparing(OptionItem::display, String.CASE_INSENSITIVE_ORDER)).toList();
-    optionCache.put(src, new CachedOptions(System.currentTimeMillis(), sorted));
-    return sorted;
+    return options.list((DropdownSource.Ldap) field.dropdown()).options();
   }
 
-  public List<OptionItem> options(SessionUser user, DirectoryDefinition def, String fieldId) {
+  /** The full option list, or null when a directory search has more options than its limit. */
+  public List<OptionItem> completeFieldOptions(FormField field) {
+    if (field.dropdown() instanceof DropdownSource.Ldap src) {
+      DirectoryOptions.Page page = options.list(src);
+      return page.truncated() ? null : page.options();
+    }
+    return fieldOptions(field);
+  }
+
+  /** Options for a user: typed text {@code q} searches, {@code values} resolves stored values. */
+  public DirectoryOptions.Page optionPage(SessionUser user, DirectoryDefinition def, String fieldId, String q, List<String> values) {
     boolean canRead = access(user, def).atLeast(AccessLevel.READ) || !(def.selfMatch() instanceof SelfMatch.None);
     if (!canRead) throw ApiException.forbidden("You do not have access to this directory");
     FormField field = form(def).fields().stream()
         .filter(f -> f.id().equals(fieldId))
         .findFirst()
         .orElseThrow(() -> ApiException.notFound("Field not found"));
-    return fieldOptions(field);
+    if (field.dropdown() instanceof DropdownSource.Static s) return new DirectoryOptions.Page(s.options(), false, null);
+    if (!(field.dropdown() instanceof DropdownSource.Ldap src)) return new DirectoryOptions.Page(List.of(), false, null);
+    if (values != null && !values.isEmpty()) return new DirectoryOptions.Page(options.lookup(src, values), false, null);
+    DirectoryOptions.Page page = q == null || q.isBlank() ? (src.searchMode() ? options.search(src, "") : options.list(src)) : options.search(src, q);
+    // The effective filter is for administrators testing the settings, not for every user.
+    return new DirectoryOptions.Page(page.options(), page.truncated(), null);
   }
 
-  private Map<String, List<OptionItem>> resolveOptions(FormDefinition form, Set<String> attributeKeys) {
+  /**
+   * For each directory-backed drop down among the submitted values: the options matching those
+   * values (looked up directly, so validation works however many options there are).
+   */
+  private Map<String, List<OptionItem>> resolveOptions(FormDefinition form, Map<String, Object> input) {
     Map<String, List<OptionItem>> out = new HashMap<>();
+    Map<String, Object> byAttr = new HashMap<>();
+    if (input != null) input.forEach((k, v) -> byAttr.put(k.toLowerCase(), v));
     for (FormField f : form.fields()) {
-      if (!f.dropdownWidget() || !(f.dropdown() instanceof DropdownSource.Ldap) || f.allowsCustomValues()) continue;
-      if (attributeKeys.contains(f.attribute().toLowerCase())) out.put(f.id(), fieldOptions(f));
+      if (!f.dropdownWidget() || !(f.dropdown() instanceof DropdownSource.Ldap src) || f.allowsCustomValues()) continue;
+      List<String> submitted = FormValidator.normalize(byAttr.get(f.attribute().toLowerCase()));
+      out.put(f.id(), submitted.isEmpty() ? List.of() : options.lookup(src, submitted));
     }
     return out;
   }
 
   private Map<String, List<String>> validate(FormDefinition form, Map<String, Object> values, FormValidator.Mode mode) {
-    Set<String> keys = new LinkedHashSet<>();
-    if (mode == FormValidator.Mode.CREATE) form.fields().forEach(f -> keys.add(f.attribute().toLowerCase()));
-    else if (values != null) values.keySet().forEach(k -> keys.add(k.toLowerCase()));
-    FormValidator.Result result = FormValidator.validate(form, values, mode, resolveOptions(form, keys));
+    FormValidator.Result result = FormValidator.validate(form, values, mode, resolveOptions(form, values));
     if (!result.errors().isEmpty()) throw ApiException.badRequest("Some fields are invalid", result.errors());
     return result.values();
   }

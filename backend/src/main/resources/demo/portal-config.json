@@ -196,7 +196,17 @@
             "scope": "one",
             "filter": "(objectClass=inetOrgPerson)",
             "valueAttribute": "dn",
-            "labelAttribute": "cn"
+            "labelAttribute": "cn",
+            "mode": "search",
+            "searchAttributes": [
+              "cn",
+              "uid",
+              "mail"
+            ],
+            "match": "contains",
+            "minChars": 1,
+            "limit": 20,
+            "descriptionAttribute": "title"
           }
         },
         {
@@ -409,7 +419,16 @@
             "scope": "one",
             "filter": "(objectClass=inetOrgPerson)",
             "valueAttribute": "dn",
-            "labelAttribute": "cn"
+            "labelAttribute": "cn",
+            "mode": "search",
+            "searchAttributes": [
+              "cn",
+              "uid",
+              "mail"
+            ],
+            "minChars": 1,
+            "limit": 20,
+            "descriptionAttribute": "mail"
           }
         },
         {
@@ -489,7 +508,17 @@
             "scope": "sub",
             "filter": "(objectClass=inetOrgPerson)",
             "valueAttribute": "dn",
-            "labelAttribute": "cn"
+            "labelAttribute": "cn",
+            "mode": "search",
+            "searchAttributes": [
+              "cn",
+              "uid",
+              "mail"
+            ],
+            "minChars": 2,
+            "limit": 25,
+            "labelTemplate": "{cn} ({uid})",
+            "descriptionAttribute": "mail"
           }
         },
         {
@@ -507,7 +536,9 @@
             "scope": "one",
             "filter": "(objectClass=inetOrgPerson)",
             "valueAttribute": "dn",
-            "labelAttribute": "cn"
+            "labelAttribute": "cn",
+            "descriptionAttribute": "title",
+            "sortAttribute": "sn"
           }
         }
       ]

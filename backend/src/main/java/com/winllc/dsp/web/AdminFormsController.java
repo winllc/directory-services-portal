@@ -1,13 +1,19 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.model.DirectoryDefinition;
+import com.winllc.dsp.model.DropdownSource;
 import com.winllc.dsp.model.FormDefinition;
+import com.winllc.dsp.model.OptionItem;
 import com.winllc.dsp.schema.FormLinter;
 import com.winllc.dsp.schema.SchemaService;
+import com.winllc.dsp.service.DirectoryOptions;
 import com.winllc.dsp.store.ConfigStore;
 import com.winllc.dsp.web.dto.FormInput;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,7 +40,10 @@ public class AdminFormsController {
   private final SchemaService schema;
   private final AuditLog audit;
 
-  public AdminFormsController(ConfigStore store, SchemaService schema, AuditLog audit) {
+  private final DirectoryOptions options;
+
+  public AdminFormsController(ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options) {
+    this.options = options;
     this.store = store;
     this.schema = schema;
     this.audit = audit;
@@ -73,6 +82,28 @@ public class AdminFormsController {
   @GetMapping("/{id}")
   public FormDefinition get(@PathVariable String id) {
     return store.snapshot().forms.stream().filter(f -> f.id().equals(id)).findFirst().orElseThrow(() -> ApiException.notFound("Form not found"));
+  }
+
+  /** Test a directory-search drop down's settings (unsaved) with optional typed text. */
+  public record OptionPreviewRequest(@NotNull @Valid DropdownSource.Ldap source, @Size(max = 256) String q) {}
+
+  public record OptionPreview(List<OptionItem> options, boolean truncated, String filter, long durationMs, String error) {}
+
+  @PostMapping("/preview-options")
+  public OptionPreview previewOptions(@Valid @RequestBody OptionPreviewRequest in) {
+    long started = System.currentTimeMillis();
+    DropdownSource.Ldap src = in.source();
+    try {
+      // Bypass the cache so changed settings show their effect immediately.
+      DropdownSource.Ldap uncached = new DropdownSource.Ldap(src.baseDn(), src.scope(), src.filter(), src.valueAttribute(), src.labelAttribute(),
+          src.mode(), src.searchAttributes(), src.match(), src.minChars(), src.limit(), src.sortAttribute(), src.descriptionAttribute(),
+          src.labelTemplate(), 0);
+      DirectoryOptions.Page page = in.q() == null || in.q().isBlank() ? options.list(uncached) : options.search(uncached, in.q());
+      String filter = page.filter() != null ? page.filter() : DirectoryOptions.searchFilter(uncached, in.q()).toString();
+      return new OptionPreview(page.options(), page.truncated(), filter, System.currentTimeMillis() - started, null);
+    } catch (DirectoryException | ApiException e) {
+      return new OptionPreview(List.of(), false, null, System.currentTimeMillis() - started, e.getMessage());
+    }
   }
 
   @PostMapping("/lint")

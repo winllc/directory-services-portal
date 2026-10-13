@@ -71,7 +71,20 @@ export type TextFormat = 'plain' | 'email' | 'phone' | 'url' | 'number' | 'dn';
 export interface OptionItem {
   value: string;
   label?: string;
+  /** Second line shown under the label (directory searches with a description attribute). */
+  description?: string;
 }
+
+/** Options of a drop down; {@code truncated}: more matched than the limit (keep typing). */
+export interface OptionPage {
+  options: OptionItem[];
+  truncated: boolean;
+  /** The LDAP filter used (only when testing settings in the form editor). */
+  filter?: string;
+}
+
+export type DirectorySearchMode = 'list' | 'search';
+export type DirectorySearchMatch = 'contains' | 'startsWith' | 'exact';
 
 export type DropdownSource =
   | { type: 'static'; options: OptionItem[] }
@@ -85,6 +98,24 @@ export type DropdownSource =
       valueAttribute: string;
       /** Attribute shown to the user. */
       labelAttribute: string;
+      /** "list" (default): load the options up front; "search": query the directory as the user types. */
+      mode?: DirectorySearchMode;
+      /** Attributes typed text is matched against (default: the label, and the stored value). */
+      searchAttributes?: string[];
+      /** How typed words match (default "contains"). */
+      match?: DirectorySearchMatch;
+      /** Characters needed before searching (default 2 in search mode). */
+      minChars?: number;
+      /** Most options returned (default 25 when searching, 500 for a list). */
+      limit?: number;
+      /** Attribute to sort by (default: the label). */
+      sortAttribute?: string;
+      /** Attribute shown as a second line under each option. */
+      descriptionAttribute?: string;
+      /** Label built from attributes, e.g. "{cn} ({mail})"; overrides labelAttribute. */
+      labelTemplate?: string;
+      /** Seconds results are reused (default 30; 0 always asks the directory). */
+      cacheSeconds?: number;
     };
 
 export interface FormField {

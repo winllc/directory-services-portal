@@ -10,6 +10,7 @@ import com.winllc.dsp.model.OptionItem;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.schema.SchemaService;
 import com.winllc.dsp.service.DataSources;
+import com.winllc.dsp.service.DirectoryOptions;
 import com.winllc.dsp.service.EntryService;
 import com.winllc.dsp.service.EntryValues;
 import com.winllc.dsp.util.SafeRegex;
@@ -32,7 +33,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class MetricEngine {
   private final DataSources sources;
-  private final EntryService entries;
+  private final DirectoryOptions directoryOptions;
   private final SchemaService schema;
   private final int maxEntries;
   private final long cacheMillis;
@@ -60,9 +61,9 @@ public class MetricEngine {
     }
   }
 
-  public MetricEngine(DataSources sources, EntryService entries, SchemaService schema, PortalProperties props) {
+  public MetricEngine(DataSources sources, SchemaService schema, PortalProperties props, DirectoryOptions directoryOptions) {
     this.sources = sources;
-    this.entries = entries;
+    this.directoryOptions = directoryOptions;
     this.schema = schema;
     this.maxEntries = Math.max(1, props.getMetrics().getMaxEntries());
     this.cacheMillis = Math.max(0, props.getMetrics().getCacheSeconds()) * 1000L;
@@ -138,7 +139,7 @@ public class MetricEngine {
                 : Outcome.failed(ex));
             continue;
           }
-          MetricResult r = p.getValue().finish(scan.truncated());
+          MetricResult r = relabel(source, widgets.get(p.getKey()), p.getValue().finish(scan.truncated()));
           if (scan.truncated()) {
             List<String> warnings = new ArrayList<>(r.warnings() == null ? List.of() : r.warnings());
             warnings.add(0, "Only the first " + maxEntries + " entries were analysed");
@@ -203,22 +204,62 @@ public class MetricEngine {
     }
   }
 
-  /** Display labels of drop-down options for the attribute (value -> label), keyed like distribution buckets. */
+  /** Display labels of a fixed drop-down list for the attribute (value -> label), keyed like distribution buckets. */
   private Map<String, String> optionLabels(DataSources.Source source, String attribute) {
     for (FormField f : source.form().fields()) {
-      if (!f.attribute().equalsIgnoreCase(attribute) || !f.dropdownWidget() || f.dropdown() == null) continue;
-      try {
-        List<OptionItem> options = f.dropdown() instanceof DropdownSource.Static s ? s.options() : entries.fieldOptions(f);
-        Map<String, String> labels = new HashMap<>();
-        for (OptionItem o : options) {
-          if (o.label() != null && !o.label().isBlank()) labels.putIfAbsent(o.value().trim().toLowerCase(), o.label());
-        }
-        return labels;
-      } catch (RuntimeException e) {
-        return Map.of();
+      if (!f.attribute().equalsIgnoreCase(attribute) || !f.dropdownWidget() || !(f.dropdown() instanceof DropdownSource.Static s)) continue;
+      Map<String, String> labels = new HashMap<>();
+      for (OptionItem o : s.options()) {
+        if (o.label() != null && !o.label().isBlank()) labels.putIfAbsent(o.value().trim().toLowerCase(), o.label());
       }
+      return labels;
     }
     return Map.of();
+  }
+
+  /** The directory-search drop down behind an attribute, if any. */
+  private static DropdownSource.Ldap directorySource(DataSources.Source source, String attribute) {
+    if (attribute == null) return null;
+    for (FormField f : source.form().fields()) {
+      if (f.attribute().equalsIgnoreCase(attribute) && f.dropdownWidget() && f.dropdown() instanceof DropdownSource.Ldap l) return l;
+    }
+    return null;
+  }
+
+  /**
+   * Label the buckets of a breakdown whose attribute is a directory-search drop down (e.g. a
+   * manager DN shown as the person's name), looking up only the values shown.
+   */
+  private MetricResult relabel(DataSources.Source source, MetricWidget w, MetricResult r) {
+    if (!"distribution".equals(w.kind()) || r.rows() == null) return r;
+    List<MetricResult.Row> rows = r.rows();
+    List<MetricResult.Series> series = r.series();
+    DropdownSource.Ldap rowSource = "none".equals(w.transformOrNone()) ? directorySource(source, w.attribute()) : null;
+    if (rowSource != null) {
+      Map<String, String> labels = labelsFor(rowSource, rows.stream().filter(x -> x.other() == null && x.missing() == null).map(MetricResult.Row::label).toList());
+      rows = rows.stream().map(x -> labels.containsKey(x.label())
+          ? new MetricResult.Row(x.key(), labels.get(x.label()), x.value(), x.share(), x.other(), x.missing()) : x).toList();
+    }
+    DropdownSource.Ldap splitSource = series != null && (w.splitTransform() == null || "none".equals(w.splitTransform()))
+        ? directorySource(source, w.splitBy()) : null;
+    if (splitSource != null) {
+      Map<String, String> labels = labelsFor(splitSource, series.stream().filter(x -> x.other() == null && x.missing() == null).map(MetricResult.Series::label).toList());
+      series = series.stream().map(x -> labels.containsKey(x.label()) ? new MetricResult.Series(x.key(), labels.get(x.label()), x.other(), x.missing()) : x).toList();
+    }
+    if (rows == r.rows() && series == r.series()) return r;
+    return new MetricResult(r.kind(), r.total(), r.truncated(), r.computedAt(), rows, series, r.matrix(), r.distinctValues(), r.stats(), r.warnings());
+  }
+
+  private Map<String, String> labelsFor(DropdownSource.Ldap src, List<String> values) {
+    try {
+      Map<String, String> out = new HashMap<>();
+      for (OptionItem o : directoryOptions.lookup(src, values)) {
+        if (o.label() != null && !o.label().isBlank()) out.put(o.value(), o.label());
+      }
+      return out;
+    } catch (RuntimeException e) {
+      return Map.of();
+    }
   }
 
   private synchronized Cached cached(String key) {
