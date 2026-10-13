@@ -19,6 +19,8 @@ ENV API_URL=http://api:3001 \
     HTTPS_PORT_SUFFIX="" \
     NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates
 USER 0
+# Apply the latest Red Hat security and bug-fix updates.
+RUN yum -y update && yum clean all && rm -rf /var/cache/yum /var/cache/dnf
 COPY web/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY web/nginx/templates/ /etc/nginx/templates/
 COPY web/nginx/templates-mtls/ /etc/nginx/templates-mtls/

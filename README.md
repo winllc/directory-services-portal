@@ -132,6 +132,9 @@ the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `e
   `openjdk-21-runtime` to run). Both run as unprivileged users (uid 1001 and 185, group 0) and
   listen on unprivileged ports, so they also run under an arbitrary UID (OpenShift `restricted`).
   The demo `openldap` image stays on Ubuntu because RHEL 9 no longer ships the OpenLDAP server.
+- Building the `web` and `api` images applies the latest Red Hat updates to their runtime layers
+  (`yum update`, or `microdnf update` on the minimal Java image), so the build needs access to
+  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes.
 
 - The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
   `docker compose down -v` after changing it, or if you started the stack from an older version.

@@ -14,6 +14,8 @@ FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
 # Runs as the image's unprivileged user (uid 185). Directories are group-0 writable so the image
 # also works under an arbitrary UID (OpenShift restricted SCC).
 USER 0
+# Apply the latest Red Hat security and bug-fix updates (UBI minimal: microdnf is its yum).
+RUN microdnf -y update && microdnf clean all && rm -rf /var/cache/yum /var/cache/dnf
 RUN mkdir -p /app /data && chown 185:0 /data && chmod 0770 /data
 COPY --from=build /src/target/directory-services-portal.jar /app/app.jar
 WORKDIR /app
