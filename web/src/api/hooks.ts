@@ -22,6 +22,8 @@ import type {
   DirectoryDefinition,
   DirectoryEntry,
   EntryListResponse,
+  FindingsFilters,
+  FindingsPage,
   FormDefinition,
   ObjectClassDef,
   OptionItem,
@@ -34,6 +36,7 @@ import type {
 import { isPending, jobActive } from '@dsp/shared';
 import { api, dnParam, qs } from './client';
 import { watchJob } from '../lib/jobWatch';
+import { saveBlob } from '../lib/csv';
 
 export const keys = {
   info: ['info'] as const,
@@ -517,6 +520,48 @@ export const useAnalysis = (id: string | undefined) =>
     queryFn: () => api.get<AnalysisDefinition>(`/api/admin/analysis/${encodeURIComponent(id!)}`),
     enabled: !!id,
   });
+
+/**
+ * Where a result's findings are paged from: a saved analysis's latest result, or a run's job.
+ * {@code version} (when it ran) keeps pages of an older run from being reused.
+ */
+export interface FindingsSource {
+  url: string;
+  version: string;
+}
+
+export const savedFindings = (id: string, version: string): FindingsSource => ({ url: `/api/admin/analysis/${encodeURIComponent(id)}/findings`, version });
+export const runFindings = (jobId: string, version: string): FindingsSource => ({
+  url: `/api/admin/analysis/results/${encodeURIComponent(jobId)}/findings`,
+  version,
+});
+
+const findingParams = (f: FindingsFilters) => ({ q: f.q?.trim() || undefined, rule: f.rule, severity: f.severity, source: f.source, status: f.status });
+
+/** One page of findings, filtered on the server. The previous page stays shown while the next loads. */
+export const useAnalysisFindings = <T,>(source: FindingsSource | undefined, filters: FindingsFilters, page: number, pageSize: number) =>
+  useQuery({
+    queryKey: ['admin', 'analysis-findings', source?.url ?? '', source?.version ?? '', findingParams(filters), page, pageSize] as const,
+    queryFn: () => api.get<FindingsPage<T>>(source!.url + qs({ ...findingParams(filters), page, pageSize })),
+    enabled: !!source,
+    placeholderData: (prev) => prev,
+    staleTime: Infinity,
+  });
+
+/** Download every finding matching the filters as CSV (built on the server). */
+export async function downloadFindingsCsv(source: FindingsSource, filters: FindingsFilters, filename: string) {
+  const res = await fetch(`${source.url}.csv${qs(findingParams(filters))}`, { credentials: 'same-origin' });
+  if (!res.ok) {
+    let message = `Download failed (${res.status})`;
+    try {
+      message = ((await res.json()) as { error?: string }).error ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message);
+  }
+  saveBlob(await res.blob(), filename);
+}
 
 /** The latest stored result of a saved analysis (null until it has run). */
 export const useAnalysisResult = (id: string | undefined) =>

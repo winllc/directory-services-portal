@@ -1,12 +1,12 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, Search } from 'lucide-react';
 import type { AnalysisResult, CompareRow, DirectoryDefinition } from '@dsp/shared';
-import { Alert, Badge, Button, Card, cx } from '../ui';
+import { Alert, Badge, Button, Card, ErrorAlert, cx } from '../ui';
 import { BarChart, exact, pct } from '../charts';
-import { downloadCsv } from '../../lib/csv';
 import { dnParam } from '../../api/client';
-import { Kpi, OkBadge, PAGE_SIZE, Pager, Values } from './common';
+import type { FindingsSource } from '../../api/hooks';
+import { Kpi, OkBadge, Pager, Values, truncationNote, useFindings } from './common';
 
 const STATUS_LABEL: Record<CompareRow['status'], string> = {
   missing: 'Missing from a source',
@@ -16,31 +16,25 @@ const STATUS_LABEL: Record<CompareRow['status'], string> = {
 
 const STATUS_TONE: Record<CompareRow['status'], 'warning' | 'danger' | 'info'> = { missing: 'warning', different: 'danger', duplicate: 'info' };
 
-export function CompareResults({ result, definitions }: { result: AnalysisResult; definitions?: DirectoryDefinition[] }) {
+export function CompareResults({
+  result,
+  definitions,
+  findings,
+  name = 'comparison',
+}: {
+  result: AnalysisResult;
+  definitions?: DirectoryDefinition[];
+  findings: FindingsSource;
+  name?: string;
+}) {
   const c = result.compare!;
   const [status, setStatus] = useState<'' | CompareRow['status']>('');
   const [q, setQ] = useState('');
-  const [page, setPage] = useState(1);
   const labels = c.sources.map((s) => s.label);
   const slugOf = (i: number) => definitions?.find((d) => d.id === c.sources[i].definitionId)?.slug;
   const s = c.summary;
 
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return c.rows.filter((r) => (!status || r.status === status || (status === 'duplicate' && r.duplicate)) && (!needle || r.key.toLowerCase().includes(needle)));
-  }, [c.rows, status, q]);
-  const shown = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  const exportCsv = () => {
-    const head = ['Key', 'Status', ...labels.map((l) => `In ${l}`), ...labels.map((l) => `DN in ${l}`), 'Attribute', ...labels.map((l) => `Value in ${l}`)];
-    const out: (string | number)[][] = [head];
-    for (const r of rows) {
-      const base = [r.key, STATUS_LABEL[r.status] + (r.duplicate && r.status !== 'duplicate' ? ' (duplicate key)' : ''), ...r.present.map((p) => (p ? 'yes' : 'no')), ...r.dns.map((d) => d?.join(' | ') ?? '')];
-      if (!r.differences?.length) out.push([...base, '', ...labels.map(() => '')]);
-      for (const d of r.differences ?? []) out.push([...base, d.label, ...d.values.map((v) => (v ? v.join(' | ') : ''))]);
-    }
-    downloadCsv('comparison.csv', out);
-  };
+  const list = useFindings<CompareRow>(findings, { q, status: status || undefined }, `${name}.csv`);
 
   return (
     <div className="stack">
@@ -99,9 +93,9 @@ export function CompareResults({ result, definitions }: { result: AnalysisResult
 
       <Card
         title={`Findings (${exact(c.rowCount)})`}
-        subtitle={c.rowsTruncated ? `Showing the first ${exact(c.rows.length)}; the counts above cover everything.` : undefined}
+        subtitle={truncationNote(c.rowsTruncated, list.listed)}
         actions={
-          <Button size="sm" icon={<Download size={14} />} onClick={exportCsv} disabled={!rows.length}>
+          <Button size="sm" icon={<Download size={14} />} onClick={list.exportCsv} loading={list.exporting} disabled={!list.total} title="Every finding matching the filters">
             CSV
           </Button>
         }
@@ -115,10 +109,7 @@ export function CompareResults({ result, definitions }: { result: AnalysisResult
                 role="radio"
                 aria-checked={status === st}
                 className={cx(status === st && 'active')}
-                onClick={() => {
-                  setStatus(st);
-                  setPage(1);
-                }}
+                onClick={() => setStatus(st)}
               >
                 {st ? STATUS_LABEL[st] : 'All'}
               </button>
@@ -131,19 +122,19 @@ export function CompareResults({ result, definitions }: { result: AnalysisResult
               placeholder="Find a key"
               aria-label="Find a key"
               value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => setQ(e.target.value)}
             />
           </div>
         </div>
+        <ErrorAlert error={list.error} />
         {c.rowCount === 0 ? (
           <div className="empty-inline">
             <OkBadge>Every key is in every source with identical values.</OkBadge>
           </div>
+        ) : list.loaded && list.total === 0 ? (
+          <p className="muted empty-inline">No findings match these filters.</p>
         ) : (
-          <div className="table-wrap">
+          <div className={cx('table-wrap', list.loading && 'is-refreshing')} aria-busy={list.loading}>
             <table className="table table-compact compare-table">
               <thead>
                 <tr>
@@ -155,7 +146,7 @@ export function CompareResults({ result, definitions }: { result: AnalysisResult
                 </tr>
               </thead>
               <tbody>
-                {shown.map((r) => (
+                {list.items.map((r) => (
                   <Fragment key={r.key}>
                     <tr className="compare-key-row">
                       <td className="mono">{r.key}</td>
@@ -201,7 +192,7 @@ export function CompareResults({ result, definitions }: { result: AnalysisResult
             </table>
           </div>
         )}
-        <Pager page={page} total={rows.length} onPage={setPage} />
+        <Pager page={list.page} total={list.total} onPage={list.setPage} />
       </Card>
     </div>
   );

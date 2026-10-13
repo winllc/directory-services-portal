@@ -45,6 +45,7 @@ const ACTION_LABELS: Record<string, string> = {
   'analysis.create': 'Created analysis',
   'analysis.update': 'Updated analysis',
   'analysis.delete': 'Deleted analysis',
+  'analysis.export': 'Downloaded analysis findings',
 };
 
 const FAILED_LABELS: Record<string, string> = { 'auth.login': 'Sign-in failed' };

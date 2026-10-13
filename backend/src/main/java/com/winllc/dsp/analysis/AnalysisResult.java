@@ -7,6 +7,18 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AnalysisResult(String type, String ranAt, long durationMs, Compare compare, Quality quality, List<String> warnings) {
 
+  /**
+   * The result without its findings (issues or rows): what the API sends, since findings can be
+   * many and are fetched a page at a time instead (see {@link AnalysisFindings}).
+   */
+  public AnalysisResult withoutFindings() {
+    Compare c = compare == null ? null
+        : new Compare(compare.sources(), compare.summary(), compare.attributes(), null, compare.rowCount(), compare.rowsTruncated());
+    Quality q = quality == null ? null
+        : new Quality(quality.sources(), quality.summary(), quality.rules(), null, quality.issuesTruncated());
+    return new AnalysisResult(type, ranAt, durationMs, c, q, warnings);
+  }
+
   /** What was read from one source. */
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record SourceStats(String label, String definitionId, String definitionName, long entries, boolean truncated,
@@ -36,6 +48,8 @@ public record AnalysisResult(String type, String ranAt, long durationMs, Compare
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record CompareRow(String key, String status, Boolean duplicate, List<Boolean> present, List<List<String>> dns, List<Difference> differences) {}
 
+  /** {@code rows}: up to the findings limit; {@code rowCount} counts all. */
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Compare(List<SourceStats> sources, CompareSummary summary, List<AttributeStats> attributes, List<CompareRow> rows,
       long rowCount, boolean rowsTruncated) {}
 
@@ -53,5 +67,7 @@ public record AnalysisResult(String type, String ranAt, long durationMs, Compare
   /** {@code cleanShare}: share of entries without any finding (0..1). */
   public record QualitySummary(long entries, long entriesWithIssues, long issues, long errors, long warnings, double cleanShare) {}
 
+  /** {@code issues}: up to the findings limit; the summary counts all. */
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Quality(List<SourceStats> sources, QualitySummary summary, List<RuleStats> rules, List<Issue> issues, boolean issuesTruncated) {}
 }

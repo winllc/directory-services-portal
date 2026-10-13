@@ -12,7 +12,7 @@ import type {
   RuleFormat,
   RuleType,
 } from '@dsp/shared';
-import { useAdminDefinitions, useAnalysis, useAnalysisMutations, useAnalysisResult, useMetricSources } from '../../api/hooks';
+import { runFindings, savedFindings, useAdminDefinitions, useAnalysis, useAnalysisMutations, useAnalysisResult, useMetricSources } from '../../api/hooks';
 import { JobProgress } from '../../components/jobs/JobProgress';
 import { useAnalysisRun } from '../../components/analysis/useAnalysisRun';
 import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, PageHeader, Spinner, Toggle, useToast } from '../../components/ui';
@@ -225,6 +225,7 @@ export function AnalysisEditorPage() {
   // A draft run's result once it is the latest thing run here; otherwise the saved result.
   const draftShown = runState.isDraft && runState.draftResult;
   const result: AnalysisResult | undefined = draftShown ? runState.draftResult : (latest.data?.result ?? undefined);
+  const findings = result && (draftShown ? runFindings(runState.job!.id, result.ranAt) : savedFindings(id!, result.ranAt));
 
   const minSources = isCompare ? 2 : 1;
 
@@ -427,7 +428,11 @@ export function AnalysisEditorPage() {
           {!draftShown && (latest.data?.stale || dirty) && (
             <Alert tone="info">The settings have changed since this run. Run it again to see current results.</Alert>
           )}
-          {result.type === 'compare' ? <CompareResults result={result} definitions={defs.data} /> : <QualityResults result={result} definitions={defs.data} />}
+          {result.type === 'compare' ? (
+            <CompareResults result={result} definitions={defs.data} findings={findings!} name={draft.name} />
+          ) : (
+            <QualityResults result={result} definitions={defs.data} findings={findings!} name={draft.name} />
+          )}
         </section>
       )}
       {!result && !runState.job && !isNew && latest.data === null && <p className="muted">This analysis hasn't been run yet.</p>}

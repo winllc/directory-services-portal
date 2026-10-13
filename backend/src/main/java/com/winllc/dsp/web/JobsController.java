@@ -1,5 +1,6 @@
 package com.winllc.dsp.web;
 
+import com.winllc.dsp.analysis.AnalysisResult;
 import com.winllc.dsp.jobs.Job;
 import com.winllc.dsp.jobs.JobService;
 import com.winllc.dsp.model.SessionUser;
@@ -56,13 +57,18 @@ public class JobsController {
     return jobs.get(user, id).view();
   }
 
-  /** The finished job's result (the same body the starting endpoint would have returned). */
+  /**
+   * The finished job's result (the same body the starting endpoint would have returned). An
+   * analysis result comes without its findings, which are paged from
+   * {@code /api/admin/analysis/results/{job}/findings}.
+   */
   @GetMapping("/{id}/result")
   public JobResult result(@AuthenticationPrincipal SessionUser user, @PathVariable String id) {
     Job job = jobs.get(user, id);
     switch (job.status()) {
       case SUCCEEDED -> {
-        return new JobResult(job.view(), job.result());
+        Object result = job.result();
+        return new JobResult(job.view(), result instanceof AnalysisResult r ? r.withoutFindings() : result);
       }
       case FAILED -> throw new ApiException(HttpStatus.CONFLICT, "The computation failed: " + job.error());
       case CANCELLED -> throw new ApiException(HttpStatus.CONFLICT, "The computation was cancelled");

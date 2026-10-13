@@ -3080,3 +3080,9 @@ textarea.input {
   overflow-wrap: anywhere;
   font-size: 12px;
 }
+
+/* Findings table while the next page loads (the previous page stays shown). */
+.table-wrap.is-refreshing {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}

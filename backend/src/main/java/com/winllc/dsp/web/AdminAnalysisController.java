@@ -1,6 +1,7 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.analysis.AnalysisDefinition;
+import com.winllc.dsp.analysis.AnalysisFindings;
 import com.winllc.dsp.analysis.AnalysisResult;
 import com.winllc.dsp.analysis.AnalysisResultStore;
 import com.winllc.dsp.analysis.AnalysisService;
@@ -9,11 +10,13 @@ import com.winllc.dsp.jobs.Job;
 import com.winllc.dsp.jobs.JobService;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.store.ConfigStore;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,6 +26,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -33,6 +38,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -198,7 +204,90 @@ public class AdminAnalysisController {
     AnalysisDefinition a = find(id);
     AnalysisResultStore.Stored stored = results.load(id);
     if (stored == null) return ResponseEntity.noContent().build();
-    return ResponseEntity.ok(new LatestResult(stored.result(), stored.ranBy(), !java.util.Objects.equals(stored.analysisUpdatedAt(), a.updatedAt())));
+    return ResponseEntity.ok(new LatestResult(stored.result().withoutFindings(), stored.ranBy(),
+        !java.util.Objects.equals(stored.analysisUpdatedAt(), a.updatedAt())));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Findings, a page at a time or as CSV: of a saved analysis's latest result, or of a run's job
+  // ---------------------------------------------------------------------------
+
+  private AnalysisResult storedResult(String id) {
+    find(id);
+    AnalysisResultStore.Stored stored = results.load(id);
+    if (stored == null) throw ApiException.notFound("This analysis hasn't been run yet");
+    return stored.result();
+  }
+
+  private AnalysisResult jobResult(SessionUser user, String jobId) {
+    Job job = jobs.get(user, jobId);
+    if (job.status() != Job.Status.SUCCEEDED || !(job.result() instanceof AnalysisResult r)) {
+      throw ApiException.notFound("No analysis result for this run");
+    }
+    return r;
+  }
+
+  private static AnalysisFindings.Query query(String q, String rule, String severity, Integer source, String status, Integer page, Integer pageSize) {
+    if (q != null && q.length() > 256) throw ApiException.badRequest("Search text is too long");
+    if (rule != null && rule.length() > 256) throw ApiException.badRequest("Invalid rule");
+    if (severity != null && !severity.isEmpty() && !severity.matches("error|warning")) throw ApiException.badRequest("Invalid severity");
+    if (status != null && !status.isEmpty() && !status.matches("missing|different|duplicate")) throw ApiException.badRequest("Invalid status");
+    if (source != null && (source < 0 || source >= AnalysisDefinition.MAX_SOURCES)) throw ApiException.badRequest("Invalid source");
+    if (page != null && page < 1) throw ApiException.badRequest("Invalid page");
+    if (pageSize != null && (pageSize < 1 || pageSize > AnalysisFindings.MAX_PAGE_SIZE)) throw ApiException.badRequest("Invalid page size");
+    return new AnalysisFindings.Query(q, rule, severity, source, status, page == null ? 1 : page,
+        pageSize == null ? AnalysisFindings.DEFAULT_PAGE_SIZE : pageSize);
+  }
+
+  private static void csv(AnalysisResult result, String name, AnalysisFindings.Query query, HttpServletResponse response) throws IOException {
+    String file = (name == null || name.isBlank() ? "analysis" : name).replaceAll("[^\\w.-]+", "-").replaceAll("-+", "-") + ".csv";
+    response.setContentType("text/csv;charset=UTF-8");
+    response.setHeader(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(file).build().toString());
+    response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+    AnalysisFindings.writeCsv(result, query, response.getOutputStream());
+  }
+
+  /** A page of the latest result's findings, filtered. */
+  @GetMapping("/{id}/findings")
+  public AnalysisFindings.Page<?> findings(@PathVariable String id, @RequestParam(required = false) String q,
+      @RequestParam(required = false) String rule, @RequestParam(required = false) String severity,
+      @RequestParam(required = false) Integer source, @RequestParam(required = false) String status,
+      @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer pageSize) {
+    return AnalysisFindings.page(storedResult(id), query(q, rule, severity, source, status, page, pageSize));
+  }
+
+  /** Every finding of the latest result matching the filters, as CSV. */
+  @GetMapping("/{id}/findings.csv")
+  public void findingsCsv(@PathVariable String id, @RequestParam(required = false) String q,
+      @RequestParam(required = false) String rule, @RequestParam(required = false) String severity,
+      @RequestParam(required = false) Integer source, @RequestParam(required = false) String status,
+      HttpServletResponse response) throws IOException {
+    AnalysisResult r = storedResult(id);
+    AnalysisFindings.Query query = query(q, rule, severity, source, status, null, null);
+    audit.event("analysis.export").target("analysis", id, find(id).name()).success();
+    csv(r, find(id).name(), query, response);
+  }
+
+  /** A page of the findings of a run (e.g. of unsaved settings), from its background job. */
+  @GetMapping("/results/{jobId}/findings")
+  public AnalysisFindings.Page<?> runFindings(@AuthenticationPrincipal SessionUser user, @PathVariable String jobId,
+      @RequestParam(required = false) String q, @RequestParam(required = false) String rule,
+      @RequestParam(required = false) String severity, @RequestParam(required = false) Integer source,
+      @RequestParam(required = false) String status, @RequestParam(required = false) Integer page,
+      @RequestParam(required = false) Integer pageSize) {
+    return AnalysisFindings.page(jobResult(user, jobId), query(q, rule, severity, source, status, page, pageSize));
+  }
+
+  @GetMapping("/results/{jobId}/findings.csv")
+  public void runFindingsCsv(@AuthenticationPrincipal SessionUser user, @PathVariable String jobId,
+      @RequestParam(required = false) String q, @RequestParam(required = false) String rule,
+      @RequestParam(required = false) String severity, @RequestParam(required = false) Integer source,
+      @RequestParam(required = false) String status, HttpServletResponse response) throws IOException {
+    AnalysisResult r = jobResult(user, jobId);
+    AnalysisFindings.Query query = query(q, rule, severity, source, status, null, null);
+    String title = jobs.get(user, jobId).view().title();
+    audit.event("analysis.export").by(user).target("analysis-run", jobId, title).success();
+    csv(r, title, query, response);
   }
 
   private static AnalysisDefinition.LastRun lastRun(SessionUser user, AnalysisResult r) {

@@ -1,20 +1,29 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, Search } from 'lucide-react';
-import type { AnalysisResult, DirectoryDefinition, Severity } from '@dsp/shared';
-import { Alert, Button, Card } from '../ui';
+import type { AnalysisResult, DirectoryDefinition, QualityIssue, Severity } from '@dsp/shared';
+import { Alert, Button, Card, ErrorAlert, cx } from '../ui';
 import { exact, pct } from '../charts';
-import { downloadCsv } from '../../lib/csv';
 import { dnParam } from '../../api/client';
-import { Kpi, Meter, OkBadge, PAGE_SIZE, Pager, SeverityBadge, Values } from './common';
+import type { FindingsSource } from '../../api/hooks';
+import { Kpi, Meter, OkBadge, Pager, SeverityBadge, Values, truncationNote, useFindings } from './common';
 
-export function QualityResults({ result, definitions }: { result: AnalysisResult; definitions?: DirectoryDefinition[] }) {
+export function QualityResults({
+  result,
+  definitions,
+  findings,
+  name = 'data-quality',
+}: {
+  result: AnalysisResult;
+  definitions?: DirectoryDefinition[];
+  findings: FindingsSource;
+  name?: string;
+}) {
   const qr = result.quality!;
   const [rule, setRule] = useState('');
   const [severity, setSeverity] = useState<'' | Severity>('');
   const [source, setSource] = useState('');
   const [q, setQ] = useState('');
-  const [page, setPage] = useState(1);
   const [showPassing, setShowPassing] = useState(false);
   const s = qr.summary;
   const failing = qr.rules.filter((r) => r.violations > 0);
@@ -23,24 +32,12 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
   const ruleById = useMemo(() => new Map(qr.rules.map((r) => [r.id, r])), [qr.rules]);
   const slugOf = (i: number) => definitions?.find((d) => d.id === qr.sources[i]?.definitionId)?.slug;
 
-  const issues = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return qr.issues.filter(
-      (i) =>
-        (!rule || i.ruleId === rule) &&
-        (!severity || i.severity === severity) &&
-        (source === '' || String(i.source) === source) &&
-        (!needle || i.dn.toLowerCase().includes(needle) || i.title.toLowerCase().includes(needle) || i.message.toLowerCase().includes(needle)),
-    );
-  }, [qr.issues, rule, severity, source, q]);
-  const shown = issues.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const list = useFindings<QualityIssue>(
+    findings,
+    { q, rule: rule || undefined, severity: severity || undefined, source: source === '' ? undefined : Number(source) },
+    `${name}.csv`,
+  );
   const tone = s.cleanShare >= 0.95 ? 'good' : s.cleanShare >= 0.8 ? 'warning' : 'critical';
-
-  const exportCsv = () =>
-    downloadCsv('data-quality.csv', [
-      ['Source', 'Entry', 'DN', 'Rule', 'Severity', 'Attribute', 'Values', 'Finding'],
-      ...issues.map((i) => [qr.sources[i.source]?.label ?? '', i.title, i.dn, ruleById.get(i.ruleId)?.label ?? i.ruleId, i.severity, i.attribute, i.values.join(' | '), i.message]),
-    ]);
 
   return (
     <div className="stack">
@@ -100,9 +97,7 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
                     key={r.id}
                     className={r.violations ? 'row-link' : undefined}
                     onClick={() => {
-                      if (!r.violations) return;
-                      setRule(r.id);
-                      setPage(1);
+                      if (r.violations) setRule(r.id);
                     }}
                   >
                     <td>
@@ -125,16 +120,16 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
 
       <Card
         title={`Findings (${exact(s.issues)})`}
-        subtitle={qr.issuesTruncated ? `Showing the first ${exact(qr.issues.length)}; the counts above cover everything.` : undefined}
+        subtitle={truncationNote(qr.issuesTruncated, list.listed)}
         actions={
-          <Button size="sm" icon={<Download size={14} />} onClick={exportCsv} disabled={!issues.length}>
+          <Button size="sm" icon={<Download size={14} />} onClick={list.exportCsv} loading={list.exporting} disabled={!list.total} title="Every finding matching the filters">
             CSV
           </Button>
         }
       >
         <div className="toolbar">
           <div className="toolbar-right">
-            <select className="input select select-sm" aria-label="Rule" value={rule} onChange={(e) => (setRule(e.target.value), setPage(1))}>
+            <select className="input select select-sm" aria-label="Rule" value={rule} onChange={(e) => setRule(e.target.value)}>
               <option value="">All rules</option>
               {qr.rules
                 .filter((r) => r.violations > 0)
@@ -144,13 +139,13 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
                   </option>
                 ))}
             </select>
-            <select className="input select select-sm" aria-label="Severity" value={severity} onChange={(e) => (setSeverity(e.target.value as '' | Severity), setPage(1))}>
+            <select className="input select select-sm" aria-label="Severity" value={severity} onChange={(e) => setSeverity(e.target.value as '' | Severity)}>
               <option value="">Errors and warnings</option>
               <option value="error">Errors</option>
               <option value="warning">Warnings</option>
             </select>
             {qr.sources.length > 1 && (
-              <select className="input select select-sm" aria-label="Source" value={source} onChange={(e) => (setSource(e.target.value), setPage(1))}>
+              <select className="input select select-sm" aria-label="Source" value={source} onChange={(e) => setSource(e.target.value)}>
                 <option value="">All sources</option>
                 {qr.sources.map((x, i) => (
                   <option key={i} value={String(i)}>
@@ -162,15 +157,18 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
           </div>
           <div className="search-box search-sm">
             <Search size={15} aria-hidden />
-            <input className="input input-sm" placeholder="Find an entry" aria-label="Find an entry" value={q} onChange={(e) => (setQ(e.target.value), setPage(1))} />
+            <input className="input input-sm" placeholder="Find an entry" aria-label="Find an entry" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
         </div>
+        <ErrorAlert error={list.error} />
         {s.issues === 0 ? (
           <div className="empty-inline">
             <OkBadge>No findings: every entry passes every rule.</OkBadge>
           </div>
+        ) : list.loaded && list.total === 0 ? (
+          <p className="muted empty-inline">No findings match these filters.</p>
         ) : (
-          <div className="table-wrap">
+          <div className={cx('table-wrap', list.loading && 'is-refreshing')} aria-busy={list.loading}>
             <table className="table table-compact">
               <thead>
                 <tr>
@@ -181,7 +179,7 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
                 </tr>
               </thead>
               <tbody>
-                {shown.map((i, n) => {
+                {list.items.map((i, n) => {
                   const slug = slugOf(i.source);
                   return (
                     <tr key={`${i.ruleId}-${i.dn}-${n}`}>
@@ -209,7 +207,7 @@ export function QualityResults({ result, definitions }: { result: AnalysisResult
             </table>
           </div>
         )}
-        <Pager page={page} total={issues.length} onPage={setPage} />
+        <Pager page={list.page} total={list.total} onPage={list.setPage} />
       </Card>
     </div>
   );

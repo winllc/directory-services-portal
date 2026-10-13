@@ -1,7 +1,9 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AlertOctagon, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
-import type { Severity } from '@dsp/shared';
-import { Button } from '../ui';
+import type { FindingsFilters, Severity } from '@dsp/shared';
+import { Button, useDebounced, useToast } from '../ui';
+import { downloadFindingsCsv, useAnalysisFindings, type FindingsSource } from '../../api/hooks';
+import { exact } from '../charts';
 
 export function Kpi({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'good' | 'warning' | 'critical' }) {
   return (
@@ -60,6 +62,57 @@ export function Values({ values }: { values: string[] | null | undefined }) {
 
 export const PAGE_SIZE = 50;
 
+/**
+ * Findings of a result, filtered and paged on the server. Search text is debounced; changing a
+ * filter returns to the first page. The CSV holds every finding matching the filters.
+ */
+export function useFindings<T>(source: FindingsSource, filters: FindingsFilters, filename: string) {
+  const toast = useToast();
+  const q = useDebounced(filters.q?.trim() ?? '', 300);
+  const applied: FindingsFilters = { ...filters, q };
+  const key = JSON.stringify(applied) + source.url + source.version;
+  const [page, setPage] = useState(1);
+  const [pageKey, setPageKey] = useState(key);
+  const [exporting, setExporting] = useState(false);
+  // Back to the first page when the filters or the result change.
+  useEffect(() => {
+    if (key !== pageKey) {
+      setPageKey(key);
+      setPage(1);
+    }
+  }, [key, pageKey]);
+  const current = key === pageKey ? page : 1;
+  const query = useAnalysisFindings<T>(source, applied, current, PAGE_SIZE);
+  return {
+    items: query.data?.items ?? [],
+    total: query.data?.total ?? 0,
+    listed: query.data?.listed ?? 0,
+    loaded: !!query.data,
+    loading: query.isFetching,
+    error: query.error,
+    page: current,
+    setPage,
+    exporting,
+    exportCsv: async () => {
+      setExporting(true);
+      try {
+        await downloadFindingsCsv(source, applied, filename);
+      } catch (e) {
+        toast.error(e);
+      } finally {
+        setExporting(false);
+      }
+    },
+  };
+}
+
+/** "Only the first N are listed" when a run kept fewer findings than it found. */
+export function truncationNote(truncated: boolean, listed: number) {
+  return truncated && listed > 0
+    ? `Only the first ${exact(listed)} findings are listed (ANALYSIS_MAX_ISSUES); the counts above cover every entry.`
+    : undefined;
+}
+
 export function Pager({ page, total, onPage }: { page: number; total: number; onPage: (p: number) => void }) {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (pages <= 1) return null;
@@ -69,7 +122,7 @@ export function Pager({ page, total, onPage }: { page: number; total: number; on
         Previous
       </Button>
       <span className="muted small">
-        Page {page} of {pages}
+        Page {exact(page)} of {exact(pages)} · {exact(total)} findings
       </span>
       <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => onPage(page + 1)}>
         Next <ChevronRight size={16} />

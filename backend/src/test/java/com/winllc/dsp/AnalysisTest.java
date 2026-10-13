@@ -75,6 +75,10 @@ class AnalysisTest extends ApiTestSupport {
     MvcResult r = admin.post("/api/admin/analysis/run", compare(true));
     assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(202);
     JsonNode c = awaitResult(admin, r).get("compare");
+    String job = body(r).get("job").get("id").asString();
+    String findings = "/api/admin/analysis/results/" + job + "/findings";
+    // Findings come a page at a time, not with the result.
+    assertThat(c.has("rows")).isFalse();
 
     JsonNode summary = c.get("summary");
     // 8 staff + zed; alice, bob, carol, dave are in both.
@@ -87,7 +91,9 @@ class AnalysisTest extends ApiTestSupport {
     assertThat(summary.get("duplicates").asLong()).isEqualTo(1);
     assertThat(c.get("sources").get(1).get("duplicateKeys").asLong()).isEqualTo(1);
 
-    Map<String, JsonNode> rows = byKey(c.get("rows"));
+    JsonNode page = body(admin.get(findings + "?pageSize=500"));
+    assertThat(page.get("total").asInt()).isEqualTo(c.get("rowCount").asInt()).isEqualTo(page.get("listed").asInt());
+    Map<String, JsonNode> rows = byKey(page.get("items"));
     assertThat(rows).doesNotContainKey("alice").doesNotContainKey("bob");
     JsonNode carol = rows.get("carol");
     assertThat(carol.get("status").asString()).isEqualTo("different");
@@ -100,9 +106,36 @@ class AnalysisTest extends ApiTestSupport {
     assertThat(rows.get("dave").get("dns").get(1)).hasSize(2);
     assertThat(c.get("attributes").get(1).get("differences").asLong()).isEqualTo(1);
 
+    // Filtering and paging happen on the server.
+    JsonNode missing = body(admin.get(findings + "?status=missing"));
+    assertThat(missing.get("total").asInt()).isEqualTo(5);
+    missing.get("items").forEach(x -> assertThat(x.get("status").asString()).isEqualTo("missing"));
+    JsonNode second = body(admin.get(findings + "?pageSize=2&page=2"));
+    assertThat(second.get("items")).hasSize(2);
+    assertThat(second.get("page").asInt()).isEqualTo(2);
+    assertThat(body(admin.get(findings + "?status=duplicate")).get("items").get(0).get("key").asString()).isEqualTo("dave");
+    assertThat(byKey(body(admin.get(findings + "?q=ZE")).get("items"))).containsOnlyKeys("zed");
+    assertThat(status(admin.get(findings + "?pageSize=5000"))).isEqualTo(400);
+    assertThat(status(admin.get(findings + "?status=bogus"))).isEqualTo(400);
+
+    // The CSV has every matching finding, one line per difference.
+    MvcResult csv = admin.get(findings + ".csv?status=different");
+    assertThat(status(csv)).isEqualTo(200);
+    assertThat(csv.getResponse().getHeader("Content-Disposition")).contains("attachment").contains("Staff-vs-legacy.csv");
+    String text = csv.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+    assertThat(text).startsWith("\uFEFFKey,Status,In Staff Directory,In Legacy HR,");
+    assertThat(text.split("\r\n")).hasSize(2);
+    assertThat(text).contains("carol,Values differ,yes,yes,").contains(",title,Engineering Manager,VP Engineering");
+
+    // A run's findings belong to whoever ran it, even among administrators.
+    directory.modify("cn=directory-admins,ou=groups," + B, List.of(new Modification(ModificationType.ADD, "member", "uid=erin,ou=people," + B)));
+    assertThat(status(login("erin").get(findings))).isEqualTo(404);
+
     // Case-sensitive comparison also flags bob's e-mail.
-    JsonNode strict = awaitResult(admin, admin.post("/api/admin/analysis/run", compare(false))).get("compare");
-    assertThat(byKey(strict.get("rows")).get("bob").get("differences").get(0).get("label").asString()).isEqualTo("E-mail");
+    MvcResult strictRun = admin.post("/api/admin/analysis/run", compare(false));
+    awaitResult(admin, strictRun);
+    JsonNode strictRows = body(admin.get("/api/admin/analysis/results/" + body(strictRun).get("job").get("id").asString() + "/findings")).get("items");
+    assertThat(byKey(strictRows).get("bob").get("differences").get(0).get("label").asString()).isEqualTo("E-mail");
   }
 
   @Test
@@ -127,7 +160,10 @@ class AnalysisTest extends ApiTestSupport {
     assertThat(violations).containsEntry("form:def-staff:f-mail", 1L);
 
     List<String> messages = new ArrayList<>();
-    q.get("issues").forEach(i -> messages.add(i.get("dn").asString() + " | " + i.get("message").asString()));
+    assertThat(q.has("issues")).isFalse();
+    JsonNode issues = body(admin.get("/api/admin/analysis/an-people-quality/findings?pageSize=500"));
+    assertThat(issues.get("total").asLong()).isEqualTo(q.get("summary").get("issues").asLong());
+    issues.get("items").forEach(i -> messages.add(i.get("dn").asString() + " | " + i.get("message").asString()));
     assertThat(messages).anyMatch(m -> m.startsWith(ALICE) && m.contains("also used by uid=bob"));
     assertThat(messages).anyMatch(m -> m.startsWith("uid=fatima") && m.contains("does not exist"));
     assertThat(messages).anyMatch(m -> m.contains("uid=carol,ou=people") && m.contains("(Partners)"));
@@ -141,6 +177,20 @@ class AnalysisTest extends ApiTestSupport {
     JsonNode latest = body(admin.get("/api/admin/analysis/an-people-quality/result"));
     assertThat(latest.get("stale").asBoolean()).isFalse();
     assertThat(latest.get("result").get("quality").get("summary")).isEqualTo(q.get("summary"));
+    assertThat(latest.get("result").get("quality").has("issues")).isFalse();
+    // The stored findings filter by rule, severity and source, and export as CSV.
+    JsonNode uid = body(admin.get("/api/admin/analysis/an-people-quality/findings?rule=r-uid"));
+    assertThat(uid.get("total").asInt()).isEqualTo(2);
+    uid.get("items").forEach(i -> assertThat(i.get("ruleId").asString()).isEqualTo("r-uid"));
+    JsonNode partners = body(admin.get("/api/admin/analysis/an-people-quality/findings?source=1"));
+    partners.get("items").forEach(i -> assertThat(i.get("source").asInt()).isEqualTo(1));
+    assertThat(partners.get("total").asInt()).isLessThan(issues.get("total").asInt());
+    String csv = admin.get("/api/admin/analysis/an-people-quality/findings.csv?rule=r-uid").getResponse()
+        .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+    assertThat(csv.split("\r\n")).hasSize(3);
+    assertThat(csv).startsWith("\uFEFFSource,Entry,DN,Rule,Severity,Attribute,Values,Finding");
+    JsonNode exported = body(admin.get("/api/admin/audit?action=analysis.export")).get("events").get(0);
+    assertThat(exported.get("target").get("id").asString()).isEqualTo("an-people-quality");
     // The job shows in admin's list with a link back to the analysis.
     JsonNode job = body(admin.get("/api/jobs")).get(0);
     assertThat(job.get("link").asString()).isEqualTo("/admin/analysis/an-people-quality");
@@ -177,10 +227,14 @@ class AnalysisTest extends ApiTestSupport {
 
     JsonNode audit = body(admin.get("/api/admin/audit?action=analysis.create"));
     assertThat(audit.get("events").get(0).get("target").get("id").asString()).isEqualTo(id);
+    assertThat(body(admin.get("/api/admin/analysis/" + id + "/findings")).get("total").asInt()).isZero();
     assertThat(status(admin.del("/api/admin/analysis/" + id))).isEqualTo(204);
+    assertThat(status(admin.get("/api/admin/analysis/" + id + "/findings"))).isEqualTo(404);
 
     Client alice = login("alice");
     assertThat(status(alice.get("/api/admin/analysis"))).isEqualTo(403);
     assertThat(status(alice.post("/api/admin/analysis/run", ok))).isEqualTo(403);
+    assertThat(status(alice.get("/api/admin/analysis/an-people-quality/findings"))).isEqualTo(403);
+    assertThat(status(alice.get("/api/admin/analysis/an-people-quality/findings.csv"))).isEqualTo(403);
   }
 }

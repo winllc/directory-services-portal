@@ -83,8 +83,8 @@ public class PortalProperties {
     private int maxEntries = 100_000;
     /** How long computed metrics are reused (0 disables the cache). */
     private int cacheSeconds = 60;
-    /** Most individual findings an analysis run returns (counts always cover every entry). */
-    private int maxIssues = 2_000;
+    /** Most individual findings an analysis run keeps (counts always cover every entry); they are browsed a page at a time. */
+    private int maxIssues = 50_000;
     /** How long a request waits for metrics before they carry on in the background. */
     private int waitMillis = 2_000;
 

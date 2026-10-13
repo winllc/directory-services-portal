@@ -2,7 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import type { AnalysisResult } from '@dsp/shared';
 import { jobActive } from '@dsp/shared';
-import { useAdminDefinitions, useJob, useJobResult } from '../../api/hooks';
+import { runFindings, useAdminDefinitions, useJob, useJobResult } from '../../api/hooks';
 import { Alert, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
 import { JobProgress } from '../../components/jobs/JobProgress';
 import { CompareResults } from '../../components/analysis/CompareResults';
@@ -44,7 +44,11 @@ export function AnalysisResultsPage() {
           <span className="muted small">
             {new Date(r.ranAt).toLocaleString()} · {(r.durationMs / 1000).toFixed(1)} s
           </span>
-          {r.type === 'compare' ? <CompareResults result={r} definitions={defs.data} /> : <QualityResults result={r} definitions={defs.data} />}
+          {r.type === 'compare' ? (
+            <CompareResults result={r} definitions={defs.data} findings={runFindings(jobId!, r.ranAt)} name={job.data.title} />
+          ) : (
+            <QualityResults result={r} definitions={defs.data} findings={runFindings(jobId!, r.ranAt)} name={job.data.title} />
+          )}
         </>
       )}
     </div>

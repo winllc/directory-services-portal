@@ -269,8 +269,10 @@ Saved analyses that run on demand against live data, always as [background tasks
 saved analysis is kept on disk (`<DATA_DIR>/analysis-results/`) to reopen later. It is marked as
 out of date when the analysis settings change afterwards. Running with unsaved changes keeps the
 saved result and shows the draft's result separately. A run's counts cover every entry read;
-the list of individual findings is capped at `ANALYSIS_MAX_ISSUES` and can be filtered,
-searched and downloaded as CSV. Each finding links to the entry.
+the list of individual findings is capped at `ANALYSIS_MAX_ISSUES` (default 50,000). The
+server pages, filters and searches the findings, so large results stay fast in the browser. The
+CSV download includes every finding that matches the current filters, not just the page shown.
+Each finding links to the entry.
 
 - **Comparison** of two to six directories (or filtered parts of directories). Entries are
   matched by a key attribute per source (e.g. `uid`, `mail` or `employeeNumber`), and the run

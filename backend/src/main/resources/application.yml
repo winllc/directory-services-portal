@@ -50,7 +50,7 @@ portal:
   metrics:
     max-entries: ${METRICS_MAX_ENTRIES:100000}
     cache-seconds: ${METRICS_CACHE_SECONDS:60}
-    max-issues: ${ANALYSIS_MAX_ISSUES:2000}
+    max-issues: ${ANALYSIS_MAX_ISSUES:50000}
     # Metrics that take longer than this continue in the background and notify when ready.
     wait-millis: ${METRICS_WAIT_MILLIS:2000}
   # Background computations: analyses always, metrics when they outlast wait-millis.

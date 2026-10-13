@@ -9,7 +9,11 @@ export function toCsv(rows: (string | number | boolean | null | undefined)[][]):
 }
 
 export function downloadCsv(filename: string, rows: (string | number | boolean | null | undefined)[][]) {
-  const blob = new Blob(['﻿' + toCsv(rows)], { type: 'text/csv;charset=utf-8' });
+  saveBlob(new Blob(['﻿' + toCsv(rows)], { type: 'text/csv;charset=utf-8' }), filename);
+}
+
+/** Hand a file to the browser's downloads. */
+export function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

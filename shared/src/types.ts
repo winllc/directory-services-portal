@@ -606,7 +606,8 @@ export interface CompareResult {
   sources: AnalysisSourceStats[];
   summary: { keys: number; inAll: number; identical: number; different: number; partial: number; onlyIn: number[]; duplicates: number };
   attributes: { label: string; attributes: string[]; differences: number }[];
-  rows: CompareRow[];
+  /** Not sent by the API: fetched a page at a time (see FindingsPage). */
+  rows?: CompareRow[];
   rowCount: number;
   rowsTruncated: boolean;
 }
@@ -637,8 +638,28 @@ export interface QualityResult {
   sources: AnalysisSourceStats[];
   summary: { entries: number; entriesWithIssues: number; issues: number; errors: number; warnings: number; cleanShare: number };
   rules: QualityRuleStats[];
-  issues: QualityIssue[];
+  /** Not sent by the API: fetched a page at a time (see FindingsPage). */
+  issues?: QualityIssue[];
   issuesTruncated: boolean;
+}
+
+/** A page of an analysis result's findings. */
+export interface FindingsPage<T> {
+  items: T[];
+  /** Findings matching the filters. */
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Every finding kept with the result (runs keep at most ANALYSIS_MAX_ISSUES). */
+  listed: number;
+}
+
+export interface FindingsFilters {
+  q?: string;
+  rule?: string;
+  severity?: Severity;
+  source?: number;
+  status?: CompareRow['status'];
 }
 
 export interface AnalysisResult {
