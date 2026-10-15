@@ -21,6 +21,9 @@ services:
       FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
+      # ENS Solutions license (./license/license.lic): enables data analysis, metrics and schema
+      # import/export. Without it the portal runs its core features.
+      - ./license:/etc/ens/license:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3001/api/health >/dev/null || exit 1"]
       interval: 15s

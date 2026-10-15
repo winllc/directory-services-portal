@@ -69,5 +69,6 @@ fi
 echo
 say "Directory Services Portal $VERSION is installed."
 echo "    Edit $ETC/portal.env (LDAP connection, administrators), then:"
+[ -f "$ETC/license.lic" ] || echo "    License: install -m 640 -o root -g dsp <your.lic> $ETC/license.lic (core features only without it)"
 echo "    systemctl restart directory-services-portal && journalctl -u directory-services-portal -f"
 if [ -n "$start" ]; then systemctl restart directory-services-portal; fi

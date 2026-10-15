@@ -49,6 +49,22 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
 - `BANNER_TEXT` and colours for a classification banner; `LOGIN_HINT` for help text.
 - Metrics, analysis and background-task limits: see the comments in the file.
 
+### License
+
+Data analysis, metrics and schema import/export need an ENS Solutions license; everything else
+(sign-in, browsing and editing the directory, self-service, administration, audit log) works
+without one. Copy the license file to `license/license.lic` (the installer creates `license/`,
+which is mounted read-only into the API at `/etc/ens/license`):
+
+```bash
+cp ~/acme.lic license/license.lic && chmod 644 license/license.lic
+./portal.sh logs api | grep License       # "License: licensed to ..." or why not
+```
+
+A renewed or replaced file is picked up within a minute without a restart. When the license
+expires the portal falls back to its core features. Administrators see the license status at the
+bottom of the navigation.
+
 ### HTTPS and X.509 client certificates
 
 `./install.sh --https [PORT]` adds `docker-compose.mtls.yml`: nginx serves HTTPS with the
@@ -81,7 +97,7 @@ in your LDAP server.
 
 ## Upgrade
 
-Unpack the new package next to this one, copy `.env` (and `certs/`) across, then in the new
+Unpack the new package next to this one, copy `.env` (and `certs/`, `license/`) across, then in the new
 directory run `./install.sh` and `./portal.sh up`. The data volume is reused. Take a
 `./portal.sh backup` first.
 

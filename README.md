@@ -89,6 +89,47 @@ The version defaults to the `package.json` version plus the git revision (`--ver
 it). Builds behind a proxy or with a corporate CA can pass `DOCKER_BUILD_ARGS`, or alternative
 Dockerfiles in `API_DOCKERFILE` / `WEB_DOCKERFILE`.
 
+## Licensing
+
+The portal runs without a license, with its **core** features. A signed ENS Solutions license
+file for `directory-services-portal` enables the **licensed** features it lists (`features=*`:
+all of them).
+
+| | features |
+|---|---|
+| core (no license needed) | password and X.509 sign-in; browsing, searching, creating, editing and deleting directory entries; self-service (`/me`); administration of directory definitions, forms, schema and permissions; audit log; page banners; health and info |
+| `analysis` (licensed) | data analysis: comparisons and quality checks, findings and CSV export (`/api/admin/analysis/**`, the *Data analysis* pages) |
+| `metrics` (licensed) | metrics overviews, explorer and dashboards (`/api/metrics/**`, `/api/admin/dashboards/**`, the *Metrics* pages) |
+| `schema-transfer` (licensed) | schema import and export (`/api/admin/schema/import`, `/api/admin/schema/export`) |
+
+The split is defined in one place, `backend/src/main/java/com/winllc/dsp/license/LicensedFeature.java`.
+
+- **Where it goes**: `ENS_LICENSE_FILE` (property `ens.license.file`), default `license.lic` in
+  the API's working directory. The production image reads `/etc/ens/license/license.lic`; the
+  compose files mount `./license` there read-only; the native package uses
+  `/etc/directory-services-portal/license.lic`.
+- **Unlicensed features**: the API answers `403` with
+  `{"error": "Metrics requires an ENS Solutions license.", "code": "license_required", "feature": "metrics"}`;
+  the web client hides their navigation entries and buttons and explains when one is opened directly.
+- **Status**: the API logs `License: licensed to ...` (or why it isn't) at startup and whenever
+  the file changes. Signed-in users can read `GET /api/license` (administrators also see the file
+  path); administrators see a status line at the bottom of the navigation.
+- **Expiry and renewal**: a license is good through its expiry date (UTC); afterwards the portal
+  falls back to its core features. Replacing the file takes effect within about 30 seconds,
+  without a restart. The license is checked against the ENS public key built into the API.
+
+Production image (build context `backend/`, the license is never baked into it):
+
+```bash
+docker build -t directory-services-portal-api:0.1.0 backend
+docker run -d --name dsp-api -p 3001:3001 -v dsp-data:/data \
+  -v "$PWD/license/license.lic:/etc/ens/license/license.lic:ro" \
+  -e DIRECTORY_MODE=ldap -e LDAP_URL=ldaps://ldap.example.com:636 ... \
+  directory-services-portal-api:0.1.0
+# or mount a directory (-v "$PWD/license:/etc/ens/license:ro"), or a Docker/Kubernetes secret
+# with ENS_LICENSE_FILE pointing at it. JAVA_OPTS defaults to -XX:MaxRAMPercentage=75.0.
+```
+
 ## Connecting to a real directory
 
 Set the environment variables from `.env.example` (they map onto `backend/src/main/resources/application.yml`)

@@ -1,2 +1,6 @@
 target
 data
+# Licenses are mounted at run time, never built into the image; private keys never belong in it.
+*.lic
+**/*.lic
+**/*private.pem

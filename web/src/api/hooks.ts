@@ -25,6 +25,7 @@ import type {
   FindingsFilters,
   FindingsPage,
   FormDefinition,
+  LicenseStatus,
   ObjectClassDef,
   OptionItem,
   PermissionGrant,
@@ -40,6 +41,7 @@ import { saveBlob } from '../lib/csv';
 
 export const keys = {
   info: ['info'] as const,
+  license: ['license'] as const,
   definitions: ['definitions'] as const,
   definition: (id: string) => ['definition', id] as const,
   entries: (id: string, params: object) => ['entries', id, params] as const,
@@ -70,6 +72,10 @@ export const keys = {
 };
 
 export const useServerInfo = () => useQuery({ queryKey: keys.info, queryFn: () => api.get<ServerInfo>('/api/info'), staleTime: 60_000 });
+
+/** Which licensed features this deployment may use (re-checked now and then, as the server re-reads the file). */
+export const useLicense = () =>
+  useQuery({ queryKey: keys.license, queryFn: () => api.get<LicenseStatus>('/api/license'), staleTime: 60_000 });
 
 export const useDefinitions = () =>
   useQuery({ queryKey: keys.definitions, queryFn: () => api.get<DefinitionSummary[]>('/api/definitions') });

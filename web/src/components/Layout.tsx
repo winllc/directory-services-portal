@@ -26,8 +26,9 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
-import { useDefinitions, useServerInfo } from '../api/hooks';
+import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
+import { featureEnabled, licenseSummary } from '../lib/license';
 import { Badge, cx } from './ui';
 import { JobsMenu } from './jobs/JobsMenu';
 
@@ -65,6 +66,7 @@ export function Layout() {
   const { logout } = useAuth();
   const defs = useDefinitions();
   const info = useServerInfo();
+  const license = useLicense();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [lastPath, setLastPath] = useState(location.pathname);
@@ -103,9 +105,11 @@ export function Layout() {
           <NavItem to="/me" icon={<UserCircle2 size={18} />}>
             My profile
           </NavItem>
-          <NavItem to="/metrics" icon={<BarChart3 size={18} />}>
-            Metrics
-          </NavItem>
+          {featureEnabled(license.data, 'metrics') && (
+            <NavItem to="/metrics" icon={<BarChart3 size={18} />}>
+              Metrics
+            </NavItem>
+          )}
 
           <div className="nav-heading">Directories</div>
           {defs.data?.map((d) => (
@@ -131,9 +135,11 @@ export function Layout() {
               <NavItem to="/admin/permissions" icon={<KeyRound size={18} />}>
                 Permissions
               </NavItem>
-              <NavItem to="/admin/analysis" icon={<ShieldCheck size={18} />}>
-                Data analysis
-              </NavItem>
+              {featureEnabled(license.data, 'analysis') && (
+                <NavItem to="/admin/analysis" icon={<ShieldCheck size={18} />}>
+                  Data analysis
+                </NavItem>
+              )}
               <NavItem to="/admin/audit" icon={<History size={18} />}>
                 Audit log
               </NavItem>
@@ -146,6 +152,11 @@ export function Layout() {
             <div className="conn-status" title={info.data.error ?? info.data.ldapUrl ?? 'In-memory demo directory'}>
               <span className={cx('dot', info.data.connected ? 'dot-ok' : 'dot-bad')} />
               {info.data.mode === 'memory' ? 'Demo directory' : info.data.connected ? 'Connected' : 'Directory unreachable'}
+            </div>
+          )}
+          {user.isAdmin && license.data && (
+            <div className="license-status" title={license.data.file ? `License file: ${license.data.file}` : undefined}>
+              {licenseSummary(license.data)}
             </div>
           )}
         </div>

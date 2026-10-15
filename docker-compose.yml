@@ -69,6 +69,9 @@ services:
       FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
+      # ENS Solutions license: put license.lic in ./license to enable the licensed features
+      # (data analysis, metrics, schema import/export). Without it the portal runs its core features.
+      - ./license:/etc/ens/license:ro
     # To call the API directly from your machine, uncomment:
     # ports:
     #   - "3001:3001"

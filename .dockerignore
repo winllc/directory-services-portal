@@ -7,3 +7,7 @@ backend
 data
 certs
 .git
+*.lic
+**/*.lic
+**/*private.pem
+license
