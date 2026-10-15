@@ -8,3 +8,9 @@ coverage/
 test-results/
 target/
 certs/
+# ENS license files and signing keys (the test key and license under backend/src/test are fake).
+*.lic
+*private.pem
+!backend/src/test/resources/license/test.lic
+!backend/src/test/resources/license/ens-license-test-private.pem
+/license/

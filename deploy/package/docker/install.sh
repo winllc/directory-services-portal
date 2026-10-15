@@ -109,6 +109,9 @@ if [ -n "$https_port" ] || grep -q '^COMPOSE_FILE=.*mtls' .env; then
   fi
 fi
 
+# The api service mounts ./license read-only; create it so Docker doesn't (as root).
+mkdir -p license
+
 docker compose config -q || die "The compose configuration is invalid; check .env."
 
 echo
@@ -116,6 +119,7 @@ say "Directory Services Portal $VERSION is installed."
 if [ -z "$demo" ]; then
   echo "    Edit .env: at least LDAP_URL, LDAP_BIND_DN, LDAP_BIND_PASSWORD, the search bases and ADMIN_USERS/ADMIN_GROUPS."
 fi
+[ -f license/license.lic ] || echo "    License: copy your ENS Solutions license to license/license.lic (core features only without it)."
 echo "    Start:   ./portal.sh up"
 echo "    Status:  ./portal.sh status    Logs: ./portal.sh logs"
 if [ -n "$start" ]; then ./portal.sh up; fi

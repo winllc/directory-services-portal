@@ -1,6 +1,7 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.ldap.DirectoryException;
+import com.winllc.dsp.license.LicenseRequiredException;
 import com.winllc.dsp.x509.CertificateRejectedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
@@ -45,6 +46,14 @@ public class ApiErrorHandler {
   ResponseEntity<Map<String, Object>> directory(DirectoryException e) {
     ResponseEntity<Map<String, Object>> r = body(e.status(), e.getMessage(), null);
     r.getBody().put("code", e.code().name());
+    return r;
+  }
+
+  @ExceptionHandler(LicenseRequiredException.class)
+  ResponseEntity<Map<String, Object>> license(LicenseRequiredException e) {
+    ResponseEntity<Map<String, Object>> r = body(HttpStatus.FORBIDDEN, e.getMessage(), null);
+    r.getBody().put("code", "license_required");
+    r.getBody().put("feature", e.feature().id());
     return r;
   }
 

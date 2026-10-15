@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { RequireAdmin, RequireAuth } from './lib/auth';
+import { RequireLicense } from './lib/license';
 import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { DirectoryPage } from './pages/DirectoryPage';
@@ -25,6 +26,8 @@ import { EmptyState } from './components/ui';
 import { SiteBanners } from './components/SiteBanners';
 
 const admin = (el: React.ReactNode) => <RequireAdmin>{el}</RequireAdmin>;
+const metrics = (el: React.ReactNode) => <RequireLicense feature="metrics">{el}</RequireLicense>;
+const analysis = (el: React.ReactNode) => admin(<RequireLicense feature="analysis">{el}</RequireLicense>);
 
 export function App() {
   return (
@@ -44,11 +47,11 @@ export function App() {
           <Route path="d/:slug" element={<DirectoryPage />} />
           <Route path="d/:slug/new" element={<CreateEntryPage />} />
           <Route path="d/:slug/entry" element={<EntryPage />} />
-          <Route path="metrics" element={<MetricsHomePage />} />
-          <Route path="metrics/explore" element={<ExplorerPage />} />
-          <Route path="metrics/directories/:slug" element={<OverviewPage />} />
-          <Route path="metrics/dashboards/:id" element={<DashboardPage />} />
-          <Route path="metrics/dashboards/:id/edit" element={admin(<DashboardEditorPage />)} />
+          <Route path="metrics" element={metrics(<MetricsHomePage />)} />
+          <Route path="metrics/explore" element={metrics(<ExplorerPage />)} />
+          <Route path="metrics/directories/:slug" element={metrics(<OverviewPage />)} />
+          <Route path="metrics/dashboards/:id" element={metrics(<DashboardPage />)} />
+          <Route path="metrics/dashboards/:id/edit" element={admin(metrics(<DashboardEditorPage />))} />
           <Route path="admin/schema" element={admin(<SchemaPage />)} />
           <Route path="admin/forms" element={admin(<FormsPage />)} />
           <Route path="admin/forms/:id" element={admin(<FormEditorPage />)} />
@@ -56,9 +59,9 @@ export function App() {
           <Route path="admin/definitions/:id" element={admin(<DefinitionEditorPage />)} />
           <Route path="admin/permissions" element={admin(<PermissionsPage />)} />
           <Route path="admin/audit" element={admin(<AuditPage />)} />
-          <Route path="admin/analysis" element={admin(<AnalysisListPage />)} />
-          <Route path="admin/analysis/results/:jobId" element={admin(<AnalysisResultsPage />)} />
-          <Route path="admin/analysis/:id" element={admin(<AnalysisEditorPage />)} />
+          <Route path="admin/analysis" element={analysis(<AnalysisListPage />)} />
+          <Route path="admin/analysis/results/:jobId" element={analysis(<AnalysisResultsPage />)} />
+          <Route path="admin/analysis/:id" element={analysis(<AnalysisEditorPage />)} />
           <Route path="*" element={<EmptyState title="Page not found">The page you requested does not exist.</EmptyState>} />
         </Route>
       </Routes>

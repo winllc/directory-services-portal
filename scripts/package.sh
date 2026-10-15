@@ -107,7 +107,8 @@ package_docker() {
     # shellcheck disable=SC2206
     [ -n "${DOCKER_BUILD_ARGS:-}" ] && args+=($DOCKER_BUILD_ARGS)
     say "Building $API_IMAGE"
-    docker build "${args[@]}" -t "$API_IMAGE" -f "${API_DOCKERFILE:-$ROOT/backend/Dockerfile}" "$ROOT/backend"
+    docker build "${args[@]}" --build-arg VERSION="$version" --build-arg REVISION="$revision" --build-arg BUILD_DATE="$build_date" \
+      -t "$API_IMAGE" -f "${API_DOCKERFILE:-$ROOT/backend/Dockerfile}" "$ROOT/backend"
     say "Building $WEB_IMAGE"
     docker build "${args[@]}" -t "$WEB_IMAGE" -f "${WEB_DOCKERFILE:-$ROOT/web/Dockerfile}" "$ROOT"
     if [ -n "$with_ldap" ]; then
@@ -180,6 +181,9 @@ package_native() {
     echo "DATA_DIR=/var/lib/directory-services-portal"
     echo "# nginx on this host overwrites X-Forwarded-*."
     echo "FORWARD_HEADERS_STRATEGY=framework"
+    echo "# ENS Solutions license: enables data analysis, metrics and schema import/export (core"
+    echo "# features only without it). Readable by the dsp user; re-read within a minute of a change."
+    echo "ENS_LICENSE_FILE=/etc/directory-services-portal/license.lic"
     echo
     sed -n '/^# --- Directory connection/,$p' "$TEMPLATES/docker/env.template" \
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \

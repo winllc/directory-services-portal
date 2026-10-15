@@ -48,6 +48,9 @@ abstract class ApiTestSupport {
     registry.add("portal.seed-demo-config", () -> "true");
     // As deployed behind the web proxy: X-Forwarded-* handled by Spring's ForwardedHeaderFilter.
     registry.add("server.forward-headers-strategy", () -> "framework");
+    // Signed with the test key (src/test/resources/license): every licensed feature enabled. A
+    // test class runs with another license by setting test.license-file (see LicenseGatingTest).
+    registry.add("ens.license.file", () -> "${test.license-file:src/test/resources/license/test.lic}");
   }
 
   private static String tempDir() {

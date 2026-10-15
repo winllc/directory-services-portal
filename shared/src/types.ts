@@ -289,6 +289,24 @@ export interface ServerInfo {
   banner?: { text: string; foreground: string; background: string };
 }
 
+/** Features an ENS Solutions license unlocks (everything else is a core feature). */
+export type LicensedFeatureId = 'analysis' | 'metrics' | 'schema-transfer';
+
+/** GET /api/license: which licensed features this deployment may use. */
+export interface LicenseStatus {
+  state: 'LICENSED' | 'MISSING' | 'INVALID' | 'EXPIRED';
+  product: string;
+  licensee?: string;
+  licenseId?: string;
+  /** YYYY-MM-DD; absent for a perpetual license (or when unlicensed). */
+  expires?: string;
+  /** Why the license is not in effect (invalid or expired). */
+  problem?: string;
+  /** Path of the license file on the server (administrators only). */
+  file?: string;
+  features: { id: LicensedFeatureId; label: string; enabled: boolean }[];
+}
+
 export interface SubjectSearchResult {
   type: SubjectType;
   id: string;
