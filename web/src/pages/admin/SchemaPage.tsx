@@ -4,6 +4,7 @@ import { Database, Download, FilePlus2, RefreshCw, Search, Upload, Wand2 } from 
 import type { AttributeTypeDef, ObjectClassDef, ObjectClassKind } from '@dsp/shared';
 import { SchemaIndex } from '@dsp/shared';
 import { useAdminSchema, useSchemaMutations } from '../../api/hooks';
+import { useFeature } from '../../lib/license';
 import { TagSelect } from '../../components/TagSelect';
 import { Alert, Badge, Button, ConfirmDialog, ErrorAlert, FormRow, Modal, PageHeader, Spinner, Tabs, Toggle, useToast } from '../../components/ui';
 
@@ -265,6 +266,7 @@ export function SchemaPage() {
   const [editAttr, setEditAttr] = useState<{ def: Omit<AttributeTypeDef, 'source'>; originalOid?: string } | null>(null);
   const [editClass, setEditClass] = useState<{ def: Omit<ObjectClassDef, 'source'>; originalOid?: string } | null>(null);
   const [importing, setImporting] = useState(false);
+  const transfer = useFeature('schema-transfer');
   const [deleting, setDeleting] = useState<{ kind: Tab; oid: string; name: string } | null>(null);
 
   const index = useMemo(() => (schema.data ? new SchemaIndex(schema.data.merged) : null), [schema.data]);
@@ -315,12 +317,16 @@ export function SchemaPage() {
             >
               Pull from directory
             </Button>
-            <Button icon={<Upload size={16} />} onClick={() => setImporting(true)}>
-              Import
-            </Button>
-            <a className="btn btn-secondary" href="/api/admin/schema/export" download="custom.schema">
-              <Download size={16} /> Export custom
-            </a>
+            {transfer.enabled && (
+              <>
+                <Button icon={<Upload size={16} />} onClick={() => setImporting(true)}>
+                  Import
+                </Button>
+                <a className="btn btn-secondary" href="/api/admin/schema/export" download="custom.schema">
+                  <Download size={16} /> Export custom
+                </a>
+              </>
+            )}
           </>
         }
       />
@@ -494,7 +500,7 @@ export function SchemaPage() {
 
       {editAttr && <AttributeEditor initial={editAttr.def} originalOid={editAttr.originalOid} attributeNames={attributeNames} onClose={() => setEditAttr(null)} />}
       {editClass && <ClassEditor initial={editClass.def} originalOid={editClass.originalOid} attributeNames={attributeNames} classNames={classNames} onClose={() => setEditClass(null)} />}
-      {importing && <ImportModal onClose={() => setImporting(false)} />}
+      {importing && transfer.enabled && <ImportModal onClose={() => setImporting(false)} />}
       <ConfirmDialog
         open={!!deleting}
         title="Delete custom definition?"

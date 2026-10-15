@@ -16,10 +16,16 @@ sudo systemctl restart directory-services-portal
 | `/opt/directory-services-portal/api` | the API (`directory-services-portal.jar`), run by systemd as user `dsp` on 127.0.0.1:3001 |
 | `/opt/directory-services-portal/web` | the web client (static files) |
 | `/etc/directory-services-portal/portal.env` | settings, documented; kept on upgrades |
+| `/etc/directory-services-portal/license.lic` | your ENS Solutions license (`ENS_LICENSE_FILE`); you copy it here |
 | `/var/lib/directory-services-portal` | data: configuration, audit log, analysis results (back this up) |
 | `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on port 8080 and proxies `/api` (when nginx is installed) |
 
 - Logs: `journalctl -u directory-services-portal -f`.
+- License: data analysis, metrics and schema import/export need an ENS Solutions license; the
+  rest works without one. Install it with
+  `sudo install -m 640 -o root -g dsp acme.lic /etc/directory-services-portal/license.lic`
+  (path set by `ENS_LICENSE_FILE` in `portal.env`). It is re-read within a minute of a change;
+  the startup log line `License: ...` says whether it was accepted.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
   `COOKIE_SECURE=true`. For X.509 sign-in through nginx, see the main project README
   (`X509_SOURCE=header`, `X509_TRUSTED_PROXIES=127.0.0.1/32`).
