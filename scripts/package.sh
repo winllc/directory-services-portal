@@ -14,6 +14,10 @@
 #   --no-images                 don't embed the images: the package pulls them from --registry
 #   --push                      push the images to --registry (after building)
 #   --skip-build                package images / build output that already exist
+#   --api-image REF             use this already built API image instead of building one (docker);
+#   --web-image REF             likewise for the web image. The package refers to REF as given,
+#                               e.g. ghcr.io/winllc/directory-services-portal-api:1.2.3 (used by
+#                               scripts/release-bundle.sh to package the images CI tested)
 #   --platform PLATFORM         build images for another platform, e.g. linux/arm64 (needs buildx)
 #   --keep                      keep the unpacked staging directory next to the archive
 #
@@ -26,8 +30,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEMPLATES="$ROOT/deploy/package"
 target=docker; version=""; out="$ROOT/dist"; with_ldap=""; registry=""; no_images=""; skip_build=""; platform=""; keep=""; push=""
+api_ref=""; web_ref=""
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 need() { [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"; }
@@ -43,6 +48,8 @@ while [ $# -gt 0 ]; do
     --skip-build) skip_build=1 ;;
     --platform) need "$@"; platform="$2"; shift ;;
     --keep) keep=1 ;;
+    --api-image) need "$@"; api_ref="$2"; shift ;;
+    --web-image) need "$@"; web_ref="$2"; shift ;;
     --push) push=1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (see --help)" ;;
@@ -70,6 +77,8 @@ name="directory-services-portal-$version"
 prefix="${registry:+$registry/}"
 API_IMAGE="${prefix}directory-services-portal-api:$version"
 WEB_IMAGE="${prefix}directory-services-portal-web:$version"
+[ -z "$api_ref" ] || API_IMAGE="$api_ref"
+[ -z "$web_ref" ] || WEB_IMAGE="$web_ref"
 OPENLDAP_IMAGE="${prefix}directory-services-portal-openldap:$version"
 
 mkdir -p "$out"
@@ -106,11 +115,15 @@ package_docker() {
     local args=(); [ -n "$platform" ] && args+=(--platform "$platform")
     # shellcheck disable=SC2206
     [ -n "${DOCKER_BUILD_ARGS:-}" ] && args+=($DOCKER_BUILD_ARGS)
-    say "Building $API_IMAGE"
-    docker build "${args[@]}" --build-arg VERSION="$version" --build-arg REVISION="$revision" --build-arg BUILD_DATE="$build_date" \
-      -t "$API_IMAGE" -f "${API_DOCKERFILE:-$ROOT/backend/Dockerfile}" "$ROOT/backend"
-    say "Building $WEB_IMAGE"
-    docker build "${args[@]}" -t "$WEB_IMAGE" -f "${WEB_DOCKERFILE:-$ROOT/web/Dockerfile}" "$ROOT"
+    if [ -z "$api_ref" ]; then
+      say "Building $API_IMAGE"
+      docker build "${args[@]}" --build-arg VERSION="$version" --build-arg REVISION="$revision" --build-arg BUILD_DATE="$build_date" \
+        -t "$API_IMAGE" -f "${API_DOCKERFILE:-$ROOT/backend/Dockerfile}" "$ROOT/backend"
+    fi
+    if [ -z "$web_ref" ]; then
+      say "Building $WEB_IMAGE"
+      docker build "${args[@]}" -t "$WEB_IMAGE" -f "${WEB_DOCKERFILE:-$ROOT/web/Dockerfile}" "$ROOT"
+    fi
     if [ -n "$with_ldap" ]; then
       say "Building $OPENLDAP_IMAGE"
       docker build "${args[@]}" -t "$OPENLDAP_IMAGE" "$ROOT/deploy/openldap"
@@ -125,8 +138,8 @@ package_docker() {
   fi
 
   say "Assembling $name (docker)"
-  mkdir -p "$dir/scripts"
-  for f in docker-compose.yml docker-compose.publish.yml docker-compose.mtls.yml env.template install.sh portal.sh README.md; do
+  mkdir -p "$dir/scripts" "$dir/license"
+  for f in docker-compose.yml docker-compose.publish.yml docker-compose.mtls.yml env.template install.sh upgrade.sh portal.sh README.md license/README.txt; do
     render "$TEMPLATES/docker/$f" "$dir/$f"
   done
   [ -n "$with_ldap" ] && render "$TEMPLATES/docker/docker-compose.openldap.yml" "$dir/docker-compose.openldap.yml"

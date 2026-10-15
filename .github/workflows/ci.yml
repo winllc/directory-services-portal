@@ -56,6 +56,13 @@ jobs:
       contents: read
       packages: write
 
+    env:
+      # Release bundles: signing and upload are skipped when these aren't configured. Secrets
+      # can't be tested in a step's "if", so they are turned into flags here.
+      HAS_GPG: ${{ secrets.RELEASE_GPG_PRIVATE_KEY != '' }}
+      HAS_AWS: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+      S3_BUCKET: ${{ vars.RELEASE_S3_BUCKET }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -156,4 +163,130 @@ jobs:
             echo "$API_TAGS"
             echo "$WEB_TAGS"
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --- Customer release bundle -------------------------------------------------------
+      # On a v* tag: the bundle of the images just tested and published, signed and uploaded to
+      # the release bucket. On a pull request: a dry run that proves the bundle builds.
+
+      - name: Decide the release bundle version
+        id: bundle
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"; release=true
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            version="0.0.0-pr${PR_NUMBER}"; release=false
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "enabled=true"
+            echo "version=$version"
+            echo "release=$release"
+            echo "dir=$RUNNER_TEMP/release-bundle"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up syft
+        id: syft
+        if: steps.bundle.outputs.enabled == 'true'
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Build the release bundle
+        if: steps.bundle.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ steps.bundle.outputs.version }}
+          OUT: ${{ steps.bundle.outputs.dir }}
+          IMAGE_BASE: ghcr.io/${{ github.repository }}
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          REQUIRE_SBOM: "1"
+        run: |
+          # The images that were smoke-tested above, under the names customers pull them by.
+          docker tag dsp-api:ci "$IMAGE_BASE-api:$VERSION"
+          docker tag dsp-web:ci "$IMAGE_BASE-web:$VERSION"
+          scripts/release-bundle.sh --output "$OUT" "$VERSION" "$IMAGE_BASE-api:$VERSION" "$IMAGE_BASE-web:$VERSION"
+
+      - name: Sign the checksums
+        id: sign
+        if: steps.bundle.outputs.enabled == 'true' && env.HAS_GPG == 'true'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          OUT: ${{ steps.bundle.outputs.dir }}
+        run: |
+          GNUPGHOME="$(mktemp -d)"; export GNUPGHOME
+          trap 'gpgconf --kill all; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          sign=(gpg --batch --yes --pinentry-mode loopback --armor --detach-sign --output "$OUT/SHA256SUMS.asc")
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            printf '%s' "$GPG_PASSPHRASE" | "${sign[@]}" --passphrase-fd 0 "$OUT/SHA256SUMS"
+          else
+            "${sign[@]}" "$OUT/SHA256SUMS"
+          fi
+          gpg --batch --verify "$OUT/SHA256SUMS.asc" "$OUT/SHA256SUMS"
+
+      - name: Keep the bundle as a workflow artifact
+        if: steps.bundle.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-directory-services-portal-${{ steps.bundle.outputs.version }}
+          path: ${{ steps.bundle.outputs.dir }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ steps.bundle.outputs.release == 'true' && 30 || 3 }}
+
+      - name: Upload the bundle to the release bucket
+        id: upload
+        if: steps.bundle.outputs.release == 'true' && env.S3_BUCKET != '' && env.HAS_AWS == 'true'
+        env:
+          VERSION: ${{ steps.bundle.outputs.version }}
+          OUT: ${{ steps.bundle.outputs.dir }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.RELEASE_S3_REGION || 'us-east-1' }}
+          S3_ENDPOINT: ${{ vars.RELEASE_S3_ENDPOINT }}
+        run: |
+          aws=(aws); [ -z "$S3_ENDPOINT" ] || aws+=(--endpoint-url "$S3_ENDPOINT")
+          dest="s3://$S3_BUCKET/directory-services-portal"
+          for f in "$OUT"/*; do
+            "${aws[@]}" s3 cp --no-progress "$f" "$dest/$VERSION/$(basename "$f")"
+          done
+          if [[ "$VERSION" != *-* ]]; then
+            printf '%s\n' "$VERSION" > "$RUNNER_TEMP/latest.txt"
+            "${aws[@]}" s3 cp --no-progress "$RUNNER_TEMP/latest.txt" "$dest/latest.txt"
+          fi
+
+      - name: Summarise the release bundle
+        if: always() && steps.bundle.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ steps.bundle.outputs.version }}
+          RELEASE: ${{ steps.bundle.outputs.release }}
+          OUT: ${{ steps.bundle.outputs.dir }}
+          SIGN_OUTCOME: ${{ steps.sign.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          {
+            echo "### Release bundle directory-services-portal $VERSION"
+            echo
+            if compgen -G "$OUT/*" > /dev/null; then
+              echo "| File | Size |"
+              echo "|---|---|"
+              for f in "$OUT"/*; do echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) |"; done
+            else
+              echo "No bundle was built (see the \"Build the release bundle\" step)."
+            fi
+            echo
+            if [ "$SIGN_OUTCOME" = success ]; then echo "- Signed: yes (\`SHA256SUMS.asc\`)"
+            elif [ "$HAS_GPG" != true ]; then echo "- Signed: **no**, the \`RELEASE_GPG_PRIVATE_KEY\` secret is not set"
+            else echo "- Signed: **no**, signing $SIGN_OUTCOME"; fi
+            if [ "$UPLOAD_OUTCOME" = success ]; then
+              echo "- Uploaded to \`s3://$S3_BUCKET/directory-services-portal/$VERSION/\`"
+              if [[ "$VERSION" != *-* ]]; then echo "  and \`latest.txt\` set to $VERSION"; fi
+            elif [ "$RELEASE" != true ]; then echo "- Not uploaded: dry run (pull request); kept as the workflow artifact only"
+            elif [ -z "$S3_BUCKET" ]; then echo "- Not uploaded: the \`RELEASE_S3_BUCKET\` variable is not set"
+            elif [ "$HAS_AWS" != true ]; then echo "- Not uploaded: the \`AWS_ACCESS_KEY_ID\` secret is not set"
+            else echo "- Not uploaded: upload $UPLOAD_OUTCOME"; fi
+            echo "- Workflow artifact: \`release-directory-services-portal-$VERSION\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -40,6 +40,13 @@ services:
       API_URL: http://api:3001
     expose:
       - "8080"
+    healthcheck:
+      # Any answer will do (with docker-compose.mtls.yml port 8080 redirects to HTTPS).
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   portal-data:
