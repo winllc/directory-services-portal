@@ -7,11 +7,11 @@ internet access are required. Built @BUILD_DATE@ from @GIT_REVISION@.
 |---|---|
 | `install.sh` | verifies the package, loads the images, writes `.env` |
 | `upgrade.sh` | upgrades a running deployment to this version, keeping its settings and data |
-| `portal.sh` | start, stop, status, logs, backup and restore |
+| `portal.sh` | start, stop, status, logs, backup, restore and license install |
 | `env.template` | every setting, documented (copied to `.env` by the installer) |
 | `docker-compose*.yml` | the services, and optional overlays for HTTP, HTTPS/X.509 and a demo OpenLDAP |
 | `images/` | the container images (Red Hat UBI 9 based) |
-| `license/` | where your ENS Solutions license goes (`license/license.lic`) |
+| `license/` | optional drop-in for your ENS Solutions license (`license/license.lic`), copied in by the installer |
 | `scripts/generate-dev-certs.sh` | throw-away certificates for trying HTTPS and X.509 sign-in |
 
 Requirements: Linux with Docker Engine 20.10+ and Docker Compose v2, about 2 GB of disk.
@@ -53,19 +53,30 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
 
 ### License
 
-Data analysis, metrics and schema import/export need an ENS Solutions license; everything else
-(sign-in, browsing and editing the directory, self-service, administration, audit log) works
-without one. Copy the license file to `license/license.lic` (the installer creates `license/`,
-which is mounted read-only into the API at `/etc/ens/license`):
+The portal needs an ENS Solutions license file (`.lic`) from your account on the ENS licensing
+portal; for a trial (including `--demo`), download an evaluation license there. Until one is
+installed only the sign-in page works, and administrators are taken to the license screen.
 
-```bash
-cp ~/acme.lic license/license.lic && chmod 644 license/license.lic
-./portal.sh logs api | grep License       # "License: licensed to ..." or why not
-```
+Install it either way:
 
-A renewed or replaced file is picked up within a minute without a restart. When the license
-expires the portal falls back to its core features. Administrators see the license status at the
-bottom of the navigation.
+- **License screen**: sign in as an administrator; you land on *Administration > License*
+  (`/admin/license`). Upload the file there; it says why a file is refused (another product,
+  bound to another installation, an older revision, not signed by ENS).
+- **Command line**: put it at `license/license.lic` before `./install.sh` (copied into the
+  license volume if that has no license yet), or install/replace it at any time with
+  `./portal.sh license /path/to/license.lic`.
+
+The license lives in the `ens-license` volume (`/var/lib/ens/directory-portal` in the api
+container), together with this **installation id** (shown on the license screen; you enter it on
+the ENS portal to bind a license to this installation) and the license revisions seen. Upgrades
+keep the volume; `docker compose down -v` would delete it, and a new installation id would mean
+re-binding the license. A renewed license takes effect as soon as it is installed.
+
+What the license unlocks (each a feature on the license, shown ticked or not on the license
+screen): the directory editor, form builder, self-service profiles, white pages (directory
+access for users who are not administrators), smart-card (X.509) sign-in, metrics and dashboards,
+data-quality analysis and schema import/export. An expired license (after its grace period) makes
+the portal read-only; evaluation licenses show a banner.
 
 ### HTTPS and X.509 client certificates
 
@@ -90,6 +101,7 @@ certificates (`certs/alice.p12`, password `password`).
 ./portal.sh logs api              # follow the API log (the audit trail is on the "audit" logger too)
 ./portal.sh backup                # portal-backup-<date>.tar.gz: configuration, audit log, analysis results
 ./portal.sh restore <file>
+./portal.sh license <file.lic>    # install or replace the ENS license (or upload it on the license screen)
 ./portal.sh down                  # stop (data is kept in the portal-data volume)
 ```
 
@@ -109,7 +121,9 @@ cd directory-services-portal-<new-version>
 
 It copies `.env`, `license/` and `certs/` across (never overwriting), verifies the package and
 loads its images, backs up the portal data to `backups/`, points `.env` at the new images
-(keeping a `.env.bak-<time>`) and restarts with `./portal.sh up`. The data volume is reused.
+(keeping a `.env.bak-<time>`) and restarts with `./portal.sh up`. The data volume and the
+license volume (`ens-license`: installed license and installation id) are reused; a
+`license/license.lic` is copied in only if the volume has no license yet.
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
 backup.
 

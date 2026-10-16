@@ -289,22 +289,82 @@ export interface ServerInfo {
   banner?: { text: string; foreground: string; background: string };
 }
 
-/** Features an ENS Solutions license unlocks (everything else is a core feature). */
-export type LicensedFeatureId = 'analysis' | 'metrics' | 'schema-transfer';
+/**
+ * The portal's features in the ENS license catalog (product "directory-portal"); the backend's
+ * LicensedFeature enum has the same ids.
+ */
+export type LicensedFeatureId =
+  | 'directory-editor'
+  | 'form-builder'
+  | 'self-service-profile'
+  | 'white-pages'
+  | 'smart-card-sign-in'
+  | 'metrics'
+  | 'data-analysis'
+  | 'schema-transfer';
 
-/** GET /api/license: which licensed features this deployment may use. */
+/** FULL: features as licensed. READ_ONLY: reading only (expired). UNLICENSED: only sign-in and the license screen. */
+export type LicenseMode = 'FULL' | 'READ_ONLY' | 'UNLICENSED';
+
+export type LicenseState =
+  | 'VALID'
+  | 'GRACE'
+  | 'EXPIRED'
+  | 'RELEASE_NOT_COVERED'
+  | 'NOT_YET_VALID'
+  | 'WRONG_PRODUCT'
+  | 'WRONG_INSTALLATION'
+  | 'SUPERSEDED'
+  | 'MISSING'
+  | 'INVALID';
+
+/** GET /api/license (any signed-in user; `details` for administrators only). */
 export interface LicenseStatus {
-  state: 'LICENSED' | 'MISSING' | 'INVALID' | 'EXPIRED';
   product: string;
-  licensee?: string;
+  mode: LicenseMode;
+  state: LicenseState;
+  /** One sentence about the license, for the license screen and banners. */
+  message: string;
+  /** Show the evaluation banner on every page. */
+  evaluation: boolean;
+  /** Administrators: show a renewal reminder, `daysLeft` days before the license (or its grace) ends. */
+  renewalWarning?: boolean;
+  daysLeft?: number;
+  /** Every catalog feature, and whether it can be used now. */
+  features: { id: LicensedFeatureId; label: string; description: string; enabled: boolean }[];
+  details?: LicenseDetails;
+}
+
+export interface LicenseDetails {
+  /** This installation's id, for binding a license to it on the ENS portal. */
+  installationId?: string;
+  /** Why the installation id could not be read or created (state directory not writable). */
+  installationIdError?: string;
+  /** Where the license file lives on the server. */
+  file: string;
   licenseId?: string;
-  /** YYYY-MM-DD; absent for a perpetual license (or when unlicensed). */
-  expires?: string;
-  /** Why the license is not in effect (invalid or expired). */
-  problem?: string;
-  /** Path of the license file on the server (administrators only). */
-  file?: string;
-  features: { id: LicensedFeatureId; label: string; enabled: boolean }[];
+  revision?: number;
+  licensee?: string;
+  email?: string;
+  edition?: 'evaluation' | 'pilot' | 'subscription' | 'perpetual' | string;
+  support?: string;
+  issuedAt?: string;
+  notBefore?: string;
+  /** Absent for a perpetual license. */
+  expiresAt?: string;
+  graceDays?: number;
+  maintenanceUntil?: string;
+  /** The installation id the license is bound to, if any. */
+  boundTo?: string;
+  /** Licensed size; shown, not counted (`used` is absent). */
+  size?: { quantity: number; unit: string; used?: number; usage?: string };
+}
+
+/** POST /api/admin/license: the license was installed (refusals are 400 errors saying why). */
+export interface LicenseInstallResult {
+  installed: boolean;
+  message: string;
+  license: LicenseStatus;
 }
 
 export interface SubjectSearchResult {

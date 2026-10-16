@@ -1,6 +1,8 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.AttributeTypeDef;
 import com.winllc.dsp.model.ObjectClassDef;
 import com.winllc.dsp.model.SchemaSnapshot;
@@ -71,6 +73,7 @@ public class AdminSchemaController {
     return Map.of("fetchedAt", s.fetchedAt(), "attributeTypes", s.attributeTypes().size(), "objectClasses", s.objectClasses().size());
   }
 
+  @RequiresFeature(LicensedFeature.SCHEMA_TRANSFER)
   @PostMapping("/import")
   public SchemaService.ImportResult importText(@Valid @RequestBody SchemaRequests.Import body) {
     SchemaService.ImportResult result = schema.importText(body.text());
@@ -82,6 +85,7 @@ public class AdminSchemaController {
     return result;
   }
 
+  @RequiresFeature(LicensedFeature.SCHEMA_TRANSFER)
   @GetMapping("/export")
   public ResponseEntity<String> export() {
     return ResponseEntity.ok()

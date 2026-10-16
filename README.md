@@ -52,6 +52,10 @@ and devices, plus example forms, directories and permissions. Every demo passwor
 | `bob`   | can view Partners; white pages and groups only otherwise                    |
 | `frank` | external partner (ou=partners)                                              |
 
+The API needs an ENS license in demo mode too: without one you sign in and land on the license
+screen. Download an evaluation license from the ENS licensing portal and upload it there (as
+`admin`); it is kept in `backend/data/ens-license`.
+
 Production build without Docker: `npm run build && npm start`. This builds `web/dist` and
 `backend/target/directory-services-portal.jar`, then runs the API on :3001 and serves the client
 on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real deployment, serve
@@ -100,7 +104,7 @@ and builds the customer bundle from exactly those images with
 
 | File | |
 |---|---|
-| `directory-services-portal-<version>.tar.gz` | the docker deployment package above: images, compose files, `env.template`, `install.sh`, `upgrade.sh`, `portal.sh`, `license/` |
+| `directory-services-portal-<version>.tar.gz` | the docker deployment package above: images, compose files, `env.template`, `install.sh`, `upgrade.sh`, `portal.sh`, `license/` (a drop-in for the customer's license; never contains one) |
 | `sbom-directory-services-portal-api.spdx.json`, `sbom-...-web.spdx.json` | SPDX SBOMs of the images (syft) |
 | `SHA256SUMS` | checksums of the files above |
 | `SHA256SUMS.asc` | GPG detached signature of `SHA256SUMS` (when a signing key is configured) |
@@ -132,44 +136,82 @@ tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-port
 
 ## Licensing
 
-The portal runs without a license, with its **core** features. A signed ENS Solutions license
-file for `directory-services-portal` enables the **licensed** features it lists (`features=*`:
-all of them).
+The portal runs under a license file issued by the **ENS licensing portal** (format
+`ens-license/1`, product id `directory-portal`) and checked offline against the ENS public key
+built into the API (`backend/src/main/java/com/winllc/dsp/license/EnsKeys.java`; never
+configurable). The verifier is the ENS library in `com.enssolutions.license`, copied unchanged
+from the products-page repository (`licensing/java`). For a trial or the demo, download an
+evaluation license from your account on the ENS portal.
 
-| | features |
+**Modes** (from the license's state):
+
+| Mode | When | What works |
+|---|---|---|
+| unlicensed | no license, or one that is invalid, for another product, bound to another installation, superseded by a newer revision or not yet valid | sign-in/out, `/api/info`, `/api/health` and the license endpoints. Every other API call answers `403 {"error": "<why>", "code": "license_required", "state": "MISSING"}`; the web client takes administrators to the license screen and shows everyone else a "not licensed, ask your administrator" page |
+| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics, exports); anything else answers `403` with `"code": "license_read_only"`, except sign-in/out and the license upload. A banner says so |
+| full | valid, or expired within its grace period (administrators get a renewal reminder) | the features the license lists |
+
+Evaluation licenses show a banner on every page. **Memory/demo mode** (`DIRECTORY_MODE=memory`,
+`SEED_DEMO_CONFIG`) needs a license too: an unlicensed demo shows only the license screen.
+
+**Features** (catalog ids; a license lists them as `directory-portal.<id>`; each is checked in
+the API with `@RequiresFeature` or in code, and the web client hides what isn't enabled):
+
+| Feature | What it gates |
 |---|---|
-| core (no license needed) | password and X.509 sign-in; browsing, searching, creating, editing and deleting directory entries; self-service (`/me`); administration of directory definitions, forms, schema and permissions; audit log; page banners; health and info |
-| `analysis` (licensed) | data analysis: comparisons and quality checks, findings and CSV export (`/api/admin/analysis/**`, the *Data analysis* pages) |
-| `metrics` (licensed) | metrics overviews, explorer and dashboards (`/api/metrics/**`, `/api/admin/dashboards/**`, the *Metrics* pages) |
-| `schema-transfer` (licensed) | schema import and export (`/api/admin/schema/import`, `/api/admin/schema/export`) |
+| `directory-editor` | browsing, searching and editing entries: `/api/definitions/**`, `/api/directories/**`, the `/d/*` pages |
+| `form-builder` | forms and directory definitions: `/api/admin/forms/**`, `/api/admin/definitions/**`, and the definition editor's DN browser and search preview (`/api/admin/browse`, `/api/admin/preview`); their admin pages |
+| `self-service-profile` | *My profile*: `/api/me/**`, `/me` (and drop-down options for it) |
+| `white-pages` | read access for users who are not administrators: "everyone can read" directories, read grants and read-only (white pages) directories. Without it such users keep only directories they hold a write grant on; administrators keep everything |
+| `smart-card-sign-in` | X.509 client-certificate sign-in (`/api/auth/x509`, certificate auto-login). When off, the login page doesn't offer it and the API refuses it with a message; password sign-in stays. With no license in effect at all it stays available, so an administrator can still reach the license screen |
+| `metrics` | metrics, explorer and dashboards: `/api/metrics/**`, `/api/admin/dashboards/**`, `/metrics/*` |
+| `data-analysis` | comparisons and quality checks, findings and CSV export: `/api/admin/analysis/**` |
+| `schema-transfer` | schema import and export: `/api/admin/schema/import`, `/api/admin/schema/export` |
 
-The split is defined in one place, `backend/src/main/java/com/winllc/dsp/license/LicensedFeature.java`.
+A feature the license leaves out answers `403` with `"code": "feature_not_licensed"` and
+`"feature": "<id>"`. Core administration (schema, permissions, audit log, banners) needs only a
+license in effect. The size (`limit`, in directory users) is shown on the license screen but not
+counted or enforced: counting directory users would mean scanning the whole directory.
 
-- **Where it goes**: `ENS_LICENSE_FILE` (property `ens.license.file`), default `license.lic` in
-  the API's working directory. The production image reads `/etc/ens/license/license.lic`; the
-  compose files mount `./license` there read-only; the native package uses
-  `/etc/directory-services-portal/license.lic`.
-- **Unlicensed features**: the API answers `403` with
-  `{"error": "Metrics requires an ENS Solutions license.", "code": "license_required", "feature": "metrics"}`;
-  the web client hides their navigation entries and buttons and explains when one is opened directly.
-- **Status**: the API logs `License: licensed to ...` (or why it isn't) at startup and whenever
-  the file changes. Signed-in users can read `GET /api/license` (administrators also see the file
-  path); administrators see a status line at the bottom of the navigation.
-- **Expiry and renewal**: a license is good through its expiry date (UTC); afterwards the portal
-  falls back to its core features. Replacing the file takes effect within about 30 seconds,
-  without a restart. The license is checked against the ENS public key built into the API.
+**License screen** (*Administration > License*, `/admin/license`; `GET /api/license` and
+`POST /api/admin/license`): state and message, licensee, edition, dates (expiry, grace,
+maintenance), every feature ticked or not, the size, this **installation id** (copy it into the
+ENS portal to bind a license to this installation) and an upload. The upload accepts the file as
+the request body (`text/plain`) or as the multipart field `file`, and says why a file is refused
+(not signed by ENS, another product, bound to another installation, an older revision).
+
+**Files**: the license and the installation's state are environment settings, not Spring
+properties:
+
+| Variable | Default | Container image |
+|---|---|---|
+| `ENS_LICENSE_FILE` | `/etc/ens/directory-portal.lic` | `/var/lib/ens/directory-portal/license.lic` |
+| `ENS_LICENSE_STATE_DIR` (installation id, highest revisions seen) | `/var/lib/ens/directory-portal` | `/var/lib/ens/directory-portal` |
+
+The state directory, and the license file's directory, must be writable by the API (the upload
+writes the file) and persistent: losing it gives the installation a new id, and bound licenses
+must then be re-bound. `npm run dev` / `npm start` use `backend/data/ens-license`. The image
+declares `VOLUME /var/lib/ens` (owned by the runtime user, group 0 writable for OpenShift); the
+compose files mount the named volume `ens-license` at `/var/lib/ens/directory-portal`. The API
+logs `License: ...` with the state and installation id at startup.
 
 Production image (build context `backend/`, the license is never baked into it):
 
 ```bash
 docker build -t directory-services-portal-api:0.1.0 backend
-docker run -d --name dsp-api -p 3001:3001 -v dsp-data:/data \
-  -v "$PWD/license/license.lic:/etc/ens/license/license.lic:ro" \
+docker run -d --name dsp-api -p 3001:3001 -v dsp-data:/data -v dsp-license:/var/lib/ens/directory-portal \
   -e DIRECTORY_MODE=ldap -e LDAP_URL=ldaps://ldap.example.com:636 ... \
   directory-services-portal-api:0.1.0
-# or mount a directory (-v "$PWD/license:/etc/ens/license:ro"), or a Docker/Kubernetes secret
-# with ENS_LICENSE_FILE pointing at it. JAVA_OPTS defaults to -XX:MaxRAMPercentage=75.0.
+# then upload the license on the license screen, or copy it into the volume:
+docker exec -i dsp-api sh -c 'cat > /var/lib/ens/directory-portal/license.lic' < acme.lic
+# JAVA_OPTS defaults to -XX:MaxRAMPercentage=75.0.
 ```
+
+The perpetual-maintenance check uses the build time from Spring Boot's build-info
+(`spring-boot-maven-plugin` `build-info` goal) as the release date. Tests trust the published ENS
+TEST key only, through their own `LicenseManager` bean (`TestLicensing`, `TestLicenses` signs
+licenses with it); the library's own tests run against the products-page fixtures in
+`backend/src/test/resources/ens-license-fixtures`.
 
 ## Connecting to a real directory
 
@@ -195,7 +237,7 @@ access wherever portal users should be able to edit.
 
 ### Docker Compose
 
-`docker compose up --build` starts three services. **None of them publishes a port on the host.**
+`docker compose up --build` starts three services (plus the one-shot `license-init`). **None of them publishes a port on the host.**
 To open the portal, either route a reverse proxy on the compose network to `web:8080`, or uncomment
 the `ports` entry of the `web` service and open http://localhost:8181.
 
@@ -204,10 +246,17 @@ the `ports` entry of the `web` service and open http://localhost:8181.
 | `web` | `web/Dockerfile`: nginx (UBI 9 `nginx-126`) serving the React client on port 8080, proxying `/api` to `api` (`API_URL`) | no (uncomment `8181`) |
 | `api` | `backend/Dockerfile`: the Spring Boot API (UBI 9 `openjdk-21-runtime`) on port 3001 | no (uncomment `3001` to call it directly) |
 | `openldap` | `deploy/openldap`: Ubuntu's `slapd`, built locally (amd64 and arm64, incl. Apple Silicon) | no (uncomment `1389`) |
+| `license-init` | the API image: copies `./license/license.lic` into the `ens-license` volume if it has none, then exits | no |
 
 OpenLDAP is loaded with the same demo organisation, ACME schema and **default credentials as
 the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `erin`, `dave`,
 `frank` with password `password`. The example directories and permissions are seeded too.
+
+The demo needs an ENS license (download an evaluation license from the ENS licensing portal):
+upload it on the license screen after signing in as `admin`, or save it as `license/license.lic`
+before `docker compose up`; the one-shot `license-init` service copies it into the `ens-license`
+volume when that has no license yet. The volume keeps the license and the installation id
+(`docker compose down -v` deletes them).
 
 - The `web` and `api` images are built on Red Hat Universal Base Image 9
   (`registry.access.redhat.com/ubi9/...`: `nodejs-22` and `openjdk-21` to build, `nginx-126` and

@@ -1,6 +1,8 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.ldap.Dns;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.AccessLevel;
 import com.winllc.dsp.model.DefinitionSummary;
 import com.winllc.dsp.model.DirectoryDefinition;
@@ -33,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** End-user API: directories the user can see, entry CRUD, drop-down options and "My profile". */
 @RestController
+@RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
 @RequestMapping("/api")
 public class DirectoryController {
   private final EntryService entries;
@@ -112,6 +115,7 @@ public class DirectoryController {
    * A drop down's options: all of them, those matching typed text ({@code q}), or the options for
    * given stored values ({@code value}, repeatable; used to label them).
    */
+  @RequiresFeature({LicensedFeature.DIRECTORY_EDITOR, LicensedFeature.SELF_SERVICE_PROFILE})
   @GetMapping("/directories/{id}/options/{fieldId}")
   public DirectoryOptions.Page options(@AuthenticationPrincipal SessionUser user, @PathVariable String id, @PathVariable String fieldId,
       @RequestParam(required = false) String q, HttpServletRequest request) {
@@ -123,11 +127,13 @@ public class DirectoryController {
     return entries.optionPage(user, entries.definition(id), fieldId, q, values);
   }
 
+  @RequiresFeature(LicensedFeature.SELF_SERVICE_PROFILE)
   @GetMapping("/me/entries")
   public List<SelfEntryResult> me(@AuthenticationPrincipal SessionUser user) {
     return entries.selfOverview(user);
   }
 
+  @RequiresFeature(LicensedFeature.SELF_SERVICE_PROFILE)
   @PutMapping("/me/{id}/entry")
   public DirectoryEntry updateSelf(
       @AuthenticationPrincipal SessionUser user,

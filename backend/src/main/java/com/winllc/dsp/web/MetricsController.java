@@ -3,6 +3,8 @@ package com.winllc.dsp.web;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.jobs.Job;
 import com.winllc.dsp.jobs.JobService;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.metrics.Dashboard;
 import com.winllc.dsp.metrics.MetricEngine;
 import com.winllc.dsp.metrics.MetricResult;
@@ -44,6 +46,7 @@ import org.springframework.web.bind.annotation.RestController;
  * background and are answered with 202 and the job, which reports when the result is ready.
  */
 @RestController
+@RequiresFeature(LicensedFeature.METRICS)
 @RequestMapping("/api/metrics")
 public class MetricsController {
   static final int MAX_WIDGETS = 48;

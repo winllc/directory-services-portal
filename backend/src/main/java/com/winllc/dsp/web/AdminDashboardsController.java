@@ -1,6 +1,8 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.metrics.Dashboard;
 import com.winllc.dsp.metrics.MetricWidget;
 import com.winllc.dsp.store.ConfigStore;
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Create, change and delete metric dashboards (viewing is in {@link MetricsController}). */
 @RestController
+@RequiresFeature(LicensedFeature.METRICS)
 @RequestMapping("/api/admin/dashboards")
 public class AdminDashboardsController {
   private final ConfigStore store;

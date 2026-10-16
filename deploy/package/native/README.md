@@ -16,16 +16,18 @@ sudo systemctl restart directory-services-portal
 | `/opt/directory-services-portal/api` | the API (`directory-services-portal.jar`), run by systemd as user `dsp` on 127.0.0.1:3001 |
 | `/opt/directory-services-portal/web` | the web client (static files) |
 | `/etc/directory-services-portal/portal.env` | settings, documented; kept on upgrades |
-| `/etc/directory-services-portal/license.lic` | your ENS Solutions license (`ENS_LICENSE_FILE`); you copy it here |
+| `/var/lib/ens/directory-portal` | the ENS license (`ENS_LICENSE_FILE`, written by the license screen), this installation's id and the license revisions seen (`ENS_LICENSE_STATE_DIR`); keep it |
 | `/var/lib/directory-services-portal` | data: configuration, audit log, analysis results (back this up) |
 | `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on port 8080 and proxies `/api` (when nginx is installed) |
 
 - Logs: `journalctl -u directory-services-portal -f`.
-- License: data analysis, metrics and schema import/export need an ENS Solutions license; the
-  rest works without one. Install it with
-  `sudo install -m 640 -o root -g dsp acme.lic /etc/directory-services-portal/license.lic`
-  (path set by `ENS_LICENSE_FILE` in `portal.env`). It is re-read within a minute of a change;
-  the startup log line `License: ...` says whether it was accepted.
+- License: without an ENS Solutions license only sign-in and the license screen work. Sign in as
+  an administrator and upload it under *Administration > License* (`/admin/license`), which also
+  shows the installation id to bind a license to; or copy it in with
+  `sudo install -m 640 -o dsp -g dsp acme.lic /var/lib/ens/directory-portal/license.lic`.
+  The paths are `ENS_LICENSE_FILE` / `ENS_LICENSE_STATE_DIR` in `portal.env` (the unit sets the
+  same defaults); the directory must stay writable by `dsp`. The startup log line `License: ...`
+  says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
   `COOKIE_SECURE=true`. For X.509 sign-in through nginx, see the main project README
   (`X509_SOURCE=header`, `X509_TRUSTED_PROXIES=127.0.0.1/32`).

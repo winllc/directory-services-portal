@@ -8,9 +8,9 @@ coverage/
 test-results/
 target/
 certs/
-# ENS license files and signing keys (the test key and license under backend/src/test are fake).
+# ENS license files and signing keys. The fixtures under backend/src/test are signed with the
+# published ENS TEST key, which only the test configuration trusts.
 *.lic
 *private.pem
-!backend/src/test/resources/license/test.lic
-!backend/src/test/resources/license/ens-license-test-private.pem
+!backend/src/test/resources/ens-license-fixtures/*.lic
 /license/

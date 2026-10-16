@@ -8,6 +8,8 @@ import com.winllc.dsp.analysis.AnalysisService;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.jobs.Job;
 import com.winllc.dsp.jobs.JobService;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.store.ConfigStore;
 import jakarta.servlet.http.HttpServletResponse;
@@ -47,6 +49,7 @@ import org.springframework.web.bind.annotation.RestController;
  * result is ready. The latest result of each saved analysis is kept on disk.
  */
 @RestController
+@RequiresFeature(LicensedFeature.DATA_ANALYSIS)
 @RequestMapping("/api/admin/analysis")
 public class AdminAnalysisController {
   private final ConfigStore store;

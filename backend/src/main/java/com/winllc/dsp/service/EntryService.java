@@ -11,6 +11,8 @@ import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.AccessLevel;
 import com.winllc.dsp.model.DefinitionSummary;
 import com.winllc.dsp.model.DirectoryDefinition;
@@ -60,11 +62,14 @@ public class EntryService {
   private final SchemaService schema;
   private final AuditLog audit;
   private final DirectoryOptions options;
+  private final Licensing licensing;
 
   public record ListQuery(String q, Integer page, Integer pageSize, String sort, String order) {}
 
-  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options) {
+  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options,
+      Licensing licensing) {
     this.directory = directory;
+    this.licensing = licensing;
     this.options = options;
     this.store = store;
     this.schema = schema;
@@ -105,8 +110,15 @@ public class EntryService {
         .orElseThrow(() -> new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Definition \"" + def.name() + "\" references a missing form"));
   }
 
+  /**
+   * The user's effective access. Read-only access for someone who is not an administrator
+   * (everyone-can-read definitions, read grants, white-pages definitions) is the licensed
+   * "white pages" feature: without it they keep only the directories they may edit.
+   */
   public AccessLevel access(SessionUser user, DirectoryDefinition def) {
-    return PermissionService.effectiveAccess(user, def, store.snapshot().grants);
+    AccessLevel access = PermissionService.effectiveAccess(user, def, store.snapshot().grants);
+    if (access == AccessLevel.READ && !user.isAdmin() && !licensing.allows(LicensedFeature.WHITE_PAGES)) return AccessLevel.NONE;
+    return access;
   }
 
   public DefinitionSummary summarize(SessionUser user, DirectoryDefinition def) {

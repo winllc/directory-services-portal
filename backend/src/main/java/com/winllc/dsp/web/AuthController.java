@@ -82,7 +82,7 @@ public class AuthController {
   public Map<String, Object> me(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
     Map<String, Object> body = new HashMap<>();
     SessionUser current = user;
-    if (current == null && x509.enabled() && autoLoginAllowed(request) && x509.hasCertificate(request)) {
+    if (current == null && x509.available() && autoLoginAllowed(request) && x509.hasCertificate(request)) {
       try {
         current = x509.authenticate(request);
         establishSession(current, request, response);

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -28,10 +29,12 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Boots the whole application against the embedded LDAP server. Directory data and portal
- * configuration are reset to the demo state before every test.
+ * configuration are reset to the demo state before every test, and the license to a full one
+ * signed with the ENS test key (see {@link TestLicensing}; a test may install another).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(TestLicensing.Config.class)
 abstract class ApiTestSupport {
   static final String B = "dc=example,dc=com";
   static final String ALICE = "uid=alice,ou=people," + B;
@@ -48,9 +51,6 @@ abstract class ApiTestSupport {
     registry.add("portal.seed-demo-config", () -> "true");
     // As deployed behind the web proxy: X-Forwarded-* handled by Spring's ForwardedHeaderFilter.
     registry.add("server.forward-headers-strategy", () -> "framework");
-    // Signed with the test key (src/test/resources/license): every licensed feature enabled. A
-    // test class runs with another license by setting test.license-file (see LicenseGatingTest).
-    registry.add("ens.license.file", () -> "${test.license-file:src/test/resources/license/test.lic}");
   }
 
   private static String tempDir() {
@@ -63,6 +63,7 @@ abstract class ApiTestSupport {
 
   @BeforeEach
   void resetState() throws IOException {
+    TestLicensing.use(TestLicenses.full());
     embedded.reset();
     DemoConfigSeeder.DemoConfig demo = DemoConfigSeeder.load(mapper);
     store.update(d -> {

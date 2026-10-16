@@ -2,6 +2,8 @@ package com.winllc.dsp.web;
 
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.ldap.DirectoryException;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.DropdownSource;
 import com.winllc.dsp.model.FormDefinition;
@@ -34,6 +36,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequiresFeature(LicensedFeature.FORM_BUILDER)
 @RequestMapping("/api/admin/forms")
 public class AdminFormsController {
   private final ConfigStore store;

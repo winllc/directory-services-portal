@@ -3,6 +3,7 @@ package com.winllc.dsp.web;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.model.ServerInfo;
+import com.winllc.dsp.x509.X509AuthService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -13,10 +14,12 @@ public class InfoController {
 
   private final LdapDirectory directory;
   private final PortalProperties props;
+  private final X509AuthService x509;
 
-  public InfoController(LdapDirectory directory, PortalProperties props) {
+  public InfoController(LdapDirectory directory, PortalProperties props, X509AuthService x509) {
     this.directory = directory;
     this.props = props;
+    this.x509 = x509;
   }
 
   @GetMapping("/api/health")
@@ -35,7 +38,8 @@ public class InfoController {
         : null;
     String hint = props.getLoginHint() == null || props.getLoginHint().isBlank() ? null : props.getLoginHint();
     ServerInfo.AuthOptions auth = new ServerInfo.AuthOptions(
-        props.isPasswordLoginEnabled(), props.getX509().isEnabled(), props.getX509().isEnabled() && props.getX509().isAutoLogin());
+        // Certificate sign-in is offered only when the license includes it (smart-card-sign-in).
+        props.isPasswordLoginEnabled(), x509.available(), x509.available() && props.getX509().isAutoLogin());
     try {
       directory.ping();
       return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth, hint, banner);

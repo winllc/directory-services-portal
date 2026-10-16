@@ -267,6 +267,7 @@ export function SchemaPage() {
   const [editClass, setEditClass] = useState<{ def: Omit<ObjectClassDef, 'source'>; originalOid?: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const transfer = useFeature('schema-transfer');
+  const formBuilder = useFeature('form-builder');
   const [deleting, setDeleting] = useState<{ kind: Tab; oid: string; name: string } | null>(null);
 
   const index = useMemo(() => (schema.data ? new SchemaIndex(schema.data.merged) : null), [schema.data]);
@@ -438,9 +439,11 @@ export function SchemaPage() {
                   <h4>Optional attributes ({may.length})</h4>
                   <div className="chips">{may.map((m) => <span key={m} className="chip chip-static">{m}</span>)}</div>
                   <div className="detail-actions">
-                    <Button size="sm" variant="primary" icon={<Wand2 size={14} />} onClick={() => navigate(`/admin/forms/new?class=${encodeURIComponent(selClass.names[0])}`)}>
-                      Create form
-                    </Button>
+                    {formBuilder.enabled && (
+                      <Button size="sm" variant="primary" icon={<Wand2 size={14} />} onClick={() => navigate(`/admin/forms/new?class=${encodeURIComponent(selClass.names[0])}`)}>
+                        Create form
+                      </Button>
+                    )}
                     <Button size="sm" onClick={() => setEditClass({ def: { ...selClass }, originalOid: selClass.source === 'custom' ? selClass.oid : undefined })}>
                       {selClass.source === 'custom' ? 'Edit' : 'Customize'}
                     </Button>

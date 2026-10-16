@@ -49,11 +49,13 @@ public class ApiErrorHandler {
     return r;
   }
 
+  /** {"error": message, "code": "license_required" | "license_read_only" | "feature_not_licensed", "state", "feature"?}. */
   @ExceptionHandler(LicenseRequiredException.class)
   ResponseEntity<Map<String, Object>> license(LicenseRequiredException e) {
     ResponseEntity<Map<String, Object>> r = body(HttpStatus.FORBIDDEN, e.getMessage(), null);
-    r.getBody().put("code", "license_required");
-    r.getBody().put("feature", e.feature().id());
+    r.getBody().put("code", e.code());
+    r.getBody().put("state", e.state());
+    if (e.feature() != null) r.getBody().put("feature", e.feature().id());
     return r;
   }
 

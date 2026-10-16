@@ -21,9 +21,10 @@ services:
       FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
-      # ENS Solutions license (./license/license.lic): enables data analysis, metrics and schema
-      # import/export. Without it the portal runs its core features.
-      - ./license:/etc/ens/license:ro
+      # ENS license: the license (uploaded on the license screen, or copied in by install.sh /
+      # ./portal.sh license), this installation's id and the license revisions seen. Writable and
+      # persistent: upgrades keep it; `docker compose down -v` would delete it.
+      - ens-license:/var/lib/ens/directory-portal
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3001/api/health >/dev/null || exit 1"]
       interval: 15s
@@ -50,3 +51,4 @@ services:
 
 volumes:
   portal-data:
+  ens-license:

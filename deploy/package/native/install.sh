@@ -3,6 +3,7 @@
 #   /opt/directory-services-portal            the API jar and the web client
 #   /etc/directory-services-portal/portal.env settings (kept if it exists)
 #   /var/lib/directory-services-portal        data (configuration, audit log, results)
+#   /var/lib/ens/directory-portal             ENS license, installation id (ENS_LICENSE_* in portal.env)
 #   systemd unit directory-services-portal    the API, on 127.0.0.1:3001
 #   nginx site directory-services-portal.conf serves the client on :8080 and proxies /api
 # Requires root, Java 21+ and systemd; nginx is configured if installed.
@@ -14,6 +15,7 @@ VERSION="@VERSION@"
 PREFIX=/opt/directory-services-portal
 ETC=/etc/directory-services-portal
 DATA=/var/lib/directory-services-portal
+LICENSE_DIR=/var/lib/ens/directory-portal
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -40,9 +42,17 @@ install -m 644 api/directory-services-portal.jar "$PREFIX/api/"
 rm -rf "$PREFIX/web.new" && cp -r web "$PREFIX/web.new" && rm -rf "$PREFIX/web" && mv "$PREFIX/web.new" "$PREFIX/web"
 chmod -R a+rX "$PREFIX"
 install -d -m 750 -o dsp -g dsp "$DATA"
+# The license screen writes the license here; it also keeps the installation id. Keep it.
+install -d -m 755 /var/lib/ens
+install -d -m 750 -o dsp -g dsp "$LICENSE_DIR"
 install -d -m 750 -o root -g dsp "$ETC"
 if [ -f "$ETC/portal.env" ]; then
   say "Keeping $ETC/portal.env"
+  # Earlier releases read a read-only license from /etc; the license now lives in $LICENSE_DIR.
+  if grep -q "^ENS_LICENSE_FILE=$ETC/license.lic\$" "$ETC/portal.env"; then
+    sed -i "s|^ENS_LICENSE_FILE=$ETC/license.lic\$|ENS_LICENSE_FILE=$LICENSE_DIR/license.lic|" "$ETC/portal.env"
+    say "Set ENS_LICENSE_FILE=$LICENSE_DIR/license.lic in $ETC/portal.env"
+  fi
 else
   install -m 640 -o root -g dsp portal.env "$ETC/portal.env"
   say "Wrote $ETC/portal.env"
@@ -69,6 +79,11 @@ fi
 echo
 say "Directory Services Portal $VERSION is installed."
 echo "    Edit $ETC/portal.env (LDAP connection, administrators), then:"
-[ -f "$ETC/license.lic" ] || echo "    License: install -m 640 -o root -g dsp <your.lic> $ETC/license.lic (core features only without it)"
+if [ ! -f "$LICENSE_DIR/license.lic" ]; then
+  echo "    License: sign in as an administrator and upload your ENS license under Administration > License"
+  echo "             (/admin/license), or: install -m 640 -o dsp -g dsp <your.lic> $LICENSE_DIR/license.lic"
+  echo "             Until then only sign-in and the license screen work."
+fi
+[ -f "$ETC/license.lic" ] && echo "    Note: $ETC/license.lic (the old license format) is no longer used; ENS portal licenses replace it."
 echo "    systemctl restart directory-services-portal && journalctl -u directory-services-portal -f"
 if [ -n "$start" ]; then systemctl restart directory-services-portal; fi

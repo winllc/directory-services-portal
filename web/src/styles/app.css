@@ -310,6 +310,121 @@ code {
   font-size: 12px;
   color: var(--sidebar-muted);
 }
+
+/* ENS license: notices above the page, the unlicensed shell and the license screen. */
+.license-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 24px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.license-notice-eval {
+  justify-content: center;
+  background: var(--surface-3);
+  color: var(--muted);
+  font-weight: 550;
+  letter-spacing: 0.02em;
+}
+.license-notice-warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.license-notice a {
+  color: inherit;
+  font-weight: 600;
+}
+.bare-shell {
+  min-height: calc(100vh - 2 * var(--banner-h, 0px));
+  display: flex;
+  flex-direction: column;
+}
+.bare-shell .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+}
+.bare-shell .brand-name {
+  color: var(--text);
+}
+.bare-shell .user-menu {
+  gap: 12px;
+}
+.license-message {
+  margin: 0 0 16px;
+}
+.license-file {
+  margin: 16px 0 0;
+  font-size: 13px;
+  word-break: break-all;
+}
+.capitalize {
+  text-transform: capitalize;
+}
+.installation-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.installation-id code {
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.license-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px 24px;
+}
+.license-features li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.license-features li > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.license-features li.on > svg {
+  color: var(--success);
+}
+.license-features li.off {
+  opacity: 0.6;
+}
+.license-features li.off > svg {
+  color: var(--muted);
+}
+.license-features .muted {
+  font-size: 13px;
+}
+.license-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.license-upload p {
+  margin: 0;
+}
+.license-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.license-upload-row input[type='file'] {
+  max-width: 100%;
+}
 .dot {
   width: 8px;
   height: 8px;

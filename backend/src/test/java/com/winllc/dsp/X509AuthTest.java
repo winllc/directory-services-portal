@@ -157,6 +157,35 @@ class X509AuthTest extends ApiTestSupport {
   }
 
   @Test
+  void isRefusedWhenTheLicenseLeavesOutSmartCardSignIn() throws Exception {
+    TestLicensing.use(TestLicenses.license().without("smart-card-sign-in").sign());
+    MvcResult r = certLogin(cert("CN=alice"));
+    assertThat(status(r)).isEqualTo(401);
+    assertThat(error(r)).isEqualTo(
+        "Smart-card (certificate) sign-in is not included in this portal's license. Sign in with your user name and password.");
+    // The login page doesn't offer it; password sign-in stays.
+    assertThat(body(anonymous(get("/api/info"))).get("auth").get("x509").asBoolean()).isFalse();
+    assertThat(body(anonymous(get("/api/info"))).get("auth").get("password").asBoolean()).isTrue();
+    login("alice");
+
+    TestLicensing.use(TestLicenses.full());
+    assertThat(body(anonymous(get("/api/info"))).get("auth").get("x509").asBoolean()).isTrue();
+    assertThat(status(certLogin(cert("CN=alice")))).isEqualTo(200);
+  }
+
+  @Test
+  void stillLetsAdministratorsInWhenUnlicensed() throws Exception {
+    // Without any license, certificate sign-in keeps working so an administrator can reach the
+    // license screen; everything but the license endpoints answers license_required.
+    TestLicensing.remove();
+    MvcResult r = certLogin(cert("CN=admin,O=Example Corp"));
+    assertThat(status(r)).isEqualTo(200);
+    MockHttpSession session = (MockHttpSession) r.getRequest().getSession(false);
+    assertThat(status(mvc.perform(get("/api/license").session(session)).andReturn())).isEqualTo(200);
+    assertThat(body(mvc.perform(get("/api/definitions").session(session)).andReturn()).get("code").asString()).isEqualTo("license_required");
+  }
+
+  @Test
   void mapsByEmailAndUpnSubjectAlternativeNames() throws Exception {
     props.getX509().setUserFilter("(&(objectClass=inetOrgPerson)(mail={{email}}))");
     MvcResult byEmail = certLogin(TestCertificates.client("CN=Alice Anderson").email("alice@example.com").issuedBy(ca));
