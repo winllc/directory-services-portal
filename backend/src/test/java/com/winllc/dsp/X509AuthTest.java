@@ -115,14 +115,20 @@ class X509AuthTest extends ApiTestSupport {
     JsonNode events = body(mvc.perform(get("/api/admin/audit?action=auth.login&q=Audited").session(admin)).andReturn()).get("events");
     assertThat(events).hasSize(2);
     JsonNode rejected = events.get(0);
-    assertThat(rejected.get("outcome").asString()).isEqualTo("failed");
+    assertThat(rejected.get("outcome").asString()).isEqualTo("failure");
+    assertThat(rejected.get("severity").asString()).isEqualTo("warning");
+    assertThat(rejected.get("actor").get("type").asString()).isEqualTo("anonymous");
+    assertThat(rejected.get("actor").get("id").asString()).isEqualTo("nobody");
     assertThat(rejected.get("target").get("id").asString()).isEqualTo("CN=nobody,OU=Audited,O=Example Corp");
-    assertThat(rejected.get("message").asString()).isEqualTo("No directory account matches this certificate");
+    assertThat(rejected.get("reason").asString()).isEqualTo("No directory account matches this certificate");
+    assertThat(rejected.get("details").get("method").asString()).isEqualTo("x509");
     assertThat(rejected.get("details").get("certificateSerial").asString()).isNotBlank();
     JsonNode signedIn = events.get(1);
     assertThat(signedIn.get("outcome").asString()).isEqualTo("success");
-    assertThat(signedIn.get("actor").get("dn").asString()).isEqualTo(ALICE);
-    assertThat(signedIn.get("actor").get("authMethod").asString()).isEqualTo("x509");
+    assertThat(signedIn.get("actor").get("id").asString()).isEqualTo("alice");
+    assertThat(signedIn.get("details").get("actorDn").asString()).isEqualTo(ALICE);
+    assertThat(signedIn.get("details").get("method").asString()).isEqualTo("x509");
+    assertThat(signedIn.get("details").get("authMethod").asString()).isEqualTo("x509");
   }
 
   @Test

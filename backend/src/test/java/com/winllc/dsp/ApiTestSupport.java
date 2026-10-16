@@ -38,6 +38,8 @@ import tools.jackson.databind.json.JsonMapper;
 abstract class ApiTestSupport {
   static final String B = "dc=example,dc=com";
   static final String ALICE = "uid=alice,ou=people," + B;
+  /** The ENS_AUDIT_FILE output of the test context (checked for secrets). */
+  static final java.nio.file.Path AUDIT_FILE = java.nio.file.Path.of(tempDir(), "ens", "audit.jsonl");
 
   @Autowired MockMvc mvc;
   @Autowired JsonMapper mapper;
@@ -51,6 +53,7 @@ abstract class ApiTestSupport {
     registry.add("portal.seed-demo-config", () -> "true");
     // As deployed behind the web proxy: X-Forwarded-* handled by Spring's ForwardedHeaderFilter.
     registry.add("server.forward-headers-strategy", () -> "framework");
+    registry.add("ens.audit.file", AUDIT_FILE::toString);
   }
 
   private static String tempDir() {

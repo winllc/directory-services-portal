@@ -38,7 +38,7 @@ class LicenseModesTest extends ApiTestSupport {
       assertThat(status(anonymous(anonGet("/api/health")))).isEqualTo(200);
       assertThat(status(anonymous(anonGet("/api/info")))).isEqualTo(200);
       Client admin = login("admin");
-      for (String url : new String[] {"/api/definitions", STAFF, "/api/admin/definitions", "/api/admin/audit", "/api/jobs", "/api/metrics/sources"}) {
+      for (String url : new String[] {"/api/definitions", STAFF, "/api/admin/definitions", "/api/jobs", "/api/metrics/sources"}) {
         MvcResult r = admin.get(url);
         assertThat(status(r)).as(url).isEqualTo(403);
         JsonNode b = body(r);
@@ -46,6 +46,10 @@ class LicenseModesTest extends ApiTestSupport {
         assertThat(b.get("state").asString()).isEqualTo("MISSING");
         assertThat(b.get("error").asString()).isEqualTo("No license is installed. Upload one on the license screen.");
       }
+      // The audit trail is not a licensed feature: administrators can still search, export and verify it.
+      assertThat(status(admin.get("/api/admin/audit"))).isEqualTo(200);
+      assertThat(status(admin.get("/api/admin/audit/export?format=csv"))).isEqualTo(200);
+      assertThat(status(admin.post("/api/admin/audit/verify", null))).isEqualTo(200);
       JsonNode status = body(admin.get("/api/license"));
       assertThat(status.get("mode").asString()).isEqualTo("UNLICENSED");
       assertThat(status.get("details").get("installationId").asString()).matches("DP-[0-9A-Z]{4}-[0-9A-Z]{4}");

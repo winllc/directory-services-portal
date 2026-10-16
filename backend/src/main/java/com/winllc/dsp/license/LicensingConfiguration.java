@@ -28,14 +28,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * Spring Boot's build-info.
  *
  * <p>Every {@code /api} request goes through {@link LicenseInterceptor}, except sign-in/out
- * ({@code /api/auth/**}), {@code /api/info}, {@code /api/health} and the license endpoints.
+ * ({@code /api/auth/**}), {@code /api/info}, {@code /api/health}, the license endpoints and the
+ * audit trail (the admin audit page's API and the SIEM pull API {@code /api/audit/events}), which
+ * must stay available while the portal is unlicensed or read-only.
  */
 @Configuration
 public class LicensingConfiguration implements WebMvcConfigurer {
   private static final Logger log = LoggerFactory.getLogger(LicensingConfiguration.class);
 
   /** Reachable whatever the license says. */
-  static final String[] OPEN_PATHS = {"/api/auth/**", "/api/info", "/api/health", "/api/license", "/api/admin/license"};
+  static final String[] OPEN_PATHS = {"/api/auth/**", "/api/info", "/api/health", "/api/license", "/api/admin/license",
+      "/api/admin/audit", "/api/admin/audit/**", "/api/audit/**"};
 
   private final ObjectProvider<Licensing> licensing;
   private final ObjectProvider<BuildProperties> build;
