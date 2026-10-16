@@ -130,8 +130,9 @@ describe('without a license', () => {
     expect(screen.getByText('This portal is not licensed')).toBeInTheDocument();
     expect(screen.getByLabelText('Installation id')).toHaveTextContent('DP-7F3K-29QD');
     expect(screen.getByLabelText('License file')).toBeInTheDocument();
-    // Nothing else is reachable, but signing out is.
-    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    // Nothing else is reachable but the audit log (not a licensed feature); signing out is.
+    const nav = screen.getByRole('navigation', { name: 'Administration' });
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent?.trim())).toEqual(['License', 'Audit log']);
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
   });
 

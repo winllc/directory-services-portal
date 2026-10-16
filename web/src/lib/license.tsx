@@ -22,6 +22,8 @@ export const FEATURE_LABELS: Record<LicensedFeatureId, string> = {
 /** Where the license screen is (administrators), and the page everyone else gets when unlicensed. */
 export const LICENSE_PATH = '/admin/license';
 export const UNLICENSED_PATH = '/unlicensed';
+/** The audit log stays available to administrators whatever the license says (it is not a licensed feature). */
+export const AUDIT_PATH = '/admin/audit';
 
 /**
  * Whether the license enables a feature. Unknown (still loading, or the status could not be read)
@@ -77,19 +79,25 @@ export function useLicenseRefusalRouting() {
 
 /**
  * Between sign-in and the app: while no license is in effect, administrators are routed to the
- * license screen and everyone else to the "not licensed" page (both rendered by `unlicensed`,
- * in a bare shell); otherwise the normal layout (`children`).
+ * license screen (they may also open the audit log) and everyone else to the "not licensed" page
+ * (all rendered by `unlicensed`, in a bare shell); otherwise the normal layout (`children`).
  */
-export function LicenseGate({ children, unlicensed }: { children: ReactNode; unlicensed: (admin: boolean) => ReactNode }) {
+export function LicenseGate({
+  children,
+  unlicensed,
+}: {
+  children: ReactNode;
+  unlicensed: (admin: boolean, path: string) => ReactNode;
+}) {
   const user = useUser();
   const license = useLicense();
   const location = useLocation();
   useLicenseRefusalRouting();
   if (license.isLoading) return <div className="page-loading"><span className="spinner" /></div>;
   if (license.data?.mode === 'UNLICENSED') {
-    const target = user.isAdmin ? LICENSE_PATH : UNLICENSED_PATH;
-    if (location.pathname !== target) return <Navigate to={target} replace state={{ from: location.pathname }} />;
-    return <>{unlicensed(user.isAdmin)}</>;
+    const allowed = user.isAdmin ? [LICENSE_PATH, AUDIT_PATH] : [UNLICENSED_PATH];
+    if (!allowed.includes(location.pathname)) return <Navigate to={allowed[0]} replace state={{ from: location.pathname }} />;
+    return <>{unlicensed(user.isAdmin, location.pathname)}</>;
   }
   // Licensed (or the status could not be read: the API still enforces it).
   if (location.pathname === UNLICENSED_PATH) return <Navigate to="/" replace />;

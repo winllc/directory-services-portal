@@ -379,31 +379,47 @@ export interface ApiError {
   details?: Record<string, string>;
 }
 
-/** Outcome of an audited action: refused by the portal (denied) or by the directory or credentials (failed). */
-export type AuditOutcome = 'success' | 'denied' | 'failed';
+/** Outcome of an audited action: refused by the portal's checks (denied), or failed (directory, credentials, errors). */
+export type AuditOutcome = 'success' | 'failure' | 'denied';
+export type AuditSeverity = 'info' | 'notice' | 'warning' | 'alert';
+export type AuditCategory =
+  | 'authentication'
+  | 'authorization'
+  | 'account'
+  | 'configuration'
+  | 'data'
+  | 'license'
+  | 'system'
+  | 'audit';
 
-export interface AuditChange {
-  attribute: string;
-  /** Secret values are recorded as "(redacted)". */
-  before: string[];
-  after: string[];
-}
-
-/** One entry in the audit log of changes and sign-ins. Empty fields are omitted. */
+/**
+ * One audit event in the shared ENS format ens-audit/1 (every field present; null where it doesn't
+ * apply). Changes are recorded in `details` as "<field>.old" and "<field>.new"; secrets as "[redacted]".
+ */
 export interface AuditEvent {
+  schema: 'ens-audit/1';
   id: string;
-  at: string;
-  /** Dotted name, e.g. "entry.update", "auth.login", "grant.revoke". */
+  seq: number;
+  /** UTC, ISO-8601 with milliseconds. */
+  time: string;
+  product: string;
+  version: string;
+  host: string;
+  installationId: string | null;
+  category: AuditCategory;
+  /** Stable dotted id, e.g. "entry.update", "auth.login", "grant.revoke". */
   action: string;
   outcome: AuditOutcome;
-  /** Absent for anonymous requests such as a failed sign-in. */
-  actor?: { username: string; dn: string; authMethod?: string };
-  sourceAddress?: string;
-  target?: { type: string; id?: string; name?: string };
-  definitionId?: string;
-  message?: string;
-  changes?: AuditChange[];
-  details?: Record<string, string>;
+  severity: AuditSeverity;
+  actor: { type: 'user' | 'service' | 'system' | 'anonymous'; id: string | null; name: string | null; roles: string[] };
+  source: { ip: string | null; userAgent: string | null } | null;
+  target: { type: string | null; id: string | null; name: string | null } | null;
+  reason: string | null;
+  details: Record<string, string | number | boolean | null>;
+  requestId: string | null;
+  session: string | null;
+  prevHash: string;
+  hash: string;
 }
 
 export interface AuditPage {
@@ -411,11 +427,70 @@ export interface AuditPage {
   total: number;
   page: number;
   pageSize: number;
-  /** How many events the server holds in memory to search, of at most {@link capacity}. */
-  retained: number;
-  capacity: number;
-  /** Timestamp of the oldest searchable event. Older ones are only in the audit files. */
-  oldest?: string;
+  /** Stored events read for this search; `truncated` when the scan limit stopped it. */
+  scanned: number;
+  truncated: boolean;
+  headSeq: number;
+  oldestSeq: number | null;
+  oldestTime: string | null;
+}
+
+export interface AuditActions {
+  categories: AuditCategory[];
+  outcomes: AuditOutcome[];
+  severities: AuditSeverity[];
+  actions: { action: string; category: AuditCategory }[];
+}
+
+export interface AuditVerification {
+  intact: boolean;
+  brokenSeq: number | null;
+  problem: string | null;
+  /** The first retained event (not seq 1 after pruning: its prevHash is accepted as given). */
+  anchorSeq: number | null;
+  anchorIsGenesis: boolean;
+  lastSeq: number | null;
+  checked: number;
+  unreadableLines: number;
+  message: string;
+  verifiedAt: string;
+}
+
+export interface AuditOutputStatus {
+  output: 'stdout' | 'file' | 'splunk' | 'syslog';
+  enabled: boolean;
+  background: boolean;
+  destination: string | null;
+  lastDeliveredSeq: number | null;
+  lastDeliveredAt: string | null;
+  backlog: number | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  failingSince: string | null;
+}
+
+export interface AuditStatus {
+  outputs: AuditOutputStatus[];
+  /** 0 keeps everything. */
+  retentionDays: number;
+  headSeq: number;
+  oldestSeq: number | null;
+  oldestTime: string | null;
+  store: string;
+  writer: string;
+}
+
+/** A token for the SIEM pull API (GET /api/audit/events). The value is only shown once, when created. */
+export interface AuditToken {
+  id: string;
+  name: string;
+  prefix: string;
+  createdBy: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  revokedBy: string | null;
+  active: boolean;
 }
 
 // ---------------------------------------------------------------------------
