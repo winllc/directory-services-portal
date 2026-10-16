@@ -1,8 +1,8 @@
 # Portal API (Spring Boot) on Red Hat UBI 9: the production image. Build context: backend/
 #   docker build -t directory-services-portal-api backend
-#   docker run -p 3001:3001 -v /path/to/license.lic:/etc/ens/license/license.lic:ro directory-services-portal-api
-# Without a license file the API runs its core features; an ENS Solutions license enables data
-# analysis, metrics and schema import/export (see "Licensing" in the README).
+#   docker run -p 3001:3001 -v dsp-data:/data -v dsp-license:/var/lib/ens/directory-portal directory-services-portal-api
+# Without an ENS Solutions license only sign-in and the license screen work: an administrator
+# uploads the license there (see "Licensing" in the README).
 FROM registry.access.redhat.com/ubi9/openjdk-21:latest AS build
 # The builder image runs as an unprivileged user; the build stage is never shipped.
 USER 0
@@ -27,23 +27,23 @@ LABEL org.opencontainers.image.title="Directory Services Portal API" \
       org.opencontainers.image.created="$BUILD_DATE" \
       org.opencontainers.image.source="https://github.com/winllc/directory-services-portal" \
       org.opencontainers.image.documentation="https://github.com/winllc/directory-services-portal#licensing" \
-      com.enssolutions.license.path="/etc/ens/license/license.lic"
+      com.enssolutions.license.path="/var/lib/ens/directory-portal/license.lic"
 # Runs as the image's unprivileged user (uid 185). Directories are group-0 writable so the image
 # also works under an arbitrary UID (OpenShift restricted SCC).
 USER 0
 # Apply the latest Red Hat security and bug-fix updates (UBI minimal: microdnf is its yum).
 RUN microdnf -y update && microdnf clean all && rm -rf /var/cache/yum /var/cache/dnf
 RUN mkdir -p /app /data && chown 185:0 /data && chmod 0770 /data
-# The license is never part of the image. Mount it read-only:
-#   -v /path/to/license.lic:/etc/ens/license/license.lic:ro
-#   or a directory:  -v /path/to/license-dir:/etc/ens/license:ro
-#   or a Docker/Kubernetes secret, with ENS_LICENSE_FILE pointing at it.
-ENV ENS_LICENSE_FILE=/etc/ens/license/license.lic
-RUN mkdir -p /etc/ens/license && chmod 0755 /etc/ens/license
+# The ENS license is never part of the image. It lives in one persistent, writable directory: the
+# license screen writes uploads there, and it holds this installation's id (customers bind
+# licenses to it) and the license revisions seen. Keep it on a volume across upgrades.
+ENV ENS_LICENSE_STATE_DIR=/var/lib/ens/directory-portal \
+    ENS_LICENSE_FILE=/var/lib/ens/directory-portal/license.lic
+RUN mkdir -p /var/lib/ens/directory-portal && chown -R 185:0 /var/lib/ens && chmod -R 0770 /var/lib/ens
 COPY --from=build /src/target/directory-services-portal.jar /app/app.jar
 WORKDIR /app
 ENV DATA_DIR=/data PORT=3001 JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
-VOLUME /data
+VOLUME /data /var/lib/ens
 EXPOSE 3001
 USER 185
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

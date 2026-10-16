@@ -25,6 +25,7 @@ import type {
   FindingsFilters,
   FindingsPage,
   FormDefinition,
+  LicenseInstallResult,
   LicenseStatus,
   ObjectClassDef,
   OptionItem,
@@ -73,12 +74,31 @@ export const keys = {
 
 export const useServerInfo = () => useQuery({ queryKey: keys.info, queryFn: () => api.get<ServerInfo>('/api/info'), staleTime: 60_000 });
 
-/** Which licensed features this deployment may use (re-checked now and then, as the server re-reads the file). */
+/** The license: mode, banners and which features may be used (re-checked now and then, as the server re-reads the file). */
 export const useLicense = () =>
-  useQuery({ queryKey: keys.license, queryFn: () => api.get<LicenseStatus>('/api/license'), staleTime: 60_000 });
+  useQuery({
+    queryKey: keys.license,
+    queryFn: () => api.get<LicenseStatus>('/api/license'),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
 
-export const useDefinitions = () =>
-  useQuery({ queryKey: keys.definitions, queryFn: () => api.get<DefinitionSummary[]>('/api/definitions') });
+/** License screen upload: installs the file, or fails with the server's reason. */
+export function useLicenseUpload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (text: string) => api.postText<LicenseInstallResult>('/api/admin/license', text),
+    onSuccess: (result) => {
+      qc.setQueryData(keys.license, result.license);
+      // What the license unlocks may have changed: read everything again.
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'license' });
+    },
+  });
+}
+
+/** Directories the user can see; `enabled` false while the license doesn't include the directory editor. */
+export const useDefinitions = (enabled = true) =>
+  useQuery({ queryKey: keys.definitions, queryFn: () => api.get<DefinitionSummary[]>('/api/definitions'), enabled });
 
 export const useDefinition = (id: string | undefined) =>
   useQuery({

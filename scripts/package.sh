@@ -194,9 +194,11 @@ package_native() {
     echo "DATA_DIR=/var/lib/directory-services-portal"
     echo "# nginx on this host overwrites X-Forwarded-*."
     echo "FORWARD_HEADERS_STRATEGY=framework"
-    echo "# ENS Solutions license: enables data analysis, metrics and schema import/export (core"
-    echo "# features only without it). Readable by the dsp user; re-read within a minute of a change."
-    echo "ENS_LICENSE_FILE=/etc/directory-services-portal/license.lic"
+    echo "# ENS Solutions license: without one only sign-in and the license screen work. Upload it"
+    echo "# under Administration > License; it is written to ENS_LICENSE_FILE. ENS_LICENSE_STATE_DIR"
+    echo "# keeps this installation's id (shown on the license screen) and must stay writable by dsp."
+    echo "ENS_LICENSE_STATE_DIR=/var/lib/ens/directory-portal"
+    echo "ENS_LICENSE_FILE=/var/lib/ens/directory-portal/license.lic"
     echo
     sed -n '/^# --- Directory connection/,$p' "$TEMPLATES/docker/env.template" \
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \

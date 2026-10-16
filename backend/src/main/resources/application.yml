@@ -76,8 +76,5 @@ portal:
     require-certificate-match: ${X509_REQUIRE_CERTIFICATE_MATCH:false}
     auto-login: ${X509_AUTO_LOGIN:false}
 
-# ENS Solutions license. Without a valid license the portal runs its core features only
-# (data analysis, metrics and schema import/export need a license). Re-read within ~30s of a change.
-ens:
-  license:
-    file: ${ENS_LICENSE_FILE:license.lic}
+# The ENS license is not a Spring property: ENS_LICENSE_FILE and ENS_LICENSE_STATE_DIR (environment
+# only; see README, Licensing). Without a license only sign-in and the license screen work.

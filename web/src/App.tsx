@@ -1,7 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
-import { Layout } from './components/Layout';
+import { Layout, UnlicensedLayout } from './components/Layout';
 import { RequireAdmin, RequireAuth } from './lib/auth';
-import { RequireLicense } from './lib/license';
+import { LicenseGate, RequireLicense } from './lib/license';
+import type { LicensedFeatureId } from '@dsp/shared';
 import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { DirectoryPage } from './pages/DirectoryPage';
@@ -14,6 +15,8 @@ import { DefinitionsPage } from './pages/admin/DefinitionsPage';
 import { DefinitionEditorPage } from './pages/admin/DefinitionEditorPage';
 import { PermissionsPage } from './pages/admin/PermissionsPage';
 import { AuditPage } from './pages/admin/AuditPage';
+import { LicensePage } from './pages/admin/LicensePage';
+import { NotLicensedPage } from './pages/NotLicensedPage';
 import { AnalysisListPage } from './pages/admin/AnalysisListPage';
 import { AnalysisEditorPage } from './pages/admin/AnalysisEditorPage';
 import { AnalysisResultsPage } from './pages/admin/AnalysisResultsPage';
@@ -26,8 +29,21 @@ import { EmptyState } from './components/ui';
 import { SiteBanners } from './components/SiteBanners';
 
 const admin = (el: React.ReactNode) => <RequireAdmin>{el}</RequireAdmin>;
-const metrics = (el: React.ReactNode) => <RequireLicense feature="metrics">{el}</RequireLicense>;
-const analysis = (el: React.ReactNode) => admin(<RequireLicense feature="analysis">{el}</RequireLicense>);
+const licensed = (feature: LicensedFeatureId) => (el: React.ReactNode) => <RequireLicense feature={feature}>{el}</RequireLicense>;
+const directories = licensed('directory-editor');
+const profile = licensed('self-service-profile');
+const metrics = licensed('metrics');
+const forms = (el: React.ReactNode) => admin(licensed('form-builder')(el));
+const analysis = (el: React.ReactNode) => admin(licensed('data-analysis')(el));
+
+/** Signed in, before the license: the full app, or (no license in effect) only the license screen. */
+const shell = (
+  <RequireAuth>
+    <LicenseGate unlicensed={(isAdmin) => <UnlicensedLayout>{isAdmin ? <LicensePage /> : <NotLicensedPage />}</UnlicensedLayout>}>
+      <Layout />
+    </LicenseGate>
+  </RequireAuth>
+);
 
 export function App() {
   return (
@@ -35,30 +51,26 @@ export function App() {
       <SiteBanners />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route
-          element={
-            <RequireAuth>
-              <Layout />
-            </RequireAuth>
-          }
-        >
+        <Route element={shell}>
           <Route index element={<HomePage />} />
-          <Route path="me" element={<MyProfilePage />} />
-          <Route path="d/:slug" element={<DirectoryPage />} />
-          <Route path="d/:slug/new" element={<CreateEntryPage />} />
-          <Route path="d/:slug/entry" element={<EntryPage />} />
+          <Route path="me" element={profile(<MyProfilePage />)} />
+          <Route path="d/:slug" element={directories(<DirectoryPage />)} />
+          <Route path="d/:slug/new" element={directories(<CreateEntryPage />)} />
+          <Route path="d/:slug/entry" element={directories(<EntryPage />)} />
           <Route path="metrics" element={metrics(<MetricsHomePage />)} />
           <Route path="metrics/explore" element={metrics(<ExplorerPage />)} />
           <Route path="metrics/directories/:slug" element={metrics(<OverviewPage />)} />
           <Route path="metrics/dashboards/:id" element={metrics(<DashboardPage />)} />
           <Route path="metrics/dashboards/:id/edit" element={admin(metrics(<DashboardEditorPage />))} />
           <Route path="admin/schema" element={admin(<SchemaPage />)} />
-          <Route path="admin/forms" element={admin(<FormsPage />)} />
-          <Route path="admin/forms/:id" element={admin(<FormEditorPage />)} />
-          <Route path="admin/definitions" element={admin(<DefinitionsPage />)} />
-          <Route path="admin/definitions/:id" element={admin(<DefinitionEditorPage />)} />
+          <Route path="admin/forms" element={forms(<FormsPage />)} />
+          <Route path="admin/forms/:id" element={forms(<FormEditorPage />)} />
+          <Route path="admin/definitions" element={forms(<DefinitionsPage />)} />
+          <Route path="admin/definitions/:id" element={forms(<DefinitionEditorPage />)} />
           <Route path="admin/permissions" element={admin(<PermissionsPage />)} />
           <Route path="admin/audit" element={admin(<AuditPage />)} />
+          <Route path="admin/license" element={admin(<LicensePage />)} />
+          <Route path="unlicensed" element={<NotLicensedPage />} />
           <Route path="admin/analysis" element={analysis(<AnalysisListPage />)} />
           <Route path="admin/analysis/results/:jobId" element={analysis(<AnalysisResultsPage />)} />
           <Route path="admin/analysis/:id" element={analysis(<AnalysisEditorPage />)} />

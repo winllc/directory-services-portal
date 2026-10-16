@@ -1,6 +1,8 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.service.EntryService;
 import com.winllc.dsp.store.ConfigStore;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequiresFeature(LicensedFeature.FORM_BUILDER)
 @RequestMapping("/api/admin/definitions")
 public class AdminDefinitionsController {
   private final ConfigStore store;

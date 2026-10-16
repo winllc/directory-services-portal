@@ -14,12 +14,16 @@ SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5
 
-# Hardening: the API only needs to write its data directory.
+# The ENS license: written by the license screen, with the installation id (also set in portal.env).
+Environment=ENS_LICENSE_STATE_DIR=/var/lib/ens/directory-portal
+Environment=ENS_LICENSE_FILE=/var/lib/ens/directory-portal/license.lic
+
+# Hardening: the API only needs to write its data and license directories.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/directory-services-portal
+ReadWritePaths=/var/lib/directory-services-portal /var/lib/ens/directory-portal
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

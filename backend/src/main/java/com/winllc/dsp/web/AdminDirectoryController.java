@@ -6,6 +6,8 @@ import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.web.dto.SchemaRequests;
 import jakarta.validation.Valid;
 import java.util.Comparator;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Admin helpers: preview which entries a namespace selects, and browse the tree for DN pickers. */
 @RestController
+@RequiresFeature(LicensedFeature.FORM_BUILDER)
 @RequestMapping("/api/admin")
 public class AdminDirectoryController {
   private final LdapDirectory directory;

@@ -13,6 +13,12 @@
 #
 # The web and api images are based on Red Hat UBI 9 and run as unprivileged users.
 #
+# ENS license: without one the demo shows only the license screen. Download an evaluation license
+# for the Directory Services Portal from the ENS licensing portal and either upload it on the
+# license screen (sign in as admin), or save it as ./license/license.lic before `up`: the
+# license-init service copies it into the ens-license volume when that has no license yet.
+# The volume also keeps this installation's id; `docker compose down -v` deletes it.
+#
 # X.509 client-certificate sign-in: see docker-compose.mtls.yml.
 # The in-memory demo needs no containers: `npm run dev`.
 #
@@ -40,11 +46,30 @@ services:
       retries: 20
       start_period: 10s
 
+  # Copies ./license/license.lic (if present) into the ens-license volume when it has no license
+  # yet, then exits. A license uploaded on the license screen is never overwritten.
+  license-init:
+    build: ./backend
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        if [ -f /seed/license.lic ] && [ ! -f /var/lib/ens/directory-portal/license.lic ]; then
+          cp /seed/license.lic /var/lib/ens/directory-portal/license.lic && echo "Installed ./license/license.lic" \
+            || echo "Could not copy ./license/license.lic (is it readable? chmod 644); upload it on the license screen"
+        fi
+        exit 0
+    volumes:
+      - ./license:/seed:ro
+      - ens-license:/var/lib/ens/directory-portal
+    restart: "no"
+
   api:
     build: ./backend
     depends_on:
       openldap:
         condition: service_healthy
+      license-init:
+        condition: service_completed_successfully
     environment:
       DIRECTORY_MODE: ldap
       LDAP_URL: ldap://openldap:389
@@ -69,9 +94,9 @@ services:
       FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
-      # ENS Solutions license: put license.lic in ./license to enable the licensed features
-      # (data analysis, metrics, schema import/export). Without it the portal runs its core features.
-      - ./license:/etc/ens/license:ro
+      # ENS license (ENS_LICENSE_FILE / ENS_LICENSE_STATE_DIR, set by the image): the uploaded
+      # license, the installation id and the license revisions seen. Writable; keep it.
+      - ens-license:/var/lib/ens/directory-portal
     # To call the API directly from your machine, uncomment:
     # ports:
     #   - "3001:3001"
@@ -94,3 +119,4 @@ services:
 volumes:
   portal-data:
   ldap-data:
+  ens-license:

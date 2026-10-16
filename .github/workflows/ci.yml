@@ -129,6 +129,11 @@ jobs:
               echo "answered after ${i}s"
               curl -fsS http://localhost:8080/api/health
               curl -fsS -o /dev/null http://localhost:8080/
+              # Unlicensed (the image only trusts the production key and has no license): sign-in
+              # works, everything else answers license_required.
+              curl -fsS -c /tmp/jar -H 'X-DSP-Request: 1' -H 'Content-Type: application/json' \
+                -d '{"username":"alice","password":"password"}' http://localhost:8080/api/auth/login > /dev/null
+              curl -sS -b /tmp/jar http://localhost:8080/api/definitions | tee /dev/stderr | grep -q '"code":"license_required"'
               exit 0
             fi
             sleep 1

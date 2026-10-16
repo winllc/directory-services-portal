@@ -8,11 +8,11 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev -w web\"",
-    "dev:api": "cd backend && ./mvnw -q spring-boot:run",
+    "dev:api": "cd backend && ENS_LICENSE_STATE_DIR=${ENS_LICENSE_STATE_DIR:-data/ens-license} ENS_LICENSE_FILE=${ENS_LICENSE_FILE:-data/ens-license/license.lic} ./mvnw -q spring-boot:run",
     "build": "npm run build -w web && npm run build:api",
     "build:api": "cd backend && ./mvnw -q -B clean package -DskipTests",
     "start": "concurrently -k -n api,web -c blue,green \"npm:start:api\" \"npm run preview -w web\"",
-    "start:api": "java -jar backend/target/directory-services-portal.jar",
+    "start:api": "ENS_LICENSE_STATE_DIR=${ENS_LICENSE_STATE_DIR:-data/ens-license} ENS_LICENSE_FILE=${ENS_LICENSE_FILE:-data/ens-license/license.lic} java -jar backend/target/directory-services-portal.jar",
     "test": "cd backend && ./mvnw -q -B test && cd .. && npm test -w web",
     "package": "scripts/package.sh",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w web"

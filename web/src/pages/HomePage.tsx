@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Eye, FolderOpen, Pencil, UserCircle2 } from 'lucide-react';
 import { useDefinitions } from '../api/hooks';
 import { useUser } from '../lib/auth';
+import { useFeature } from '../lib/license';
 import { DefinitionIcon } from '../components/Layout';
 import { Badge, EmptyState, ErrorAlert, PageHeader, Spinner } from '../components/ui';
 
@@ -13,21 +14,30 @@ export function AccessBadge({ access, mode }: { access: string; mode: string }) 
 
 export function HomePage() {
   const user = useUser();
-  const defs = useDefinitions();
+  const editor = useFeature('directory-editor');
+  const profile = useFeature('self-service-profile');
+  const defs = useDefinitions(editor.enabled);
   return (
     <div className="page">
       <PageHeader title={`Welcome, ${user.displayName.split(' ')[0]}`} subtitle="Browse the directories you have access to or review your own entries." />
 
-      <Link to="/me" className="profile-banner">
-        <UserCircle2 size={28} />
-        <div>
-          <strong>My profile</strong>
-          <div className="muted">See how you appear in each directory and update your details.</div>
-        </div>
-        <ArrowRight size={18} className="profile-banner-arrow" />
-      </Link>
+      {profile.enabled && (
+        <Link to="/me" className="profile-banner">
+          <UserCircle2 size={28} />
+          <div>
+            <strong>My profile</strong>
+            <div className="muted">See how you appear in each directory and update your details.</div>
+          </div>
+          <ArrowRight size={18} className="profile-banner-arrow" />
+        </Link>
+      )}
 
-      <h2 className="section-title">Directories</h2>
+      {!editor.loading && !editor.enabled && (
+        <EmptyState icon={<FolderOpen size={32} />} title="Directories are not licensed">
+          This portal's license doesn't include the directory editor.
+        </EmptyState>
+      )}
+      {editor.enabled && <h2 className="section-title">Directories</h2>}
       {defs.isLoading && <Spinner />}
       <ErrorAlert error={defs.error} />
       {defs.data?.length === 0 && (

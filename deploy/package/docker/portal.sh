@@ -8,6 +8,9 @@
 #   ./portal.sh logs [service]     follow the logs (api, web or openldap)
 #   ./portal.sh backup [file]      archive the portal data (configuration, audit log, results)
 #   ./portal.sh restore <file>     replace the portal data with a backup (stops the API meanwhile)
+#   ./portal.sh license [--if-missing] <file>
+#                                  install an ENS license file into the ens-license volume (the
+#                                  license screen does the same); --if-missing keeps an installed one
 #   ./portal.sh version
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -71,6 +74,27 @@ case "$cmd" in
     wait_healthy
     say "Restored $file"
     ;;
+  license)
+    mode=always
+    if [ "${1:-}" = --if-missing ]; then mode=if-missing; shift; fi
+    file="${1:-}"; [ -f "$file" ] || die "Usage: ./portal.sh license [--if-missing] <license.lic>"
+    if ! grep -q -- '-----BEGIN ENS LICENSE-----' "$file"; then
+      [ "$mode" = if-missing ] || die "$file is not an ENS license file (download it from the ENS licensing portal)"
+      printf '\033[33mWarning:\033[0m %s is not an ENS license file (an old-format license?); not installed.\n' "$file" >&2
+      exit 0
+    fi
+    # Written by the api image's own user into the volume, so the portal can replace it later.
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    result="$(dc run --rm --no-deps -T --entrypoint sh api -c '
+      f=/var/lib/ens/directory-portal/license.lic
+      if [ "$1" = if-missing ] && [ -s "$f" ]; then echo kept; exit 0; fi
+      cat > "$f.new" && mv -f "$f.new" "$f" && echo installed' sh "$mode" < "$file")"
+    case "$result" in
+      *installed) say "Installed $file into the portal's license volume (ens-license). Check it under Administration > License." ;;
+      *kept) say "A license is already installed in the license volume; kept it (replace it with ./portal.sh license $file)" ;;
+      *) die "Could not install $file" ;;
+    esac
+    ;;
   version) echo "$VERSION" ;;
-  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

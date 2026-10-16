@@ -7,6 +7,8 @@ import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.DirectoryEntry;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
@@ -38,9 +40,11 @@ public class X509AuthService {
   private final LdapDirectory directory;
   private final AuthService auth;
   private final AuditLog audit;
+  private final Licensing licensing;
 
   public X509AuthService(PortalProperties props, ClientCertificateExtractor extractor, CertificateValidator validator,
-      LdapDirectory directory, AuthService auth, AuditLog audit) {
+      LdapDirectory directory, AuthService auth, AuditLog audit, Licensing licensing) {
+    this.licensing = licensing;
     this.props = props;
     this.extractor = extractor;
     this.validator = validator;
@@ -51,6 +55,20 @@ public class X509AuthService {
 
   public boolean enabled() {
     return props.getX509().isEnabled();
+  }
+
+  /**
+   * Whether the license allows certificate sign-in: when it includes smart-card sign-in, or when no
+   * license is in effect at all, so that an administrator who signs in with a certificate can still
+   * reach the license screen and install one.
+   */
+  public boolean licensed() {
+    return licensing.unlicensed() || licensing.allows(LicensedFeature.SMART_CARD_SIGN_IN);
+  }
+
+  /** Certificate sign-in is configured and licensed (what the login page offers). */
+  public boolean available() {
+    return enabled() && licensed();
   }
 
   public PortalProperties.X509 properties() {
@@ -68,6 +86,10 @@ public class X509AuthService {
 
   public SessionUser authenticate(HttpServletRequest request) {
     if (!enabled()) throw new CertificateRejectedException("Certificate sign-in is not enabled");
+    if (!licensed()) {
+      throw new CertificateRejectedException(
+          "Smart-card (certificate) sign-in is not included in this portal's license. Sign in with your user name and password.");
+    }
     X509Certificate[] chain = extractor.extract(request)
         .orElseThrow(() -> new CertificateRejectedException("No client certificate was presented"));
     CertificateIdentity identity = CertificateIdentity.of(chain[0]);

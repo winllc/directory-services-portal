@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Upgrades a Directory Services Portal deployment to @VERSION@ (this package): loads the new
-# images, points .env at them and restarts. Settings (.env), license/, certs/ and the data
-# volume are kept.
+# images, points .env at them and restarts. Settings (.env), license/, certs/, the data volume
+# and the license volume (ens-license: the installed license and this installation's id) are kept.
 #
 #   ./upgrade.sh [PREVIOUS-DIR] [options]
 #     PREVIOUS-DIR   the unpacked package of the running version: its .env, license/ and certs/
@@ -52,7 +52,7 @@ fi
 [ -f .env ] || die "No .env here. Run ./upgrade.sh <directory of the running version>, or ./install.sh for a first install."
 
 # Verify the package and load its images (install.sh keeps the existing .env).
-./install.sh ${install_args[@]+"${install_args[@]}"} >/dev/null
+./install.sh --no-license ${install_args[@]+"${install_args[@]}"} >/dev/null
 
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '"'; }
 setenv() { # setenv KEY VALUE: replace (or add) the KEY= line in .env
@@ -75,6 +75,11 @@ if docker image inspect "$OPENLDAP_IMAGE" >/dev/null 2>&1; then setenv OPENLDAP_
 mkdir -p license
 docker compose config -q || die "The compose configuration is invalid; check .env."
 say "Settings now use $API_IMAGE and $WEB_IMAGE"
+
+# The license volume is kept as is. A license.lic here is copied in only if it has none yet.
+if [ -f license/license.lic ]; then
+  ./portal.sh license --if-missing license/license.lic
+fi
 
 if [ -n "$start" ]; then
   ./portal.sh up

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
+  BadgeCheck,
   BarChart3,
   BookOpen,
   Briefcase,
@@ -28,8 +29,8 @@ import {
 } from 'lucide-react';
 import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
-import { featureEnabled, licenseSummary } from '../lib/license';
-import { Badge, cx } from './ui';
+import { featureEnabled, LICENSE_PATH, LicenseNotices, licenseSummary } from '../lib/license';
+import { Badge, Button, cx } from './ui';
 import { JobsMenu } from './jobs/JobsMenu';
 
 export const DEFINITION_ICONS: Record<string, typeof Users> = {
@@ -64,9 +65,10 @@ function NavItem({ to, icon, children, end }: { to: string; icon: ReactNode; chi
 export function Layout() {
   const user = useUser();
   const { logout } = useAuth();
-  const defs = useDefinitions();
-  const info = useServerInfo();
   const license = useLicense();
+  const has = (feature: Parameters<typeof featureEnabled>[1]) => featureEnabled(license.data, feature);
+  const defs = useDefinitions(has('directory-editor'));
+  const info = useServerInfo();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [lastPath, setLastPath] = useState(location.pathname);
@@ -102,46 +104,59 @@ export function Layout() {
           <NavItem to="/" end icon={<Home size={18} />}>
             Home
           </NavItem>
-          <NavItem to="/me" icon={<UserCircle2 size={18} />}>
-            My profile
-          </NavItem>
-          {featureEnabled(license.data, 'metrics') && (
+          {has('self-service-profile') && (
+            <NavItem to="/me" icon={<UserCircle2 size={18} />}>
+              My profile
+            </NavItem>
+          )}
+          {has('metrics') && (
             <NavItem to="/metrics" icon={<BarChart3 size={18} />}>
               Metrics
             </NavItem>
           )}
 
-          <div className="nav-heading">Directories</div>
-          {defs.data?.map((d) => (
-            <NavItem key={d.id} to={`/d/${d.slug}`} icon={<DefinitionIcon icon={d.icon} />}>
-              {d.name}
-              {d.mode === 'readonly' && <span className="nav-pill">RO</span>}
-            </NavItem>
-          ))}
-          {defs.data?.length === 0 && <div className="nav-empty">No directories available</div>}
+          {has('directory-editor') && (
+            <>
+              <div className="nav-heading">Directories</div>
+              {defs.data?.map((d) => (
+                <NavItem key={d.id} to={`/d/${d.slug}`} icon={<DefinitionIcon icon={d.icon} />}>
+                  {d.name}
+                  {d.mode === 'readonly' && <span className="nav-pill">RO</span>}
+                </NavItem>
+              ))}
+              {defs.data?.length === 0 && <div className="nav-empty">No directories available</div>}
+            </>
+          )}
 
           {user.isAdmin && (
             <>
               <div className="nav-heading">Administration</div>
-              <NavItem to="/admin/definitions" icon={<LayoutList size={18} />}>
-                Directory definitions
-              </NavItem>
-              <NavItem to="/admin/forms" icon={<FormInput size={18} />}>
-                Forms
-              </NavItem>
+              {has('form-builder') && (
+                <>
+                  <NavItem to="/admin/definitions" icon={<LayoutList size={18} />}>
+                    Directory definitions
+                  </NavItem>
+                  <NavItem to="/admin/forms" icon={<FormInput size={18} />}>
+                    Forms
+                  </NavItem>
+                </>
+              )}
               <NavItem to="/admin/schema" icon={<Database size={18} />}>
                 Schema
               </NavItem>
               <NavItem to="/admin/permissions" icon={<KeyRound size={18} />}>
                 Permissions
               </NavItem>
-              {featureEnabled(license.data, 'analysis') && (
+              {has('data-analysis') && (
                 <NavItem to="/admin/analysis" icon={<ShieldCheck size={18} />}>
                   Data analysis
                 </NavItem>
               )}
               <NavItem to="/admin/audit" icon={<History size={18} />}>
                 Audit log
+              </NavItem>
+              <NavItem to={LICENSE_PATH} icon={<BadgeCheck size={18} />}>
+                License
               </NavItem>
             </>
           )}
@@ -155,7 +170,7 @@ export function Layout() {
             </div>
           )}
           {user.isAdmin && license.data && (
-            <div className="license-status" title={license.data.file ? `License file: ${license.data.file}` : undefined}>
+            <div className="license-status" title={license.data.message}>
               {licenseSummary(license.data)}
             </div>
           )}
@@ -187,10 +202,49 @@ export function Layout() {
             </button>
           </div>
         </header>
+        <LicenseNotices />
         <main className="content" id="main">
           <Outlet />
         </main>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The shell while no license is in effect: no navigation (nothing else works), just who is signed
+ * in and sign-out, around the license screen or the "not licensed" page.
+ */
+export function UnlicensedLayout({ children }: { children: ReactNode }) {
+  const user = useUser();
+  const { logout } = useAuth();
+  return (
+    <div className="bare-shell">
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-logo">
+            <Database size={18} />
+          </div>
+          <div className="brand-name">Directory Portal</div>
+        </div>
+        <div className="topbar-spacer" />
+        <div className="user-menu">
+          <div className="user-meta">
+            <div className="user-name">
+              {user.displayName} {user.isAdmin && <Badge tone="accent">Admin</Badge>}
+            </div>
+            <div className="user-dn" title={user.dn}>
+              {user.username}
+            </div>
+          </div>
+          <Button icon={<LogOut size={16} />} onClick={() => logout()}>
+            Sign out
+          </Button>
+        </div>
+      </header>
+      <main className="content" id="main">
+        {children}
+      </main>
     </div>
   );
 }

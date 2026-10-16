@@ -18,7 +18,7 @@ API_IMAGE="@API_IMAGE@"
 WEB_IMAGE="@WEB_IMAGE@"
 OPENLDAP_IMAGE="@OPENLDAP_IMAGE@"
 
-http_port=""; https_port=""; demo=""; force_env=""; start=""; verify=1
+http_port=""; https_port=""; demo=""; force_env=""; start=""; verify=1; no_license=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --http) http_port=8080; if [[ "${2:-}" =~ ^[0-9]+$ ]]; then http_port="$2"; shift; fi ;;
@@ -28,6 +28,7 @@ while [ $# -gt 0 ]; do
     --force-env) force_env=1 ;;
     --start) start=1 ;;
     --skip-verify) verify="" ;;
+    --no-license) no_license=1 ;; # used by upgrade.sh, which installs the license with the new images
     -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -109,17 +110,23 @@ if [ -n "$https_port" ] || grep -q '^COMPOSE_FILE=.*mtls' .env; then
   fi
 fi
 
-# The api service mounts ./license read-only; create it so Docker doesn't (as root).
 mkdir -p license
 
 docker compose config -q || die "The compose configuration is invalid; check .env."
+
+# --- ENS license -----------------------------------------------------------------
+# It lives in the ens-license volume, written by the license screen. A license.lic placed next to
+# this script is copied in, unless the volume already has one.
+if [ -f license/license.lic ] && [ -z "$no_license" ]; then
+  ./portal.sh license --if-missing license/license.lic
+fi
 
 echo
 say "Directory Services Portal $VERSION is installed."
 if [ -z "$demo" ]; then
   echo "    Edit .env: at least LDAP_URL, LDAP_BIND_DN, LDAP_BIND_PASSWORD, the search bases and ADMIN_USERS/ADMIN_GROUPS."
 fi
-[ -f license/license.lic ] || echo "    License: copy your ENS Solutions license to license/license.lic (core features only without it)."
+[ -f license/license.lic ] || echo "    License: after starting, sign in as an administrator and upload your ENS license under Administration > License (/admin/license). Until then only sign-in and that screen work."
 echo "    Start:   ./portal.sh up"
 echo "    Status:  ./portal.sh status    Logs: ./portal.sh logs"
 if [ -n "$start" ]; then ./portal.sh up; fi
