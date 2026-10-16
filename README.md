@@ -459,7 +459,7 @@ Analyses, and metrics that take a while, run on the server independently of the 
 Every write goes to the directory as the portal's service account, so the directory's own logs
 can't say who made a change. The portal keeps a complete, tamper-evident audit trail in the
 format shared by all ENS products, **`ens-audit/1`** (one JSON object per event; field reference
-and SIEM setup on the docs site page [Audit logging](audit-logging.md)), and can deliver it to
+and SIEM setup on the docs site page [Audit logging](https://github.com/winllc/ens-apps-documentation/blob/master/docs/audit-logging.md)), and can deliver it to
 Splunk or any SIEM.
 
 **What is recorded** (action ids are stable; the portal's original ids are kept):
