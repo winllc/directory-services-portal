@@ -6,10 +6,12 @@ internet access are required. Built @BUILD_DATE@ from @GIT_REVISION@.
 | Contents | |
 |---|---|
 | `install.sh` | verifies the package, loads the images, writes `.env` |
+| `upgrade.sh` | upgrades a running deployment to this version, keeping its settings and data |
 | `portal.sh` | start, stop, status, logs, backup and restore |
 | `env.template` | every setting, documented (copied to `.env` by the installer) |
 | `docker-compose*.yml` | the services, and optional overlays for HTTP, HTTPS/X.509 and a demo OpenLDAP |
 | `images/` | the container images (Red Hat UBI 9 based) |
+| `license/` | where your ENS Solutions license goes (`license/license.lic`) |
 | `scripts/generate-dev-certs.sh` | throw-away certificates for trying HTTPS and X.509 sign-in |
 
 Requirements: Linux with Docker Engine 20.10+ and Docker Compose v2, about 2 GB of disk.
@@ -17,7 +19,7 @@ Requirements: Linux with Docker Engine 20.10+ and Docker Compose v2, about 2 GB 
 ## Install
 
 ```bash
-tar xzf directory-services-portal-@VERSION@-docker.tar.gz
+tar xzf directory-services-portal-@VERSION@*.tar.gz
 cd directory-services-portal-@VERSION@
 ./install.sh --http 8080          # plain HTTP on port 8080, e.g. behind your TLS proxy
 vi .env                           # LDAP connection and administrators
@@ -97,9 +99,19 @@ in your LDAP server.
 
 ## Upgrade
 
-Unpack the new package next to this one, copy `.env` (and `certs/`, `license/`) across, then in the new
-directory run `./install.sh` and `./portal.sh up`. The data volume is reused. Take a
-`./portal.sh backup` first.
+Unpack the new package next to the running one and run its `upgrade.sh` with the old directory:
+
+```bash
+tar xzf directory-services-portal-<new-version>*.tar.gz
+cd directory-services-portal-<new-version>
+./upgrade.sh ../directory-services-portal-<old-version>
+```
+
+It copies `.env`, `license/` and `certs/` across (never overwriting), verifies the package and
+loads its images, backs up the portal data to `backups/`, points `.env` at the new images
+(keeping a `.env.bak-<time>`) and restarts with `./portal.sh up`. The data volume is reused.
+To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
+backup.
 
 ## Notes
 

@@ -71,7 +71,7 @@ scripts/package.sh --registry reg.example.com/dsp --push --no-images   # images 
 ```
 
 The **docker** package holds the images (`docker save`), compose files that use them, every
-setting in one documented `.env`, `install.sh` and `portal.sh`. On the target host:
+setting in one documented `.env`, `install.sh`, `upgrade.sh` and `portal.sh`. On the target host:
 
 ```bash
 tar xzf directory-services-portal-<version>-docker.tar.gz && cd directory-services-portal-<version>
@@ -87,7 +87,48 @@ The **native** package installs the API as a systemd service (Java 21+, listenin
 
 The version defaults to the `package.json` version plus the git revision (`--version` to set
 it). Builds behind a proxy or with a corporate CA can pass `DOCKER_BUILD_ARGS`, or alternative
-Dockerfiles in `API_DOCKERFILE` / `WEB_DOCKERFILE`.
+Dockerfiles in `API_DOCKERFILE` / `WEB_DOCKERFILE`. `--api-image` / `--web-image` package
+images that are already built (by reference, e.g. `ghcr.io/winllc/directory-services-portal-api:1.2.3`)
+instead of building them.
+
+## Releases
+
+Cut a release by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`. The CI `image` job
+then tests and publishes the images (`ghcr.io/winllc/directory-services-portal-api|web:1.2.3`)
+and builds the customer bundle from exactly those images with
+`scripts/release-bundle.sh <version> <api-image> <web-image>` (runnable locally too):
+
+| File | |
+|---|---|
+| `directory-services-portal-<version>.tar.gz` | the docker deployment package above: images, compose files, `env.template`, `install.sh`, `upgrade.sh`, `portal.sh`, `license/` |
+| `sbom-directory-services-portal-api.spdx.json`, `sbom-...-web.spdx.json` | SPDX SBOMs of the images (syft) |
+| `SHA256SUMS` | checksums of the files above |
+| `SHA256SUMS.asc` | GPG detached signature of `SHA256SUMS` (when a signing key is configured) |
+
+The files are uploaded to `s3://<bucket>/directory-services-portal/<version>/`, and for versions
+without a `-suffix` `directory-services-portal/latest.txt` is set to the version. They are also
+kept as the workflow artifact `release-directory-services-portal-<version>` (30 days). Every
+pull request does a dry run (version `0.0.0-pr<number>`, artifact kept 3 days, never
+uploaded). Signing and upload are skipped, with a note in the job summary, until configured
+(repository Settings > Secrets and variables > Actions):
+
+| | Name | |
+|---|---|---|
+| secret | `RELEASE_GPG_PRIVATE_KEY` | ASCII-armored private signing key |
+| secret | `RELEASE_GPG_PASSPHRASE` | its passphrase (if any) |
+| secret | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | credentials that may write to the bucket |
+| variable | `RELEASE_S3_BUCKET` | bucket name |
+| variable | `RELEASE_S3_ENDPOINT` | S3 endpoint URL for Cloudflare R2 / MinIO (empty for AWS) |
+| variable | `RELEASE_S3_REGION` | region (default `us-east-1`; `auto` for R2) |
+
+A customer verifies a download (with the ENS release signing key imported) before unpacking:
+
+```bash
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS          # add --ignore-missing if only the tarball was downloaded
+tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-portal-<version>
+./install.sh --http 8080         # first install; upgrades: ./upgrade.sh ../directory-services-portal-<old>
+```
 
 ## Licensing
 
@@ -522,5 +563,6 @@ Layout:
   `web/Dockerfile` and its nginx setup in `web/nginx/` (`nginx.conf`, the server `templates`
   and `entrypoint.sh`, which renders them at start).
 - `backend/Dockerfile`: the API image. `deploy/openldap/`: the demo OpenLDAP image.
+- `scripts/release-bundle.sh`: the customer release bundle (docker package, SBOMs, checksums).
 - `scripts/package.sh` and `deploy/package/`: the standalone deployment packages (templates for
   their compose files, installers and READMEs).
