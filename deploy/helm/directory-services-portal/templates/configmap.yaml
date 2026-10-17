@@ -70,6 +70,7 @@ data:
   X509_SOURCE: header
   X509_HEADER: {{ include "dsp.x509Header" . | quote }}
   X509_TRUSTED_PROXIES: {{ $v.x509.trustedProxies | quote }}
+  X509_PROXY_SECRET_FILE: {{ ternary "/etc/dsp/x509-proxy/proxy-secret" "" (and $v.x509.enabled true) | quote }}
   X509_TRUSTED_CA_FILE: {{ ternary "/etc/dsp/x509/ca.pem" "" (eq (include "dsp.x509CaConfigured" .) "true") | quote }}
   X509_CHECK_REVOCATION: {{ $v.x509.checkRevocation | quote }}
   X509_MAPPING: {{ $v.x509.mapping | quote }}

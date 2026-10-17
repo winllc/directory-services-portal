@@ -340,18 +340,33 @@ audit:
 #     against tls's ca.pem and forwards it in X-SSL-Client-Cert. Use ingress-nginx ssl-passthrough,
 #     an OpenShift passthrough route or a LoadBalancer Service.
 #   Edge termination: the ingress controller verifies the certificate and forwards it in a header
-#     (ingress-nginx: "ssl-client-cert"); set x509.header to that name. The web tier passes it on.
+#     (ingress-nginx: "ssl-client-cert"); set x509.header to that name. The web tier passes it on,
+#     so only the ingress controller may reach the web pods: this needs networkPolicy.enabled and
+#     networkPolicy.webIngressFrom (or x509.allowUnrestrictedWebIngress).
+# The API accepts the header only from the web pods' addresses together with the proxy secret,
+# which the web pods send with every request, and validates the chain itself (x509.trustedCa).
 # The smart-card-sign-in license feature must be on the license.
 x509:
   enabled: false
   passwordLoginEnabled: true
   # Header the certificate arrives in. Empty: X-SSL-Client-Cert (passthrough). Edge termination
-  # needs the ingress controller's header (the web tier blanks X-SSL-Client-Cert in plain HTTP).
+  # needs the header the ingress controller always sets itself (ingress-nginx: ssl-client-cert,
+  # with auth-tls-pass-certificate-to-upstream); the web tier removes any other copy.
   header: ""
   # Peers allowed to send the header: the web pods' addresses (the pod network).
   trustedProxies: "10.0.0.0/8;172.16.0.0/12;192.168.0.0/16"
+  # The secret the web pods send to the API with every request (X509_PROXY_SECRET_FILE in both):
+  # the API accepts the certificate header only with it, so other pods that share the web pods'
+  # address range cannot sign in as anyone. Empty: generated into the Secret
+  # <release>-directory-services-portal-x509-proxy and kept across upgrades. Or an existing Secret
+  # (at least 32 letters and digits, e.g. openssl rand -hex 32); use one when the chart is
+  # rendered without access to the cluster (helm template, Argo CD), where a new secret would be
+  # generated on every render.
+  proxySecret:
+    existingSecret: ""
+    existingSecretKey: proxy-secret
   # CA(s) that issue user certificates, for the API's own chain check (X509_TRUSTED_CA_FILE).
-  # Empty and tls.enabled: tls's ca.pem.
+  # Required. Empty and tls.enabled: tls's ca.pem.
   trustedCa:
     value: ""
     existingSecret: ""
@@ -363,6 +378,13 @@ x509:
   userFilter: (&(objectClass=inetOrgPerson)(uid={{cn}}))
   requireCertificateMatch: false
   autoLogin: false
+  # Edge termination trusts the header the ingress controller sets, so the chart refuses to render
+  # it unless networkPolicy.enabled and networkPolicy.webIngressFrom admit only the ingress
+  # controller to the web pods: anyone else who reaches them could send that header with a
+  # user's (public) certificate. true renders without that check, for clusters where other
+  # controls ensure only the ingress controller reaches the web pods (a cluster-wide policy, a
+  # service mesh); you are then responsible for that.
+  allowUnrestrictedWebIngress: false
 
 # --- HTTPS in the web pod (TLS passthrough, X.509 sign-in) ------------------------------------
 # The web pod serves HTTPS on 8443 (and redirects 8080 to it) with the web image's mTLS nginx
@@ -430,7 +452,8 @@ route:
 networkPolicy:
   enabled: false
   # Who may reach the web tier (NetworkPolicy peers). Empty: anyone. With edge-terminated X.509
-  # sign-in, restrict this to the ingress controller so nobody can bypass it.
+  # sign-in, restrict this to the ingress controller so nobody can bypass it (required, see
+  # x509.allowUnrestrictedWebIngress). The API always admits only the web pods.
   webIngressFrom: []
   # - namespaceSelector:
   #     matchLabels:

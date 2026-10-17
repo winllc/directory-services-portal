@@ -90,6 +90,34 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Check the X.509 guards
+        run: |
+          # Edge-terminated X.509 sign-in trusts the certificate header the ingress controller
+          # sets: the chart must refuse it unless only the ingress controller can reach the web
+          # pods (or the escape hatch is set), refuse it without trusted CAs, and give both pods
+          # the proxy secret the API requires with the header.
+          edge="$CHART/ci/edge-x509-values.yaml"
+          fails() { # fails EXPECTED-MESSAGE HELM-ARGS...
+            local want="$1" out; shift
+            if out="$(helm template dsp "$CHART" "$@" 2>&1)"; then echo "rendered, expected: $want"; exit 1; fi
+            grep -qF -- "$want" <<<"$out" || { echo "$out"; exit 1; }
+          }
+          fails "networkPolicy.webIngressFrom" -f "$edge" --set networkPolicy.enabled=false
+          fails "networkPolicy.webIngressFrom" -f "$edge" --set networkPolicy.webIngressFrom=null
+          fails "x509.enabled needs x509.trustedCa" -f "$edge" --set x509.trustedCa.existingSecret=
+          helm template dsp "$CHART" -f "$edge" --set networkPolicy.enabled=false \
+            --set x509.allowUnrestrictedWebIngress=true > /dev/null
+          for t in api-deployment web-deployment; do
+            helm template dsp "$CHART" -f "$edge" --show-only "templates/$t.yaml" \
+              | grep -q 'secretName: dsp-directory-services-portal-x509-proxy' || { echo "$t: no proxy secret"; exit 1; }
+          done
+          helm template dsp "$CHART" -f "$edge" --show-only templates/configmap.yaml \
+            | grep -q 'X509_PROXY_SECRET_FILE: "/etc/dsp/x509-proxy/proxy-secret"'
+          helm template dsp "$CHART" -f "$edge" --show-only templates/web-deployment.yaml \
+            | grep -A1 'name: X509_PROXY_SECRET_FILE' | grep -q '/etc/dsp/x509-proxy/proxy-secret'
+          helm template dsp "$CHART" -f "$edge" --show-only templates/web-deployment.yaml \
+            | grep -A1 'name: X509_EDGE_TERMINATION' | grep -q '"true"'
+
   image:
     # Builds both images on every push, checks the pair starts and answers through the web
     # tier, and publishes what it just checked. Nothing is published from a pull request: a
