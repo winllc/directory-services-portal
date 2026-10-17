@@ -110,6 +110,10 @@ API accepts a forwarded certificate only with it, and checks it against `certs/c
 `.env` private (mode 600).
 For a test: `scripts/generate-dev-certs.sh certs` creates a CA, a server certificate and user
 certificates (`certs/alice.p12`, password `password`).
+Set `ENS_X509_REVOCATION` (`ocsp`, `crl` or `ocsp-then-crl`) to check certificates for revocation,
+as DISA STIG requires; the API warns at startup while it is off. For CRLs on an air-gapped
+network, mount a directory of CRL files into the API container (a compose override) and set
+`ENS_X509_CRL_DIR` to it.
 
 ## Operate
 
@@ -147,9 +151,15 @@ license volume (`ens-license`: installed license and installation id) are reused
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
 backup.
 
+Settings a release adds are not written into an existing `.env` (except `X509_PROXY_SECRET`):
+they take their defaults, and older names keep working (`SESSION_TTL_MINUTES`, `COOKIE_SECURE`,
+`X509_CHECK_REVOCATION`). Compare your `.env` with this package's `env.template` to adopt them.
+
 ## Notes
 
 - Both containers run as unprivileged users on unprivileged ports and also run under an
-  arbitrary UID (OpenShift `restricted`).
+  arbitrary UID (OpenShift `restricted`), without Linux capabilities or privilege escalation
+  (`no-new-privileges`), on a read-only root file system (tmpfs where they write) and with memory
+  limits (`API_MEMORY_LIMIT`, default `1536m`; `WEB_MEMORY_LIMIT`, `256m`).
 - The API is never published on the host; only the web tier talks to it.
 - Run one API instance: sessions and background tasks are held in its memory.
