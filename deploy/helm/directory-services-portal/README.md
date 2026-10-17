@@ -133,7 +133,18 @@ Both images run under an arbitrary UID in group 0.
 ### X.509 smart-card sign-in
 
 The API reads the certificate from a header set by a trusted proxy. Two setups are supported;
-the license must include `smart-card-sign-in`.
+the license must include `smart-card-sign-in`. In both, the API accepts that header only from
+the web pods' addresses (`x509.trustedProxies`) **together with the proxy secret** the web pods
+send with every request, and checks the certificate chain itself against the CA in
+`x509.trustedCa` (or `tls`'s `ca.pem`), which is required. The chart generates the proxy secret
+into the Secret `<release>-directory-services-portal-x509-proxy`, keeps it across upgrades and
+mounts it into both pods. Rendering the chart without access to the cluster (`helm template`,
+Argo CD) would generate a new one each time: there, create the Secret yourself and set
+`x509.proxySecret.existingSecret`:
+
+```bash
+kubectl create secret generic dsp-x509-proxy -n dsp --from-literal=proxy-secret="$(openssl rand -hex 32)"
+```
 
 **TLS passthrough to the pod (recommended).** The web pod terminates TLS on 8443 with the web
 image's mTLS nginx config, asks browsers for a certificate (optional, so password sign-in keeps
@@ -179,8 +190,9 @@ Set `tls.httpsPortSuffix` (for example `":8443"`) when browsers reach HTTPS on a
 than 443; it is used in the HTTP-to-HTTPS redirect.
 
 **Edge termination at the ingress.** The ingress controller verifies the certificate and
-forwards it in its own header; the web tier passes it on and the API accepts it from the web
-pods' addresses (`x509.trustedProxies`). With ingress-nginx:
+forwards it in its own header (`x509.header`); the web tier passes that header on and removes
+any other certificate header, and the API accepts it from the web pods with the proxy secret.
+With ingress-nginx:
 
 ```bash
 kubectl create secret generic dsp-client-ca -n dsp --from-file=ca.crt=user-ca.pem
@@ -214,9 +226,14 @@ networkPolicy:                     # only the ingress controller may reach the w
           kubernetes.io/metadata.name: ingress-nginx
 ```
 
-Use `optional`, never `optional_no_ca`. In this setup anyone who can reach the web Service
-directly could send the header, so restrict it with `networkPolicy.webIngressFrom` (or an
-equivalent policy). An OpenShift Route cannot forward client certificates: use passthrough there.
+Use `optional`, never `optional_no_ca`, and keep `auth-tls-pass-certificate-to-upstream: "true"`:
+then the controller always sets `ssl-client-cert` itself, replacing any copy a client sends. In
+this setup anyone who can reach the web pods without going through the ingress controller could
+send the header with a user's certificate (which is public), so the chart refuses to render it
+unless `networkPolicy.enabled` is `true` and `networkPolicy.webIngressFrom` lists the ingress
+controller's pods. If other controls already ensure that only the ingress controller reaches the
+web pods (a cluster-wide policy, a service mesh), set `x509.allowUnrestrictedWebIngress: true`
+instead. An OpenShift Route cannot forward client certificates: use passthrough there.
 
 ### Air-gapped
 
@@ -241,7 +258,11 @@ helm upgrade dsp oci://ghcr.io/winllc/charts/directory-services-portal --version
 ```
 
 The API is replaced (`Recreate`: the old pod stops before the new one starts); the PVCs, and
-with them the license, the installation id and the data, are kept. A license given with
+with them the license, the installation id and the data, are kept. With `x509.enabled`, the first
+upgrade to a release with the X.509 proxy secret generates it and restarts both workloads; an
+edge-terminated setup (without `tls.enabled`) then also needs `x509.trustedCa`,
+`networkPolicy.enabled` and `networkPolicy.webIngressFrom` (or
+`x509.allowUnrestrictedWebIngress`), or the upgrade stops with a message saying so. A license given with
 `license.*` is copied only into an empty license volume, so a newer license uploaded on the
 license screen is never overwritten. Back up the data PVC before upgrading.
 
@@ -388,18 +409,23 @@ Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `FORWARD_HEADERS_STRATEGY=fra
 | `x509.passwordLoginEnabled` | `PASSWORD_LOGIN_ENABLED` | `true` |
 | `x509.header` | `X509_HEADER` | `""` (`X-SSL-Client-Cert`; edge termination: the controller's header) |
 | `x509.trustedProxies` | `X509_TRUSTED_PROXIES` | `10.0.0.0/8;172.16.0.0/12;192.168.0.0/16` (the pod network) |
-| `x509.trustedCa.value` / `.existingSecret` / `.existingSecretKey` | `X509_TRUSTED_CA_FILE` | empty: `tls`'s `ca.pem` when `tls.enabled` |
+| `x509.proxySecret.existingSecret` / `.existingSecretKey` | `X509_PROXY_SECRET_FILE` (API and web) | `""` (generated, kept across upgrades) / `proxy-secret` |
+| `x509.trustedCa.value` / `.existingSecret` / `.existingSecretKey` | `X509_TRUSTED_CA_FILE` | empty: `tls`'s `ca.pem` when `tls.enabled`; required with `x509.enabled` |
 | `x509.checkRevocation` | `X509_CHECK_REVOCATION` | `false` |
 | `x509.mapping` | `X509_MAPPING` | `filter` |
 | `x509.userFilter` | `X509_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{cn}}))` |
 | `x509.requireCertificateMatch` | `X509_REQUIRE_CERTIFICATE_MATCH` | `false` |
 | `x509.autoLogin` | `X509_AUTO_LOGIN` | `false` |
+| `x509.allowUnrestrictedWebIngress` | | `false`: edge termination needs `networkPolicy.enabled` and `networkPolicy.webIngressFrom` |
 | `tls.enabled` | web: HTTPS on 8443 (`templates-mtls`) | `false` |
 | `tls.existingSecret` | Secret with `server.pem`, `server.key`, `ca.pem` | `""` |
 | `tls.certificate` / `.key` / `.clientCa` | PEM values instead (`--set-file`) | `""` |
 | `tls.httpsPortSuffix` | `HTTPS_PORT_SUFFIX` | `""` |
 
-`X509_SOURCE` is always `header`: browsers reach the API only through the web tier.
+`X509_SOURCE` is always `header`: browsers reach the API only through the web tier. The web pods
+also get `X509_HEADER`, `X509_EDGE_TERMINATION` (`true` with `x509.enabled` and not
+`tls.enabled`: the ingress controller's header is passed on, other copies are removed) and the
+proxy secret.
 
 ### Networking
 
@@ -416,7 +442,7 @@ Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `FORWARD_HEADERS_STRATEGY=fra
 | `route.tls.insecureEdgeTerminationPolicy` | `Redirect` | |
 | `route.tls.certificate` / `.key` / `.caCertificate` / `.destinationCACertificate` | `""` | |
 | `networkPolicy.enabled` | `false` | web: in on 8080/8443, out to DNS and the API; API: in from the web pods only |
-| `networkPolicy.webIngressFrom` | `[]` | peers allowed to reach the web tier (empty: any) |
+| `networkPolicy.webIngressFrom` | `[]` | peers allowed to reach the web tier (empty: any); required for edge-terminated X.509 sign-in |
 | `networkPolicy.egress.allowAll` | `false` | true: the API may connect anywhere |
 | `networkPolicy.egress.ldap.ports` / `.cidrs` | `[389, 636]` / `[0.0.0.0/0]` | |
 | `networkPolicy.egress.audit.ports` / `.cidrs` | `[443, 514, 6514, 8088]` / `[0.0.0.0/0]` | Splunk, syslog (UDP added for `protocol: udp`), OCSP/CRL |

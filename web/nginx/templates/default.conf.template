@@ -32,8 +32,12 @@ server {
         # The host (and port) the browser used; the port nginx listens on is internal.
         proxy_set_header X-Forwarded-Host $http_host;
         proxy_read_timeout 120s;
+        # Proves to the API that the request came through this proxy (the X.509 proxy secret), in
+        # place of any value a client sent.
+        proxy_set_header X-DSP-Proxy-Secret "${DSP_PROXY_SECRET}";
         # Never let a client supply a certificate header (see templates-mtls for X.509 sign-in).
-        proxy_set_header X-SSL-Client-Cert "";
+        # Which headers: X509_HEADER and X509_EDGE_TERMINATION, see entrypoint.sh.
+        ${DSP_CERT_HEADERS_HTTP}
     }
 
     # Hashed build assets never change.

@@ -6,6 +6,9 @@ services:
     environment:
       NGINX_ENVSUBST_TEMPLATE_DIR: /etc/nginx/templates-mtls
       HTTPS_PORT_SUFFIX: ${HTTPS_PORT_SUFFIX:-:8443}
+      # nginx verifies the certificate and sends it, with X509_PROXY_SECRET from .env.
+      X509_HEADER: X-SSL-Client-Cert
+      X509_EDGE_TERMINATION: "false"
     volumes:
       - ./certs/server.pem:/etc/nginx/tls/server.pem:ro
       - ./certs/server.key:/etc/nginx/tls/server.key:ro
@@ -18,7 +21,8 @@ services:
       COOKIE_SECURE: "true"
       X509_SOURCE: header
       X509_HEADER: X-SSL-Client-Cert
-      # Only the web proxy on the compose network may send the certificate header.
+      # Only the web proxy on the compose network may send the certificate header, and only
+      # with X509_PROXY_SECRET (from .env, like every other setting).
       X509_TRUSTED_PROXIES: "10.0.0.0/8;172.16.0.0/12;192.168.0.0/16"
       X509_TRUSTED_CA_FILE: /certs/ca.pem
     volumes:

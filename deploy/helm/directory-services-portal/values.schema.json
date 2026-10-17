@@ -717,6 +717,17 @@
         "trustedProxies": {
           "type": "string"
         },
+        "proxySecret": {
+          "type": "object",
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "existingSecretKey": {
+              "type": "string"
+            }
+          }
+        },
         "trustedCa": {
           "type": "object",
           "properties": {
@@ -748,6 +759,9 @@
           "type": "boolean"
         },
         "autoLogin": {
+          "type": "boolean"
+        },
+        "allowUnrestrictedWebIngress": {
           "type": "boolean"
         }
       }

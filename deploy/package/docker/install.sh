@@ -101,6 +101,16 @@ else
   say "Wrote .env"
 fi
 
+# The X.509 proxy secret: the web proxy sends it to the API, which accepts a forwarded client
+# certificate only with it. Generated once (also into the .env of an earlier release); kept after.
+if ! grep -q '^X509_PROXY_SECRET=.' .env; then
+  secret="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  [ "${#secret}" -eq 64 ] || die "Could not generate the X.509 proxy secret."
+  if grep -q '^X509_PROXY_SECRET=' .env; then setenv X509_PROXY_SECRET "$secret"
+  else printf '\n# Generated: the secret the web proxy sends to the API (X.509 sign-in; see env.template).\nX509_PROXY_SECRET=%s\n' "$secret" >> .env; fi
+  say "Generated X509_PROXY_SECRET in .env"
+fi
+
 if [ -n "$https_port" ] || grep -q '^COMPOSE_FILE=.*mtls' .env; then
   mkdir -p certs
   if [ ! -f certs/server.pem ] || [ ! -f certs/server.key ] || [ ! -f certs/ca.pem ]; then

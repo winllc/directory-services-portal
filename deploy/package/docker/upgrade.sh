@@ -51,7 +51,8 @@ if [ -n "$prev" ]; then
 fi
 [ -f .env ] || die "No .env here. Run ./upgrade.sh <directory of the running version>, or ./install.sh for a first install."
 
-# Verify the package and load its images (install.sh keeps the existing .env).
+# Verify the package and load its images (install.sh keeps the existing .env, adding the X.509
+# proxy secret if it has none).
 ./install.sh --no-license ${install_args[@]+"${install_args[@]}"} >/dev/null
 
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '"'; }

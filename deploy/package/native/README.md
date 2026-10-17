@@ -16,6 +16,7 @@ sudo systemctl restart directory-services-portal
 | `/opt/directory-services-portal/api` | the API (`directory-services-portal.jar`), run by systemd as user `dsp` on 127.0.0.1:3001 |
 | `/opt/directory-services-portal/web` | the web client (static files) |
 | `/etc/directory-services-portal/portal.env` | settings, documented; kept on upgrades |
+| `/etc/directory-services-portal/proxy-secret` | the X.509 proxy secret (root and `dsp` only), generated once; `nginx-proxy-secret.conf` next to it is the copy nginx includes (root only) |
 | `/var/lib/ens/directory-portal` | the ENS license (`ENS_LICENSE_FILE`, written by the license screen), this installation's id and the license revisions seen (`ENS_LICENSE_STATE_DIR`); keep it |
 | `/var/lib/directory-services-portal` | data: configuration, audit log, analysis results (back this up) |
 | `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on port 8080 and proxies `/api` (when nginx is installed) |
@@ -30,7 +31,17 @@ sudo systemctl restart directory-services-portal
   says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
   `COOKIE_SECURE=true`. For X.509 sign-in through nginx (`X509_SOURCE=header`,
-  `X509_TRUSTED_PROXIES=127.0.0.1/32`), see the installation guide:
+  `X509_TRUSTED_PROXIES=127.0.0.1/32`, `X509_TRUSTED_CA_FILE`), see the installation guide:
   https://winllc.github.io/ens-apps-documentation/directory-services-portal/install/
+  The location that proxies `/api` in that server must
+  `include /etc/directory-services-portal/nginx-proxy-secret.conf;` (as the packaged site does) and
+  set the certificate header itself (`proxy_set_header X-SSL-Client-Cert $ssl_client_escaped_cert;`):
+  the API accepts a forwarded certificate only with the proxy secret, and does not start in header
+  mode without it or without `X509_TRUSTED_CA_FILE`. Other local processes can reach
+  127.0.0.1:3001 too, which is why the address alone is not trusted. To change the secret, write a
+  new value to `proxy-secret` and run `install.sh` again (it rewrites nginx's copy), then restart
+  the API.
 - With SELinux enforcing, nginx needs `setsebool -P httpd_can_network_connect 1` to reach the API.
-- Upgrade: run the new package's `install.sh`; settings and data are kept.
+- Upgrade: run the new package's `install.sh`; settings and data are kept. It generates the X.509
+  proxy secret if there is none yet; restart the API afterwards
+  (`systemctl restart directory-services-portal`).

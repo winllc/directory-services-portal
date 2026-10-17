@@ -141,6 +141,40 @@ secretKeyRef:
 {{- .Values.x509.header | default "X-SSL-Client-Cert" -}}
 {{- end -}}
 
+{{/* Edge termination: the ingress controller, not the web pod, verifies client certificates. */}}
+{{- define "dsp.x509Edge" -}}
+{{- if and .Values.x509.enabled (not .Values.tls.enabled) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+The X.509 proxy secret, which the web pods send to the API with every request: the Secret and
+key holding it. Mounted into both pods at /etc/dsp/x509-proxy/proxy-secret.
+*/}}
+{{- define "dsp.x509ProxySecretName" -}}
+{{- .Values.x509.proxySecret.existingSecret | default (printf "%s-x509-proxy" (include "dsp.fullname" .)) -}}
+{{- end -}}
+
+{{- define "dsp.x509ProxySecretKey" -}}
+{{- if .Values.x509.proxySecret.existingSecret -}}
+{{- required "x509.proxySecret.existingSecretKey is required with x509.proxySecret.existingSecret" .Values.x509.proxySecret.existingSecretKey -}}
+{{- else -}}proxy-secret{{- end -}}
+{{- end -}}
+
+{{/*
+The generated proxy secret (base64): the value already in the cluster, so that upgrades keep it,
+else a new random one. Without access to the cluster (helm template) it is new on every render.
+*/}}
+{{- define "dsp.x509ProxySecretValue" -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace (printf "%s-x509-proxy" (include "dsp.fullname" .)) -}}
+{{- $data := dict -}}
+{{- if $existing -}}{{- $data = $existing.data | default dict -}}{{- end -}}
+{{- if index $data "proxy-secret" -}}
+{{- index $data "proxy-secret" -}}
+{{- else -}}
+{{- randAlphaNum 64 | b64enc -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Validation of value combinations that would otherwise fail at runtime. */}}
 {{- define "dsp.validate" -}}
 {{- if gt (int .Values.api.replicaCount) 1 -}}
@@ -148,6 +182,12 @@ secretKeyRef:
 {{- end -}}
 {{- if and .Values.x509.enabled (not .Values.tls.enabled) (eq (lower (include "dsp.x509Header" .)) "x-ssl-client-cert") -}}
 {{- fail "x509.enabled without tls.enabled (edge termination) needs x509.header set to the header your ingress controller forwards the certificate in (ingress-nginx: ssl-client-cert); the web tier blanks X-SSL-Client-Cert on plain HTTP" -}}
+{{- end -}}
+{{- if and .Values.x509.enabled (not (include "dsp.x509CaConfigured" .)) -}}
+{{- fail "x509.enabled needs x509.trustedCa (the CA certificates that issue user certificates; with tls.enabled, tls's ca.pem is used): the API validates every forwarded certificate itself and refuses to start without them" -}}
+{{- end -}}
+{{- if and (include "dsp.x509Edge" .) (not .Values.x509.allowUnrestrictedWebIngress) (not (and .Values.networkPolicy.enabled .Values.networkPolicy.webIngressFrom)) -}}
+{{- fail "x509.enabled without tls.enabled (edge termination) trusts the certificate header the ingress controller sets, so only the ingress controller may reach the web pods: set networkPolicy.enabled=true and networkPolicy.webIngressFrom to the ingress controller's pods (for example its namespace). If other controls already ensure this, set x509.allowUnrestrictedWebIngress=true" -}}
 {{- end -}}
 {{- if and .Values.tls.enabled (not .Values.tls.existingSecret) (not (and .Values.tls.certificate .Values.tls.key .Values.tls.clientCa)) -}}
 {{- fail "tls.enabled needs tls.existingSecret (keys server.pem, server.key, ca.pem) or tls.certificate, tls.key and tls.clientCa" -}}

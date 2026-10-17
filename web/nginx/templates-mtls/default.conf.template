@@ -1,7 +1,9 @@
 # HTTPS with optional X.509 client certificates (select with
 # NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates-mtls). nginx verifies the client certificate
 # against /etc/nginx/tls/ca.pem and forwards it to the API in X-SSL-Client-Cert, which the API
-# accepts with X509_SOURCE=header. Mount server.pem, server.key and ca.pem into /etc/nginx/tls.
+# accepts with X509_SOURCE=header, together with the proxy secret (X509_PROXY_SECRET_FILE or
+# X509_PROXY_SECRET, the same value as the API's). Mount server.pem, server.key and ca.pem into
+# /etc/nginx/tls.
 
 # Forward only certificates nginx verified, and only to the endpoints that use them (certificate
 # sign-in and the auto sign-in check). Every other request gets an empty header, which keeps a
@@ -57,7 +59,11 @@ server {
         # The host (and port) the browser used; the port nginx listens on is internal.
         proxy_set_header X-Forwarded-Host $http_host;
         proxy_read_timeout 120s;
-        proxy_set_header X-SSL-Client-Cert $dsp_client_cert;
+        # Proves to the API that the request came through this proxy (the X.509 proxy secret), in
+        # place of any value a client sent; the API trusts the certificate header only with it.
+        proxy_set_header X-DSP-Proxy-Secret "${DSP_PROXY_SECRET}";
+        # The verified certificate, in the header the API reads (X509_HEADER, see entrypoint.sh).
+        ${DSP_CERT_HEADERS_HTTPS}
     }
 
     # Hashed build assets never change.

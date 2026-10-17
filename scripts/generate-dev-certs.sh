@@ -3,6 +3,8 @@
 #   ca.pem / ca.key           certificate authority that issues user certificates
 #   server.pem / server.key   TLS certificate for https://localhost:8443
 #   <user>.pem / <user>.key / <user>.p12   client certificates (p12 password: "password")
+#   proxy-secret              the secret the web proxy sends to the API (the source tree's
+#                             docker-compose.mtls.yml)
 # Usage: scripts/generate-dev-certs.sh [out-dir] [users...]   (default: ./certs admin alice bob)
 # Development only: keys are unencrypted and the CA is not protected.
 set -euo pipefail
@@ -30,8 +32,11 @@ for u in "${USERS[@]}"; do
   rm -f "$u.csr"
 done
 rm -f server.csr
-# The web container's nginx runs unprivileged (uid 1001), so the bind-mounted key must be readable.
-chmod 0644 server.key
+# The web proxy proves itself to the API with this (X509_PROXY_SECRET_FILE in both containers).
+if [ ! -s proxy-secret ]; then openssl rand -hex 32 > proxy-secret; fi
+# The web container's nginx runs unprivileged (uid 1001), so the bind-mounted key must be readable;
+# so must the proxy secret, by both containers' users.
+chmod 0644 server.key proxy-secret
 echo "Certificates written to $(pwd)"
 echo "Start the portal with mutual TLS:"
 echo "  SPRING_PROFILES_ACTIVE=mtls TLS_CERT_FILE=$(pwd)/server.pem TLS_KEY_FILE=$(pwd)/server.key TLS_CLIENT_CA_FILE=$(pwd)/ca.pem \\"

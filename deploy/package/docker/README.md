@@ -91,6 +91,10 @@ certificates in `./certs` and asks browsers for an (optional) client certificate
 
 Set `X509_ENABLED=true` (done by the installer) and adjust `X509_USER_FILTER` to map certificates to
 directory users. Password sign-in keeps working unless `PASSWORD_LOGIN_ENABLED=false`.
+nginx forwards the verified certificate to the API together with `X509_PROXY_SECRET`, a random
+secret `install.sh` writes to `.env` (and `upgrade.sh` adds when an older `.env` has none): the
+API accepts a forwarded certificate only with it, and checks it against `certs/ca.pem` too. Keep
+`.env` private (mode 600).
 For a test: `scripts/generate-dev-certs.sh certs` creates a CA, a server certificate and user
 certificates (`certs/alice.p12`, password `password`).
 
@@ -122,8 +126,9 @@ cd directory-services-portal-<new-version>
 ```
 
 It copies `.env`, `license/` and `certs/` across (never overwriting), verifies the package and
-loads its images, backs up the portal data to `backups/`, points `.env` at the new images
-(keeping a `.env.bak-<time>`) and restarts with `./portal.sh up`. The data volume and the
+loads its images, adds settings new in this release (`X509_PROXY_SECRET`, generated), backs up
+the portal data to `backups/`, points `.env` at the new images (keeping a `.env.bak-<time>`) and
+restarts with `./portal.sh up`. The data volume and the
 license volume (`ens-license`: installed license and installation id) are reused; a
 `license/license.lic` is copied in only if the volume has no license yet.
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the

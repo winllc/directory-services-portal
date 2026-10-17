@@ -483,12 +483,27 @@ certificate comes from:
   to the web tier, so this is how certificate sign-in works with the separate web and API
   services. The proxy verifies the certificate and forwards it in `X509_HEADER`. The formats
   understood are PEM, URL-encoded PEM (nginx `$ssl_client_escaped_cert`, AWS ALB), base64 DER and
-  Envoy `x-forwarded-client-cert`. The header is **ignored unless the connecting peer is in
-  `X509_TRUSTED_PROXIES`**. The check uses the actual connection, never `X-Forwarded-For`, so
-  use `FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite
-  any incoming copy of the header; the bundled nginx configs always do, and forward the
-  certificate only to the sign-in endpoints (`/api/auth/x509`, `/api/auth/me`). Also set
-  `X509_TRUSTED_CA_FILE` so the API validates the chain itself.
+  Envoy `x-forwarded-client-cert`. The header is **refused unless the connecting peer is in
+  `X509_TRUSTED_PROXIES` and the request carries the proxy secret**: the proxy sends
+  `X-DSP-Proxy-Secret` with every request, with the value of `X509_PROXY_SECRET_FILE` (preferred)
+  or `X509_PROXY_SECRET` (at least 32 characters, e.g. `openssl rand -hex 32`; the same value for
+  the API and the web tier). An address alone is not enough: other pods or local processes can
+  share it, and the header carries no proof that the sender holds the certificate's key. The
+  address check uses the actual connection, never `X-Forwarded-For`, so use
+  `FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite any
+  incoming copy of the certificate header and of `X-DSP-Proxy-Secret`; the bundled nginx configs
+  always do, and forward the certificate only to the sign-in endpoints (`/api/auth/x509`,
+  `/api/auth/me`). `X509_TRUSTED_CA_FILE` is required too, so that the API validates the chain
+  itself. **The API refuses to start in header mode without the proxy secret or the CA file.**
+  Refused headers are logged (WARN) and audited (`auth.login` failure with
+  `details.reasonCode=untrusted_certificate_header` and the connecting `peerAddress`).
+
+  The web image reads the secret from the same `X509_PROXY_SECRET_FILE` / `X509_PROXY_SECRET`.
+  It removes `X-SSL-Client-Cert` and `X509_HEADER` from client requests on plain HTTP, unless a
+  TLS-terminating proxy in front of it verifies client certificates and always sets
+  `X509_HEADER` itself (edge termination, `X509_EDGE_TERMINATION=true` on the web container;
+  then nothing else may reach the web tier). The release packages and the Helm chart generate
+  and wire the secret.
 
   The web image's `templates-mtls` nginx config does this: HTTPS with `ssl_verify_client
   optional`, so password sign-in keeps working. The release package turns it on with
@@ -498,7 +513,7 @@ certificate comes from:
   group 0), so `server.key` must be readable by that user or group (for example
   `chgrp 0 server.key && chmod 0640 server.key`). To try it from the source tree (development):
   ```bash
-  scripts/generate-dev-certs.sh certs          # throw-away CA, server cert, admin/alice/bob .p12 (password: password)
+  scripts/generate-dev-certs.sh certs          # throw-away CA, server cert, admin/alice/bob .p12 (password: password), proxy secret
   docker compose -f docker-compose.yml -f docker-compose.mtls.yml up --build
   # import certs/alice.p12 into the browser, open https://localhost:8443, "Sign in with certificate"
   ```
@@ -561,12 +576,14 @@ name. Any other value stops the API at startup with an error naming the setting.
   rules in `shared/`).
 - Password attributes are never returned to the browser. Empty passwords are rejected before
   any bind, so anonymous binds can't be used to log in.
-- Certificate sign-in validates the certificate (dates, key usage, optional chain and revocation)
-  before mapping it to exactly one directory user. Forwarded certificate headers are only
-  honoured from trusted proxy addresses.
+- Certificate sign-in validates the certificate (dates, key usage, chain and optional
+  revocation) before mapping it to exactly one directory user. Forwarded certificate headers are
+  only honoured from trusted proxy addresses that also send the proxy secret
+  (`X-DSP-Proxy-Secret`, compared in constant time); without the secret and a trusted CA file
+  the API does not start in header mode.
 - The web proxy overwrites `X-Forwarded-For` (clients can't spoof their address, which login
-  throttling relies on) and always replaces `X-SSL-Client-Cert`. The API is not published in
-  Docker Compose, so only the proxy can reach it.
+  throttling relies on) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
+  certificate header. The API is not published in Docker Compose, so only the proxy can reach it.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
   `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`). The session ID is rotated at login,
   and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).

@@ -208,7 +208,11 @@ package_native() {
       -e 's|root /usr/share/nginx/html;|root /opt/directory-services-portal/web;|' \
       -e 's|^# Rendered at container start.*|# Directory Services Portal '"$version"': serves the web client and proxies /api to the local API.|' \
       -e '/^# \${NGINX_LOCAL_RESOLVERS}/d' \
+      -e 's|proxy_set_header X-DSP-Proxy-Secret "\${DSP_PROXY_SECRET}";|include /etc/directory-services-portal/nginx-proxy-secret.conf;  # written by install.sh|' \
+      -e 's|\${DSP_CERT_HEADERS_HTTP}|proxy_set_header X-SSL-Client-Cert "";|' \
+      -e '/X509_EDGE_TERMINATION, see entrypoint.sh/d' \
       "$ROOT/web/nginx/templates/default.conf.template" | cat -s > "$dir/nginx/directory-services-portal.conf"
+  if grep -q '\${' "$dir/nginx/directory-services-portal.conf"; then die "Unreplaced template variable in the nginx site"; fi
   # Settings: the container template without its compose section, plus the server settings.
   {
     echo "# Directory Services Portal $version settings (systemd EnvironmentFile)."
@@ -235,8 +239,16 @@ package_native() {
     sed -n '/^# --- Directory connection/,$p' "$TEMPLATES/docker/env.template" \
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \
             -e 's|(with docker-compose.mtls.yml)|(behind nginx: X509_SOURCE=header)|' \
-            -e 's|=\"\(#[0-9a-fA-F]*\)\"$|=\1|'
+            -e 's|=\"\(#[0-9a-fA-F]*\)\"$|=\1|' \
+            -e '/^# The secret the web proxy sends to the API/,/^X509_PROXY_SECRET=$/c\
+# The secret nginx sends to the API with every request (X-DSP-Proxy-Secret): the API accepts a\
+# forwarded client certificate only with it. install.sh generates it into the file below (root\
+# and dsp only) and the copy nginx includes into nginx-proxy-secret.conf next to it (root only).\
+# To change it, write a new value to the file (at least 32 characters, e.g. openssl rand -hex 32)\
+# and run install.sh again.\
+X509_PROXY_SECRET_FILE=/etc/directory-services-portal/proxy-secret'
   } > "$dir/portal.env"
+  if grep -q '^X509_PROXY_SECRET=' "$dir/portal.env"; then die "portal.env: the X.509 proxy secret block was not replaced"; fi
   chmod 644 "$dir/portal.env"
   finish "$dir" "$name-native"
 }

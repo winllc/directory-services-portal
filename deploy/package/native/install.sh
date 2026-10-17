@@ -2,6 +2,8 @@
 # Installs the Directory Services Portal @VERSION@ on this host without containers:
 #   /opt/directory-services-portal            the API jar and the web client
 #   /etc/directory-services-portal/portal.env settings (kept if it exists)
+#   /etc/directory-services-portal/proxy-secret  X.509 proxy secret (generated if missing), and
+#     nginx-proxy-secret.conf, the copy nginx includes
 #   /var/lib/directory-services-portal        data (configuration, audit log, results)
 #   /var/lib/ens/directory-portal             ENS license, installation id (ENS_LICENSE_* in portal.env)
 #   systemd unit directory-services-portal    the API, on 127.0.0.1:3001
@@ -58,6 +60,25 @@ else
   say "Wrote $ETC/portal.env"
 fi
 
+# The X.509 proxy secret: nginx sends it to the API with every request (X-DSP-Proxy-Secret), and
+# the API accepts a forwarded client certificate only with it (X509_SOURCE=header). The API reads
+# $ETC/proxy-secret (X509_PROXY_SECRET_FILE, set in the unit; root and dsp only). nginx, whose
+# master process reads its configuration as root, includes $ETC/nginx-proxy-secret.conf (root
+# only), rewritten from it on every run. Generated once; to change it, write a new value to
+# $ETC/proxy-secret and run this again.
+if [ ! -s "$ETC/proxy-secret" ]; then
+  (umask 077 && head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$ETC/proxy-secret")
+  say "Generated the X.509 proxy secret ($ETC/proxy-secret)"
+fi
+chown root:dsp "$ETC/proxy-secret" && chmod 640 "$ETC/proxy-secret"
+proxy_secret="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$ETC/proxy-secret")"
+secret_re='^[[:alnum:]._~+/=-]{32,}$'
+[[ "$proxy_secret" =~ $secret_re ]] \
+  || die "$ETC/proxy-secret must hold one value of at least 32 letters, digits or . _ ~ + / = - (e.g. openssl rand -hex 32)."
+(umask 077 && printf '# Written by install.sh from %s: the X.509 proxy secret, sent to the API.\nproxy_set_header X-DSP-Proxy-Secret "%s";\n' \
+  "$ETC/proxy-secret" "$proxy_secret" > "$ETC/nginx-proxy-secret.conf")
+chown root:root "$ETC/nginx-proxy-secret.conf" && chmod 600 "$ETC/nginx-proxy-secret.conf"
+
 install -d /etc/systemd/system
 sed "s|@JAVA@|$JAVA|" directory-services-portal.service > /etc/systemd/system/directory-services-portal.service
 systemctl daemon-reload
@@ -74,6 +95,12 @@ if command -v nginx >/dev/null; then
   fi
 else
   say "nginx is not installed: serve $PREFIX/web with your web server and proxy /api to 127.0.0.1:3001 (example: nginx/directory-services-portal.conf)"
+  echo "    For X.509 sign-in it must also send X-DSP-Proxy-Secret with the value in $ETC/proxy-secret."
+fi
+if grep -q '^X509_SOURCE=header' "$ETC/portal.env"; then
+  echo "    X.509 sign-in through nginx: the location that proxies /api in your HTTPS server must"
+  echo "    include $ETC/nginx-proxy-secret.conf, and portal.env must set X509_TRUSTED_CA_FILE;"
+  echo "    the API refuses forwarded certificates without the one and does not start without the other."
 fi
 
 echo

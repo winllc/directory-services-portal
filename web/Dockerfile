@@ -14,7 +14,9 @@ RUN npm run build -w web
 FROM registry.access.redhat.com/ubi9/nginx-126:latest
 # Where /api is forwarded to (scheme://host:port, no path).
 # Set NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates-mtls for HTTPS with X.509 client
-# certificates (see docker-compose.mtls.yml).
+# certificates (see docker-compose.mtls.yml). X.509 sign-in also takes the API's proxy secret
+# (X509_PROXY_SECRET_FILE or X509_PROXY_SECRET), X509_HEADER and X509_EDGE_TERMINATION (see
+# nginx/entrypoint.sh).
 ENV API_URL=http://api:3001 \
     HTTPS_PORT_SUFFIX="" \
     NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates

@@ -80,6 +80,7 @@ public class X509AuthService {
     try {
       return enabled() && extractor.extract(request).isPresent();
     } catch (CertificateRejectedException e) {
+      if (CertificateRejectedException.UNTRUSTED_HEADER.equals(e.reasonCode())) auditNotExtracted(request, e);
       return false;
     }
   }
@@ -95,7 +96,7 @@ public class X509AuthService {
     try {
       chain = extractor.extract(request).orElseThrow(() -> new CertificateRejectedException("No client certificate was presented"));
     } catch (CertificateRejectedException e) {
-      audit.event("auth.login").anonymous(null).detail("method", "x509").failed(e.getMessage());
+      auditNotExtracted(request, e);
       throw e;
     }
     CertificateIdentity identity = CertificateIdentity.of(chain[0]);
@@ -115,6 +116,19 @@ public class X509AuthService {
       event.anonymous(identity.cn() != null ? identity.cn() : identity.subject()).failed(e.getMessage());
       throw e;
     }
+  }
+
+  /**
+   * A sign-in that failed before there was a certificate to identify. A forwarded header that did
+   * not come from the portal's proxy also records the connecting peer, which (unlike the source
+   * address, taken from X-Forwarded-For) the sender cannot choose.
+   */
+  private void auditNotExtracted(HttpServletRequest request, CertificateRejectedException e) {
+    AuditLog.Draft event = audit.event("auth.login").anonymous(null).detail("method", "x509");
+    if (e.reasonCode() != null) {
+      event.detail("reasonCode", e.reasonCode()).detail("peerAddress", ClientCertificateExtractor.peerAddress(request));
+    }
+    event.failed(e.getMessage());
   }
 
   String mapToUser(CertificateIdentity identity) {

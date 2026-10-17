@@ -25,6 +25,10 @@ spec:
         {{- if and $v.tls.enabled (not $v.tls.existingSecret) }}
         checksum/tls: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
+        {{- if and $v.x509.enabled (not $v.x509.proxySecret.existingSecret) }}
+        # nginx reads the proxy secret at start: restart when it changes.
+        checksum/x509-proxy: {{ include "dsp.x509ProxySecretValue" . | sha256sum }}
+        {{- end }}
         {{- with $v.web.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -65,6 +69,18 @@ spec:
               value: /etc/nginx/templates-mtls
             - name: HTTPS_PORT_SUFFIX
               value: {{ $v.tls.httpsPortSuffix | quote }}
+            {{- end }}
+            # The header the API reads the client certificate from: set from the verified
+            # certificate (tls.enabled), passed on from the ingress controller (edge termination),
+            # else removed from client requests.
+            - name: X509_HEADER
+              value: {{ include "dsp.x509Header" . | quote }}
+            - name: X509_EDGE_TERMINATION
+              value: {{ ternary "true" "false" (eq (include "dsp.x509Edge" .) "true") | quote }}
+            {{- if $v.x509.enabled }}
+            # Sent to the API with every request (X-DSP-Proxy-Secret).
+            - name: X509_PROXY_SECRET_FILE
+              value: /etc/dsp/x509-proxy/proxy-secret
             {{- end }}
             {{- with $v.web.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -117,6 +133,11 @@ spec:
               mountPath: /etc/nginx/tls
               readOnly: true
             {{- end }}
+            {{- if $v.x509.enabled }}
+            - name: x509-proxy
+              mountPath: /etc/dsp/x509-proxy
+              readOnly: true
+            {{- end }}
             {{- with $v.web.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -140,6 +161,16 @@ spec:
                 path: server.key
               - key: ca.pem
                 path: ca.pem
+        {{- end }}
+        {{- if $v.x509.enabled }}
+        - name: x509-proxy
+          secret:
+            secretName: {{ include "dsp.x509ProxySecretName" . }}
+            # Group-readable: nginx runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: {{ include "dsp.x509ProxySecretKey" . }}
+                path: proxy-secret
         {{- end }}
         {{- with $v.web.extraVolumes }}
         {{- toYaml . | nindent 8 }}

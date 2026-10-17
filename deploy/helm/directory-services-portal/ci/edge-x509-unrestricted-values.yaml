@@ -1,0 +1,35 @@
+# Edge-terminated X.509 sign-in where other controls keep everyone but the ingress controller away
+# from the web pods (x509.allowUnrestrictedWebIngress), and the proxy secret from an existing
+# Secret (as for helm template / Argo CD).
+ldap:
+  url: ldaps://ldap.corp.example:636
+  bindPassword:
+    existingSecret: dsp-ldap
+    existingSecretKey: password
+x509:
+  enabled: true
+  header: ssl-client-cert
+  allowUnrestrictedWebIngress: true
+  proxySecret:
+    existingSecret: dsp-x509-proxy
+    existingSecretKey: secret
+  trustedCa:
+    value: |
+      -----BEGIN CERTIFICATE-----
+      placeholder for lint only
+      -----END CERTIFICATE-----
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/auth-tls-secret: portal/dsp-client-ca
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "optional"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+  hosts:
+    - host: portal.corp.example
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: portal-tls
+      hosts: [portal.corp.example]

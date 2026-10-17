@@ -177,6 +177,11 @@ spec:
               mountPath: /etc/dsp/x509
               readOnly: true
             {{- end }}
+            {{- if $v.x509.enabled }}
+            - name: x509-proxy
+              mountPath: /etc/dsp/x509-proxy
+              readOnly: true
+            {{- end }}
             {{- if $truststore.existingSecret }}
             - name: truststore
               mountPath: /etc/dsp/truststore
@@ -238,6 +243,16 @@ spec:
               - key: ca.pem
                 path: ca.pem
             {{- end }}
+        {{- end }}
+        {{- if $v.x509.enabled }}
+        - name: x509-proxy
+          secret:
+            secretName: {{ include "dsp.x509ProxySecretName" . }}
+            # Group-readable: the API runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: {{ include "dsp.x509ProxySecretKey" . }}
+                path: proxy-secret
         {{- end }}
         {{- if $truststore.existingSecret }}
         - name: truststore
