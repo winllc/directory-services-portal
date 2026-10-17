@@ -2,6 +2,7 @@
   "name": "@dsp/web",
   "version": "0.1.0",
   "private": true,
+  "license": "LicenseRef-ENS-Commercial",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,6 +28,6 @@
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^25.0.1",
     "vite": "^6.0.0",
-    "vitest": "^3.0.0"
+    "vitest": "^5.0.5"
   }
 }

@@ -4,9 +4,10 @@ import { Database, IdCard, LogIn } from 'lucide-react';
 import { useServerInfo } from '../api/hooks';
 import { useAuth } from '../lib/auth';
 import { Alert, Button, FormRow } from '../components/ui';
+import { ConsentNotice } from '../components/ConsentNotice';
 
 export function LoginPage() {
-  const { user, login, loginWithCertificate, certificateError } = useAuth();
+  const { user, login, loginWithCertificate, certificateError, sessionNotice, consentRequired, acknowledgeConsent } = useAuth();
   const info = useServerInfo();
   const navigate = useNavigate();
   const location = useLocation();
@@ -18,6 +19,15 @@ export function LoginPage() {
   const auth = info.data?.auth ?? { password: true, x509: false, x509AutoLogin: false };
 
   if (user) return <Navigate to={from} replace />;
+  // The notice-and-consent banner comes before any sign-in.
+  if (consentRequired && !info.data) return <div className="page-loading"><span className="spinner" /></div>;
+  if (consentRequired && info.data?.consent) {
+    return (
+      <div className="login-page">
+        <ConsentNotice title={info.data.consent.title} text={info.data.consent.text} onAgree={acknowledgeConsent} />
+      </div>
+    );
+  }
 
   const run = async (kind: 'password' | 'certificate', fn: () => Promise<void>) => {
     setError(null);
@@ -54,10 +64,11 @@ export function LoginPage() {
           </p>
         </div>
         {error && <Alert tone="danger">{error}</Alert>}
+        {!error && sessionNotice && <Alert tone="info" title="Signed out">{sessionNotice}</Alert>}
         {!error && certificateError && auth.x509 && <Alert tone="warning" title="Certificate not accepted">{certificateError}</Alert>}
         {info.data && !info.data.connected && (
           <Alert tone="warning" title="Directory unreachable">
-            {info.data.error}
+            {info.data.error ?? 'The portal cannot reach the directory right now, so signing in may fail. Try again later.'}
           </Alert>
         )}
 

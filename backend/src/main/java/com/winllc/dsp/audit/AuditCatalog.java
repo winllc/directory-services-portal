@@ -17,7 +17,8 @@ public final class AuditCatalog {
   private static final Map<String, String> ACTIONS = new LinkedHashMap<>();
 
   static {
-    for (String a : List.of("auth.login", "auth.logout", "auth.lockout", "auth.password-changed", "auth.password-reset")) {
+    for (String a : List.of("auth.login", "auth.logout", "auth.lockout", "auth.password-changed", "auth.password-reset",
+        "auth.consent-acknowledged", "auth.session-expired")) {
       ACTIONS.put(a, "authentication");
     }
     ACTIONS.put("access.denied", "authorization");

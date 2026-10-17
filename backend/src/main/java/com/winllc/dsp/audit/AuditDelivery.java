@@ -1,11 +1,14 @@
 package com.winllc.dsp.audit;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -29,9 +32,11 @@ public class AuditDelivery implements AuditForwarder.Listener {
   private final AuditOutputs outputs;
   private final AuditState state;
   private final List<AuditForwarder> forwarders = new ArrayList<>();
+  private final ObjectProvider<MeterRegistry> meters;
 
-  public AuditDelivery(AuditLog audit, AuditProperties props, AuditOutputs outputs, JsonMapper mapper) {
+  public AuditDelivery(AuditLog audit, AuditProperties props, AuditOutputs outputs, JsonMapper mapper, ObjectProvider<MeterRegistry> meters) {
     this.audit = audit;
+    this.meters = meters;
     this.props = props;
     this.outputs = outputs;
     this.state = new AuditState(audit.store().dir(), mapper);
@@ -58,7 +63,8 @@ public class AuditDelivery implements AuditForwarder.Listener {
       log.info("Audit output splunk: enabled, {} (sourcetype {}{}){}", splunk.destination(), props.getSplunk().getSourcetype(),
           props.getSplunk().getIndex().isBlank() ? "" : ", index " + props.getSplunk().getIndex(), splunk.hasToken() ? "" : "; NO TOKEN configured");
       if (props.getSplunk().isInsecure()) {
-        log.warn("ENS_AUDIT_SPLUNK_INSECURE is true: the HEC server's certificate is NOT verified. Use only in test setups.");
+        log.warn("ENS_AUDIT_SPLUNK_INSECURE is true: the HEC server's certificate is NOT verified (trust-all). This is not FIPS 140-3"
+            + " or DISA STIG appropriate; use it only in test setups.");
       }
     }
     AuditForwarder syslog = forwarders.stream().filter(f -> f instanceof SyslogForwarder).findFirst().orElse(null);
@@ -103,6 +109,15 @@ public class AuditDelivery implements AuditForwarder.Listener {
   public void failed(String output, String error, Instant since) {
     audit.event("audit.delivery-failed").system().severity(AuditEvent.ALERT).target("audit-output", output, output)
         .detail("output", output).detail("error", error).detail("failingSince", since.toString()).failed(error);
+  }
+
+  @Override
+  public void attemptFailed(String output) {
+    MeterRegistry registry = meters.getIfAvailable();
+    if (registry != null) {
+      Counter.builder("ens.audit.forward.failures").description("Failed audit deliveries to Splunk HEC or syslog")
+          .tag("output", output).register(registry).increment();
+    }
   }
 
   @Override

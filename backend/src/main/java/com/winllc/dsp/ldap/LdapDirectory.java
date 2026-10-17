@@ -36,6 +36,9 @@ import com.unboundid.util.ssl.SSLUtil;
 import com.unboundid.util.ssl.TrustAllTrustManager;
 import com.winllc.dsp.model.DirectoryEntry;
 import com.winllc.dsp.model.SchemaSnapshot;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -43,7 +46,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
@@ -53,6 +58,10 @@ import org.slf4j.LoggerFactory;
  * Gateway to the directory server. All reads and writes use a pooled connection bound as the
  * service account; the portal enforces its own per-definition permissions on top. User
  * passwords are verified with a separate, short-lived bind.
+ *
+ * <p>With a meter registry, every operation is timed in
+ * {@code ens_dsp_ldap_operation_seconds{operation,outcome}} (outcome {@code failure} when it threw)
+ * and {@code ens_dsp_ldap_pool_available} gauges the pool's idle connections.
  */
 public class LdapDirectory implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(LdapDirectory.class);
@@ -72,10 +81,20 @@ public class LdapDirectory implements AutoCloseable {
   private final Settings settings;
   private final ServerSet serverSet;
   private final SSLContext startTlsContext;
+  private final MeterRegistry meters;
   private volatile LDAPConnectionPool pool;
 
   public LdapDirectory(Settings settings) {
+    this(settings, null);
+  }
+
+  public LdapDirectory(Settings settings, MeterRegistry meters) {
     this.settings = settings;
+    this.meters = meters;
+    if (meters != null) {
+      Gauge.builder("ens.dsp.ldap.pool.available", this, d -> d.pool == null ? 0 : Math.max(0, d.pool.getCurrentAvailableConnections()))
+          .description("Idle connections in the LDAP connection pool").register(meters);
+    }
     try {
       LDAPURL url = new LDAPURL(settings.url());
       boolean ldaps = "ldaps".equalsIgnoreCase(url.getScheme());
@@ -125,6 +144,27 @@ public class LdapDirectory implements AutoCloseable {
     }
   }
 
+  private <T> T timed(String operation, Supplier<T> call) {
+    if (meters == null) return call.get();
+    long start = System.nanoTime();
+    String outcome = "failure";
+    try {
+      T result = call.get();
+      outcome = "success";
+      return result;
+    } finally {
+      Timer.builder("ens.dsp.ldap.operation").description("LDAP operations").tag("operation", operation).tag("outcome", outcome)
+          .register(meters).record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
+    }
+  }
+
+  private void timed(String operation, Runnable call) {
+    timed(operation, () -> {
+      call.run();
+      return null;
+    });
+  }
+
   private static DirectoryException unavailable(LDAPException e) {
     if (e.getResultCode() == ResultCode.INVALID_CREDENTIALS) {
       return new DirectoryException(DirectoryException.Code.UNAVAILABLE, "The directory rejected the service account credentials");
@@ -147,27 +187,29 @@ public class LdapDirectory implements AutoCloseable {
    * exist (or when the server's own size limit cut the results short).
    */
   public Result search(String base, SearchScope scope, Filter filter, int limit, List<String> attributes) {
-    String[] attrs = attributes == null || attributes.isEmpty() ? new String[0] : attributes.toArray(String[]::new);
-    SearchRequest request = new SearchRequest(base, scope, filter, attrs);
-    request.setSizeLimit(limit + 1);
-    request.setTimeLimitSeconds(Math.max(1, settings.timeoutMs() / 1000));
-    List<SearchResultEntry> found;
-    boolean truncated;
-    try {
-      SearchResult result = pool().search(request);
-      found = result.getSearchEntries();
-      truncated = found.size() > limit;
-    } catch (LDAPSearchException e) {
-      if (e.getResultCode() != ResultCode.SIZE_LIMIT_EXCEEDED) throw wrap(e);
-      found = e.getSearchEntries();
-      truncated = true;
-    }
-    List<DirectoryEntry> entries = new ArrayList<>();
-    for (SearchResultEntry e : found) {
-      if (entries.size() >= limit) break;
-      entries.add(toEntry(e));
-    }
-    return new Result(entries, truncated);
+    return timed("search", () -> {
+      String[] attrs = attributes == null || attributes.isEmpty() ? new String[0] : attributes.toArray(String[]::new);
+      SearchRequest request = new SearchRequest(base, scope, filter, attrs);
+      request.setSizeLimit(limit + 1);
+      request.setTimeLimitSeconds(Math.max(1, settings.timeoutMs() / 1000));
+      List<SearchResultEntry> found;
+      boolean truncated;
+      try {
+        SearchResult result = pool().search(request);
+        found = result.getSearchEntries();
+        truncated = found.size() > limit;
+      } catch (LDAPSearchException e) {
+        if (e.getResultCode() != ResultCode.SIZE_LIMIT_EXCEEDED) throw wrap(e);
+        found = e.getSearchEntries();
+        truncated = true;
+      }
+      List<DirectoryEntry> entries = new ArrayList<>();
+      for (SearchResultEntry e : found) {
+        if (entries.size() >= limit) break;
+        entries.add(toEntry(e));
+      }
+      return new Result(entries, truncated);
+    });
   }
 
   /**
@@ -177,159 +219,177 @@ public class LdapDirectory implements AutoCloseable {
    * ignore it (it is sent as non-critical) and answer in one response.
    */
   public ScanResult scan(String base, SearchScope scope, Filter filter, List<String> attributes, int max, Consumer<DirectoryEntry> consumer) {
-    String[] attrs = attributes == null || attributes.isEmpty() ? new String[0] : attributes.toArray(String[]::new);
-    int[] seen = {0};
-    boolean[] over = {false};
-    // The SDK may call the listener on its connection reader thread, so a consumer failure is kept
-    // and rethrown on the calling thread once the search has finished.
-    RuntimeException[] failure = {null};
-    SearchResultListener listener = new SearchResultListener() {
-      @Override
-      public void searchEntryReturned(SearchResultEntry entry) {
-        if (failure[0] != null) return;
-        if (seen[0] >= max) {
-          over[0] = true;
-          return;
+    return timed("scan", () -> {
+      String[] attrs = attributes == null || attributes.isEmpty() ? new String[0] : attributes.toArray(String[]::new);
+      int[] seen = {0};
+      boolean[] over = {false};
+      // The SDK may call the listener on its connection reader thread, so a consumer failure is kept
+      // and rethrown on the calling thread once the search has finished.
+      RuntimeException[] failure = {null};
+      SearchResultListener listener = new SearchResultListener() {
+        @Override
+        public void searchEntryReturned(SearchResultEntry entry) {
+          if (failure[0] != null) return;
+          if (seen[0] >= max) {
+            over[0] = true;
+            return;
+          }
+          seen[0]++;
+          try {
+            consumer.accept(toEntry(entry));
+          } catch (RuntimeException e) {
+            failure[0] = e;
+          }
         }
-        seen[0]++;
-        try {
-          consumer.accept(toEntry(entry));
-        } catch (RuntimeException e) {
-          failure[0] = e;
-        }
-      }
 
-      @Override
-      public void searchReferenceReturned(SearchResultReference reference) {}
-    };
-    LDAPConnection connection;
-    try {
-      connection = pool().getConnection();
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
-    boolean healthy = false;
-    try {
-      ASN1OctetString cookie = null;
-      while (true) {
-        SearchRequest request = new SearchRequest(listener, base, scope, filter, attrs);
-        // One more than still wanted, so "exactly max" and "more than max" can be told apart.
-        request.setSizeLimit(Math.max(1, max - seen[0] + 1));
-        request.setTimeLimitSeconds(Math.max(1, settings.timeoutMs() / 1000) * 6);
-        request.addControl(new SimplePagedResultsControl(SCAN_PAGE_SIZE, cookie, false));
-        SearchResult result;
-        try {
-          result = connection.search(request);
-        } catch (LDAPSearchException e) {
-          if (e.getResultCode() != ResultCode.SIZE_LIMIT_EXCEEDED) throw e;
-          over[0] = true;
-          healthy = true;
-          break;
-        }
-        SimplePagedResultsControl paged = SimplePagedResultsControl.get(result);
-        if (failure[0] != null || over[0] || paged == null || !paged.moreResultsToReturn()) {
-          healthy = true;
-          break;
-        }
-        cookie = paged.getCookie();
+        @Override
+        public void searchReferenceReturned(SearchResultReference reference) {}
+      };
+      LDAPConnection connection;
+      try {
+        connection = pool().getConnection();
+      } catch (LDAPException e) {
+        throw wrap(e);
       }
-    } catch (LDAPException e) {
-      throw wrap(e);
-    } finally {
-      if (healthy) pool().releaseConnection(connection);
-      else pool().releaseDefunctConnection(connection);
-    }
-    if (failure[0] != null) throw failure[0];
-    return new ScanResult(seen[0], over[0]);
+      boolean healthy = false;
+      try {
+        ASN1OctetString cookie = null;
+        while (true) {
+          SearchRequest request = new SearchRequest(listener, base, scope, filter, attrs);
+          // One more than still wanted, so "exactly max" and "more than max" can be told apart.
+          request.setSizeLimit(Math.max(1, max - seen[0] + 1));
+          request.setTimeLimitSeconds(Math.max(1, settings.timeoutMs() / 1000) * 6);
+          request.addControl(new SimplePagedResultsControl(SCAN_PAGE_SIZE, cookie, false));
+          SearchResult result;
+          try {
+            result = connection.search(request);
+          } catch (LDAPSearchException e) {
+            if (e.getResultCode() != ResultCode.SIZE_LIMIT_EXCEEDED) throw e;
+            over[0] = true;
+            healthy = true;
+            break;
+          }
+          SimplePagedResultsControl paged = SimplePagedResultsControl.get(result);
+          if (failure[0] != null || over[0] || paged == null || !paged.moreResultsToReturn()) {
+            healthy = true;
+            break;
+          }
+          cookie = paged.getCookie();
+        }
+      } catch (LDAPException e) {
+        throw wrap(e);
+      } finally {
+        if (healthy) pool().releaseConnection(connection);
+        else pool().releaseDefunctConnection(connection);
+      }
+      if (failure[0] != null) throw failure[0];
+      return new ScanResult(seen[0], over[0]);
+    });
   }
 
   /** Base-scope read; null when the entry does not exist. */
   public DirectoryEntry get(String dn, List<String> attributes) {
-    try {
-      SearchResultEntry e = pool().getEntry(dn, attributes == null ? new String[0] : attributes.toArray(String[]::new));
-      return e == null ? null : toEntry(e);
-    } catch (LDAPException e) {
-      if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) return null;
-      throw wrap(e);
-    }
+    return timed("get", () -> {
+      try {
+        SearchResultEntry e = pool().getEntry(dn, attributes == null ? new String[0] : attributes.toArray(String[]::new));
+        return e == null ? null : toEntry(e);
+      } catch (LDAPException e) {
+        if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) return null;
+        throw wrap(e);
+      }
+    });
   }
 
   public void add(String dn, Map<String, List<String>> attributes) {
-    List<Attribute> attrs = new ArrayList<>();
-    attributes.forEach((k, v) -> {
-      if (!v.isEmpty()) attrs.add(new Attribute(k, v));
+    timed("add", () -> {
+      List<Attribute> attrs = new ArrayList<>();
+      attributes.forEach((k, v) -> {
+        if (!v.isEmpty()) attrs.add(new Attribute(k, v));
+      });
+      try {
+        pool().add(new Entry(dn, attrs));
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
     });
-    try {
-      pool().add(new Entry(dn, attrs));
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
   }
 
   public void modify(String dn, List<Modification> changes) {
-    if (changes.isEmpty()) return;
-    try {
-      pool().modify(dn, changes);
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
+    timed("modify", () -> {
+      if (changes.isEmpty()) return;
+      try {
+        pool().modify(dn, changes);
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
+    });
   }
 
   /** Change the entry's RDN (keeping its parent). Returns the new DN. */
   public String rename(String dn, RDN newRdn) {
-    try {
-      pool().modifyDN(dn, newRdn.toString(), true);
-      DN parent = Dns.parse(dn).getParent();
-      return parent == null || parent.isNullDN() ? newRdn.toString() : new DN(newRdn, parent).toString();
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
+    return timed("rename", () -> {
+      try {
+        pool().modifyDN(dn, newRdn.toString(), true);
+        DN parent = Dns.parse(dn).getParent();
+        return parent == null || parent.isNullDN() ? newRdn.toString() : new DN(newRdn, parent).toString();
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
+    });
   }
 
   public void delete(String dn) {
-    try {
-      pool().delete(dn);
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
+    timed("delete", () -> {
+      try {
+        pool().delete(dn);
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
+    });
   }
 
   /** Verify a password with a simple bind on a dedicated connection. */
   public boolean authenticate(String dn, String password) {
-    // Never allow empty passwords: servers treat them as unauthenticated (anonymous) binds.
-    if (dn == null || dn.isBlank() || password == null || password.isEmpty()) return false;
-    try (LDAPConnection connection = serverSet.getConnection()) {
-      if (startTlsContext != null) {
-        ExtendedResult r = connection.processExtendedOperation(new StartTLSExtendedRequest(startTlsContext));
-        if (r.getResultCode() != ResultCode.SUCCESS) throw new LDAPException(r);
+    return timed("bind", () -> {
+      // Never allow empty passwords: servers treat them as unauthenticated (anonymous) binds.
+      if (dn == null || dn.isBlank() || password == null || password.isEmpty()) return false;
+      try (LDAPConnection connection = serverSet.getConnection()) {
+        if (startTlsContext != null) {
+          ExtendedResult r = connection.processExtendedOperation(new StartTLSExtendedRequest(startTlsContext));
+          if (r.getResultCode() != ResultCode.SUCCESS) throw new LDAPException(r);
+        }
+        connection.bind(dn, password);
+        return true;
+      } catch (LDAPException e) {
+        if (e.getResultCode() == ResultCode.INVALID_CREDENTIALS || e.getResultCode() == ResultCode.NO_SUCH_OBJECT) return false;
+        throw wrap(e);
       }
-      connection.bind(dn, password);
-      return true;
-    } catch (LDAPException e) {
-      if (e.getResultCode() == ResultCode.INVALID_CREDENTIALS || e.getResultCode() == ResultCode.NO_SUCH_OBJECT) return false;
-      throw wrap(e);
-    }
+    });
   }
 
   /** Read the subschema subentry advertised by the root DSE. */
   public SchemaSnapshot readSchema() {
-    try {
-      LDAPConnectionPool p = pool();
-      String subschemaDn = p.getRootDSE() == null ? null : p.getRootDSE().getAttributeValue("subschemaSubentry");
-      Schema schema = p.getSchema();
-      if (schema == null) throw new DirectoryException(DirectoryException.Code.OTHER, "The directory does not publish a schema");
-      return SchemaMapper.toSnapshot(schema, subschemaDn != null ? subschemaDn : schema.getSchemaEntry().getDN());
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
+    return timed("schema", () -> {
+      try {
+        LDAPConnectionPool p = pool();
+        String subschemaDn = p.getRootDSE() == null ? null : p.getRootDSE().getAttributeValue("subschemaSubentry");
+        Schema schema = p.getSchema();
+        if (schema == null) throw new DirectoryException(DirectoryException.Code.OTHER, "The directory does not publish a schema");
+        return SchemaMapper.toSnapshot(schema, subschemaDn != null ? subschemaDn : schema.getSchemaEntry().getDN());
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
+    });
   }
 
   public void ping() {
-    try {
-      pool().getRootDSE();
-    } catch (LDAPException e) {
-      throw wrap(e);
-    }
+    timed("ping", () -> {
+      try {
+        pool().getRootDSE();
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
+    });
   }
 
   /** Attributes whose values are binary (returned base64-encoded). */

@@ -2,6 +2,7 @@ package com.winllc.dsp.config;
 
 import com.winllc.dsp.ldap.EmbeddedDirectory;
 import com.winllc.dsp.ldap.LdapDirectory;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -23,12 +24,13 @@ public class DirectoryConfig {
   }
 
   @Bean(destroyMethod = "close")
-  LdapDirectory ldapDirectory(PortalProperties props, ObjectProvider<EmbeddedDirectory> embedded) {
+  LdapDirectory ldapDirectory(PortalProperties props, ObjectProvider<EmbeddedDirectory> embedded, ObjectProvider<MeterRegistry> meters) {
     PortalProperties.Ldap l = props.getLdap();
     EmbeddedDirectory demo = embedded.getIfAvailable();
     LdapDirectory.Settings settings = demo != null
         ? new LdapDirectory.Settings(demo.url(), EmbeddedDirectory.SERVICE_DN, EmbeddedDirectory.SERVICE_PASSWORD, false, true, l.getTimeoutMs(), l.getPoolSize())
-        : new LdapDirectory.Settings(l.getUrl(), l.getBindDn(), l.getBindPassword(), l.isStartTls(), l.isTlsRejectUnauthorized(), l.getTimeoutMs(), l.getPoolSize());
-    return new LdapDirectory(settings);
+        : new LdapDirectory.Settings(l.getUrl(), l.getBindDn(), l.resolvedBindPassword(), l.isStartTls(), l.isTlsRejectUnauthorized(), l.getTimeoutMs(),
+            l.getPoolSize());
+    return new LdapDirectory(settings, meters.getIfAvailable());
   }
 }

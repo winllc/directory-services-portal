@@ -26,7 +26,8 @@ Environment=X509_PROXY_SECRET_FILE=/etc/directory-services-portal/proxy-secret
 # portal.env): systemd creates this directory, owned by the service user, and makes it writable.
 LogsDirectory=ens/directory-portal
 
-# Hardening: the API only needs to write its data, license and audit log directories.
+# Hardening: the API only needs to write its data, license and audit log directories, and to
+# read /etc/directory-services-portal (portal.env, proxy-secret, ldap-bind-password; root:dsp).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -37,6 +38,20 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
+# No capabilities (port 3001 is unprivileged), no devices but the pseudo-devices the JVM uses
+# (/dev/null, /dev/urandom), the system calls of an ordinary service (a denied one fails with
+# EPERM rather than killing the JVM), and IPv4/IPv6 (LDAP, OCSP, CRLs, audit outputs) plus Unix
+# sockets (name service, syslog). Files the API creates are private to it.
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

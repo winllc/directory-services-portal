@@ -101,6 +101,26 @@ its output with kubeconform on every push, for each values file in its `ci/` dir
 | variable | `RELEASE_S3_ENDPOINT` | S3 endpoint URL for Cloudflare R2 / MinIO (empty for AWS) |
 | variable | `RELEASE_S3_REGION` | region (default `us-east-1`; `auto` for R2) |
 
+**Supply chain** (`.github/`): Dependabot proposes weekly updates (Maven, npm, the Dockerfiles'
+base images, GitHub Actions; minor and patch versions grouped). Actions are pinned to commit SHAs
+and base images to digests. Every push and pull request runs CodeQL (Java and TypeScript, also
+weekly), fails on `npm audit --omit=dev --audit-level=high`, and scans both images with Trivy
+(`--severity HIGH,CRITICAL --ignore-unfixed`; accepted risks, with their reason and a review date,
+go in `.trivyignore`). On a release tag, both images (by digest) and the chart are signed with
+cosign (keyless, GitHub OIDC), and each image gets its SPDX SBOM as an attestation. Verify an image
+with:
+
+```bash
+cosign verify ghcr.io/winllc/directory-services-portal-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/winllc/directory-services-portal/.github/workflows/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify-attestation --type spdxjson ghcr.io/winllc/directory-services-portal-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/winllc/directory-services-portal/.github/workflows/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+(and the same for `-web` and `ghcr.io/winllc/charts/directory-services-portal@<digest>`).
+
 A customer verifies a download (with the ENS release signing key imported) before unpacking:
 
 ```bash
@@ -111,6 +131,9 @@ tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-port
 ```
 
 ## Licensing
+
+The portal is proprietary to ENS Solutions (`LicenseRef-ENS-Commercial`, see [LICENSE](LICENSE));
+using it requires a license.
 
 The portal runs under a license file issued by the **ENS licensing portal** (format
 `ens-license/1`, product id `directory-portal`) and checked offline against the ENS public key
@@ -189,7 +212,7 @@ its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/reso
 | variable | meaning |
 |---|---|
 | `LDAP_URL` | `ldap://` or `ldaps://` URL; `LDAP_STARTTLS=true` upgrades plain connections. Certificates are verified against the JVM trust store unless `LDAP_TLS_REJECT_UNAUTHORIZED=false` |
-| `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account used for every read and write |
+| `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account used for every read and write. `LDAP_BIND_PASSWORD_FILE` names a file holding the password instead (it wins when set and not empty; the Helm chart mounts it from a Secret, the native package uses `/etc/directory-services-portal/ldap-bind-password`) |
 | `LDAP_BASE_DN` | default suffix (used by the DN browser) |
 | `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER` | how to find a user at login (`{{username}}` is escaped) |
 | `LDAP_USERNAME_ATTRIBUTE` | login name attribute (`uid`, `sAMAccountName`, …) |
@@ -197,7 +220,7 @@ its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/reso
 | `ADMIN_USERS`, `ADMIN_GROUPS` | portal administrators, separated by `;` |
 | `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) and the audit log are stored |
 | `AUDIT_DIR` | where the audit store goes (default `$DATA_DIR/audit`). `AUDIT_MEMORY_EVENTS` is still accepted but no longer used. Outputs and retention: `ENS_AUDIT_*`, see [Audit logging](#audit-logging) |
-| `PORT`, `SESSION_TTL_MINUTES`, `COOKIE_SECURE`, `FORWARD_HEADERS_STRATEGY` | HTTP settings |
+| `PORT`, `ENS_COOKIE_SECURE`, `SERVER_FORWARD_HEADERS_STRATEGY` | HTTP settings (see [Security headers and cookies](#security-headers-and-cookies)); session timeouts and sign-in lockout are under [Sessions](#sessions) |
 
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
 The service account needs read access to the schema and to the namespaces you expose, and write
@@ -389,7 +412,7 @@ Splunk or any SIEM.
 
 | Category | Actions |
 |---|---|
-| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (8 failures in 15 minutes, severity alert), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
+| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent` or `account-removed`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
 | authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
 | account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
 | data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps everything the entry held; a rename records `previousDn`), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
@@ -400,7 +423,7 @@ Splunk or any SIEM.
 
 Each event says who (`actor`: user name, display name, roles; `details.actorDn` and
 `authMethod`; `anonymous` with the attempted name for a failed sign-in), from where
-(`source.ip` as the API sees it, honouring `FORWARD_HEADERS_STRATEGY`, and the user agent), what
+(`source.ip` as the API sees it, honouring `SERVER_FORWARD_HEADERS_STRATEGY`, and the user agent), what
 (`target`), the outcome (`success`, `failure`, `denied`) and a severity (`info`, `notice` for
 permission, configuration, form/definition/schema and license changes, `warning` for failures
 and denials, `alert` for lockouts, a broken chain and failing delivery), plus a request id and a
@@ -415,7 +438,9 @@ nor is a save that changes nothing.
   synchronized writer in the API process, so **run one API instance per data directory**: two
   instances writing the same files would fork the chain (the same applies to sessions and
   background tasks). If an event can't be stored, sign-ins and permission, configuration,
-  license and token changes are refused (503); other events log an error.
+  license and token changes are refused (503); other events log an error. Directory changes
+  (create, update, rename, delete) check first that the store is writable, with at least 1 MB
+  free, and are refused (503) rather than made unaudited when it is not.
 - **Upgrading** from the portal's earlier audit format: at the first start the original
   `audit-YYYY-MM.jsonl` files are moved unchanged to `audit/legacy/` (still readable as they
   were) and their events are appended to the new store in time order, keeping time and id, with
@@ -490,7 +515,7 @@ certificate comes from:
   the API and the web tier). An address alone is not enough: other pods or local processes can
   share it, and the header carries no proof that the sender holds the certificate's key. The
   address check uses the actual connection, never `X-Forwarded-For`, so use
-  `FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite any
+  `SERVER_FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite any
   incoming copy of the certificate header and of `X-DSP-Proxy-Secret`; the bundled nginx configs
   always do, and forward the certificate only to the sign-in endpoints (`/api/auth/x509`,
   `/api/auth/me`). `X509_TRUSTED_CA_FILE` is required too, so that the API validates the chain
@@ -526,14 +551,38 @@ certificate comes from:
 Every certificate is checked before it is accepted:
 - It must be within its validity period.
 - It must be allowed for TLS client authentication (extended/key usage).
-- When `X509_TRUSTED_CA_FILE` is set, it must chain to one of those CAs. Revocation is also
-  checked (OCSP / CRL distribution points) when `X509_CHECK_REVOCATION=true`.
+- When `ENS_X509_ALLOWED_ISSUERS` is set, its issuer must be one of those DNs, even if another
+  trusted CA chains to it.
+- When `X509_TRUSTED_CA_FILE` is set, it must chain to one of those CAs, and it must not be
+  revoked (`ENS_X509_REVOCATION`).
+
+**Revocation checking** (CAC/PIV; DISA STIG requires it, so the API logs a warning at startup when
+certificate sign-in is on without it):
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_X509_REVOCATION` | `off` | `off`, `ocsp`, `crl` or `ocsp-then-crl` (CRLs when OCSP gives no answer). Needs `X509_TRUSTED_CA_FILE`: the API does not start without it. `X509_CHECK_REVOCATION=true`, the older setting, means `ocsp-then-crl` failing closed |
+| `ENS_X509_OCSP_RESPONDER_URL` | | ask this responder instead of the certificate's AIA one, e.g. a local OCSP relay on an air-gapped network |
+| `ENS_X509_CRL_DIR` | | a directory of CRL files (DER or PEM), read again when they change: the air-gapped option. With it set, CRL distribution points are **not** fetched |
+| `ENS_X509_REVOCATION_FAIL` | `closed` | `closed`: when the status can't be determined, refuse; `open`: allow and log a warning |
+| `ENS_X509_REVOCATION_CACHE` | `10m` | how long a good or revoked answer is kept, per issuer and serial |
+| `ENS_X509_ALLOWED_ISSUERS` | | issuer DNs separated by `;` (DNs contain commas); certificates from other issuers are refused |
+
+The checks are configured per sign-in (the JDK's PKIX validator with its own revocation checker;
+no global JDK security setting is changed). OCSP responses must be signed by the issuing CA or a
+responder it delegated to; CRLs by the issuing CA. The API fetches OCSP responses and CRLs itself:
+http or https only (and only https/http redirects, at most 3), 5 s to connect, 10 s to read, OCSP
+responses up to 1 MB and CRLs up to 32 MB, never to link-local, multicast or cloud-metadata
+addresses; LDAP distribution points are skipped. Fetched CRLs are reused until their next update
+(at most a day). A refusal is audited as an `auth.login` failure with the reason
+`certificate revoked` or `revocation unknown` (`details.reasonCode` `certificate_revoked` /
+`revocation_unknown`).
 
 It is then mapped to exactly one directory user:
 
 | `X509_MAPPING` | how the user is found |
 |---|---|
-| `filter` (default) | `X509_USER_FILTER` with placeholders `{{cn}}`, `{{uid}}`, `{{email}}` (rfc822 SAN, else the emailAddress attribute), `{{upn}}` (Microsoft UPN SAN, common on smart cards), `{{subject}}`, `{{serial}}`. Values are filter-escaped. Examples: `(uid={{cn}})`, `(mail={{email}})`, `(userPrincipalName={{upn}})` |
+| `filter` (default) | `X509_USER_FILTER` with placeholders `{{cn}}`, `{{uid}}`, `{{email}}` (rfc822 SAN, else the emailAddress attribute), `{{upn}}` (the SAN otherName UserPrincipalName, OID 1.3.6.1.4.1.311.20.2.3, on CAC/PIV cards), `{{edipi}}` (the DoD EDIPI: the digits of a UPN `1234567890@mil`, else the trailing `.1234567890` of a CN `LAST.FIRST.MI.1234567890`), `{{uuid}}` (from a SAN URI `urn:uuid:…`, the PIV FASC-N UUID, without the `urn:uuid:` prefix), `{{subject}}`, `{{serial}}`. The other ENS applications' form `{upn}` (single braces) works too. Values are filter-escaped; a filter matching no entry or more than one signs nobody in. Examples: `(uid={{cn}})`, `(mail={email})`, `(userPrincipalName={upn})`, `(employeeID={edipi})` |
 | `subject-dn` | the certificate subject DN is the user's entry DN (it must also match the user filter's shape) |
 
 Options:
@@ -567,6 +616,130 @@ configured on the API:
 Colors may be `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`/`hsl()`/`hsla()` or a CSS color
 name. Any other value stops the API at startup with an error naming the setting.
 
+### Sessions
+Session controls (DISA STIG; the ENS platform baseline):
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_SESSION_IDLE_TIMEOUT` | `30m` | idle timeout (a duration: `30m`, `1h`). `SESSION_TTL_MINUTES` (minutes), its older name, still works when this is not set; its default used to be 480 minutes |
+| `ENS_SESSION_ADMIN_IDLE_TIMEOUT` | the idle timeout | a shorter idle timeout for administrators (STIG suggests `15m`) |
+| `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` | a session ends this long after sign-in, whatever its activity |
+| `ENS_SESSION_MAX_PER_USER` | `0` (no limit) | concurrent sessions per user; signing in once more ends the **oldest** (STIG suggests `3`) |
+| `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists ends its sessions |
+| `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`) |
+| `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory, so a restart clears them |
+
+Idle time counts what the user does: the web client marks its background polling (task progress,
+license and audit status) with `X-DSP-Background: 1`, which keeps nothing alive, so an open but
+unattended tab still times out. An expired session answers `401` with `"code": "session_expired"`
+and the browser shows the sign-in page with the reason; each expiry is audited as
+`auth.session-expired` with the reason `idle`, `absolute`, `concurrent` or `account-removed`.
+
+### Health and metrics
+The API uses Spring Boot's probes, which need no sign-in or license:
+
+| path | answers |
+|---|---|
+| `/actuator/health/liveness` (also `/livez`) | the API itself is running |
+| `/actuator/health/readiness` (also `/readyz`) | it can serve: the directory answers (`ldap`), the audit log is writable (`auditLog`), and the data disk has 10 MB free (`diskSpace`); `503` otherwise |
+| `/actuator/health` | both; details (components and errors) only for signed-in administrators |
+| `/api/health` | kept for existing monitoring: always `{"ok":true}` while the API runs (liveness only) |
+
+The web tier publishes only `/api`, so none of these is reachable from browsers. The image's
+`HEALTHCHECK`, the release package's compose file and the Helm chart use readiness (and liveness
+for restarts in Kubernetes).
+
+**Prometheus** (`/actuator/prometheus`) is served only on a management port of its own:
+`MANAGEMENT_SERVER_PORT` (Spring Boot's setting, unset by default; `MANAGEMENT_SERVER_ADDRESS` to
+bind it, the native package uses `127.0.0.1`). Without it there is no Prometheus endpoint. On the
+management port, health and Prometheus are open without sign-in, and `/livez` and `/readyz`
+stay on the main port; never publish the management port to users. Metrics, besides the JVM's and
+Tomcat's:
+
+| metric | |
+|---|---|
+| `ens_license_mode{mode}` | 1 for the mode in effect (`full`, `read_only`, `unlicensed`), 0 for the others |
+| `ens_license_days_remaining` | days until the license (or its grace) ends; NaN for a perpetual license or none |
+| `ens_audit_events_total{category,outcome}` | audit events stored |
+| `ens_audit_forward_failures_total{output}` | failed deliveries to `splunk` or `syslog` |
+| `ens_auth_attempts_total{method,outcome}` | sign-ins (`password`, `x509`) by outcome (`success`, `failure`, `denied`) |
+| `ens_dsp_ldap_operation_seconds{operation,outcome}` | LDAP operations (`search`, `scan`, `get`, `add`, `modify`, `rename`, `delete`, `bind`, `schema`, `ping`), timed; `failure` when one failed |
+| `ens_dsp_ldap_pool_available` | idle connections in the service account's pool |
+| `ens_dsp_entry_writes_total{operation,outcome}` | entry `create`, `update` and `delete` through the portal (`success`, `failure`, `denied`) |
+
+**Logs**: `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` (Spring Boot's setting) writes log lines as JSON
+in the Elastic Common Schema; the Helm chart does by default (`logFormat: json`). Audit events on
+stdout stay `ens-audit/1` JSON lines either way.
+
+### Notice and consent banner
+For DoD systems (DISA STIG), the portal can show the standard USG notice-and-consent banner before
+sign-in. The login page shows it with an **I agree** button, and the API enforces it: while it is
+enabled, no sign-in of any kind (password, certificate, certificate auto-login) succeeds until
+this browser session has acknowledged it. The acknowledgement is kept in the session and is
+audited as `auth.consent-acknowledged` (authentication, success, with the client address); a
+sign-in attempted without it is refused (`403`, `"code": "consent_required"`) and audited as an
+`auth.login` denial with `details.reasonCode=consent_required`. Signing out ends the session, so
+the banner comes before every sign-in. `POST /api/auth/consent` (with `X-DSP-Request: 1`) and the
+banner's text in `/api/info` are reachable without signing in.
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_CONSENT_BANNER_ENABLED` | `false` | show and enforce the banner |
+| `ENS_CONSENT_BANNER_TITLE` | `U.S. Government (USG) Information System (IS) Notice and Consent` | |
+| `ENS_CONSENT_BANNER_TEXT` | the standard DoD notice-and-consent text | plain text; blank lines separate paragraphs, paragraphs starting with `- ` are list items |
+| `ENS_CONSENT_BANNER_FILE` | | read the text from this file instead (wins over `_TEXT`); the API does not start if it can't read it |
+
+Exempt, because they are not browser sessions: the audit pull API (`/api/audit/**`, bearer
+tokens), the health probes (`/actuator/health/**`, `/livez`, `/readyz`, `/api/health`) and the
+Prometheus endpoint on the management port.
+
+### Security headers and cookies
+Every response carries the ENS baseline security headers: the web tier (nginx) sends them for the
+client's pages and in place of the API's own on `/api`, and the API sends them on its own
+responses for anyone who reaches it directly:
+
+- `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`
+  (the client has no inline scripts or event handlers)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` on HTTPS: always with the
+  mTLS config, behind a TLS-terminating proxy when it sends `X-Forwarded-Proto: https`, and from the
+  API on secure requests (direct TLS, or behind a proxy with `SERVER_FORWARD_HEADERS_STRATEGY=framework`)
+- `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()`
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_CSP_REPORT_ONLY` | `false` | `true` sends `Content-Security-Policy-Report-Only` instead (API and web image): an escape hatch for a page the policy breaks. Report it, and turn this off again |
+| `ENS_COOKIE_SECURE` | `false` | Always mark the session cookie (`DSP_SESSION`) `Secure`, for TLS terminated at a proxy. Over direct TLS it is `Secure` anyway. `COOKIE_SECURE` is the older name and still works |
+| `SERVER_FORWARD_HEADERS_STRATEGY` | `none` | Spring Boot's own setting: `framework` behind a proxy that overwrites `X-Forwarded-*` (the web tier does; every package sets it). `FORWARD_HEADERS_STRATEGY` is the older name and still works |
+
+The session cookie is `HttpOnly` and `SameSite=Strict` (stricter than the baseline's `Lax`; the
+browser only ever reaches the API through the same origin).
+
+## FIPS 140-3
+
+The portal brings no cryptography of its own: the API uses the platform JDK's providers (JCA/JSSE)
+and the web tier the system's OpenSSL. On a FIPS-enabled RHEL 9 host (`fips=1`), the UBI 9 images
+(`openjdk-21-runtime`, `nginx-126`) follow the host into FIPS mode, so these use the RHEL FIPS
+140-3 validated modules: TLS to the directory (LDAPS, StartTLS), to Splunk HEC and syslog (TLS),
+HTTPS and client-certificate verification in nginx or in the API (`mtls` profile), certificate
+path validation and OCSP/CRL signature checks, and the audit chain's SHA-256. The native package
+uses the host's Java 21: install RHEL's `java-21-openjdk-headless` on a FIPS-enabled host. (OCSP
+requests identify the certificate by a SHA-1 hash of its issuer, as RFC 6960 responders expect;
+that is an identifier, not a signature. BouncyCastle is used by the tests only.)
+
+Not FIPS (or STIG) appropriate, for test setups only; the API logs a warning at startup when one
+is on:
+
+- `LDAP_TLS_REJECT_UNAUTHORIZED=false`: trusts any directory server certificate. Give the API a
+  trust store with the directory's CA instead.
+- `ENS_AUDIT_SPLUNK_INSECURE=true`: trusts any Splunk HEC certificate.
+
+### License verification under FIPS
+
+Pending: the ENS license library verifies license signatures with the JDK's Ed25519; its results
+on a FIPS-enabled host will be recorded here.
+
 ## Security notes
 - LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
   Admin-configured filter templates get their values escaped with `Filter.encodeValue`. DNs are
@@ -576,7 +749,7 @@ name. Any other value stops the API at startup with an error naming the setting.
   rules in `shared/`).
 - Password attributes are never returned to the browser. Empty passwords are rejected before
   any bind, so anonymous binds can't be used to log in.
-- Certificate sign-in validates the certificate (dates, key usage, chain and optional
+- Certificate sign-in validates the certificate (dates, key usage, issuer allowlist, chain and
   revocation) before mapping it to exactly one directory user. Forwarded certificate headers are
   only honoured from trusted proxy addresses that also send the proxy secret
   (`X-DSP-Proxy-Secret`, compared in constant time); without the secret and a trusted CA file
@@ -585,9 +758,11 @@ name. Any other value stops the API at startup with an error naming the setting.
   throttling relies on) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
   certificate header. The API is not published in Docker Compose, so only the proxy can reach it.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
-  `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`). The session ID is rotated at login,
+  `SameSite=Strict`, `Secure` over TLS or when `ENS_COOKIE_SECURE=true`). The session ID is rotated at login,
   and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).
-  `/api/admin/**` requires `ROLE_ADMIN`. Failed logins are throttled.
+  `/api/admin/**` requires `ROLE_ADMIN`, read again from the directory every
+  `GROUP_REFRESH_INTERVAL`. Failed logins are throttled (`LOGIN_MAX_FAILURES`), and sessions time
+  out (see [Sessions](#sessions)).
 - Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
   Redis or JDBC) before scaling out.
 - Metrics and analyses read through the same permission checks as browsing (see
@@ -667,11 +842,12 @@ volume when that has no license yet. The volume keeps the license and the instal
   The demo `openldap` image stays on Ubuntu because RHEL 9 no longer ships the OpenLDAP server.
 - Building the `web` and `api` images applies the latest Red Hat updates to their runtime layers
   (`yum update`, or `microdnf update` on the minimal Java image), so the build needs access to
-  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes.
+  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes. The
+  base images are pinned by digest (Dependabot proposes new ones).
 
 - The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
   `docker compose down -v` after changing it, or if you started the stack from an older version.
-- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=framework`; the
+- The API trusts `X-Forwarded-*` headers from the proxy (`SERVER_FORWARD_HEADERS_STRATEGY=framework`; the
   `api` service is reachable only from the compose network). It therefore sees real client addresses, which login throttling relies on.
 - If a container fails to start, `docker compose logs <service>` shows why.
 - The web container looks up the API (`API_URL`) with the container runtime's own DNS server, the

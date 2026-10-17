@@ -42,8 +42,10 @@ public class ApiErrorHandler {
 
   @ExceptionHandler(ApiException.class)
   ResponseEntity<Map<String, Object>> api(ApiException e, HttpServletRequest request) {
-    if (e.status() == HttpStatus.FORBIDDEN) denials.denied(request, "forbidden", e.getMessage());
-    return body(e.status(), e.getMessage(), e.details());
+    if (e.status() == HttpStatus.FORBIDDEN) denials.denied(request, e.code() != null ? e.code() : "forbidden", e.getMessage());
+    ResponseEntity<Map<String, Object>> r = body(e.status(), e.getMessage(), e.details());
+    if (e.code() != null) r.getBody().put("code", e.code());
+    return r;
   }
 
   /** A security action that could not be audited was not performed. */

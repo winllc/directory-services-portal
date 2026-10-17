@@ -18,6 +18,13 @@ spec:
       port: {{ $v.api.service.port }}
       targetPort: http
       protocol: TCP
+    {{- if $v.metrics.enabled }}
+    # Health and Prometheus (MANAGEMENT_SERVER_PORT); never route an ingress to it.
+    - name: metrics
+      port: {{ $v.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
   selector:
     {{- include "dsp.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: api

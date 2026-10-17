@@ -210,6 +210,8 @@ package_native() {
       -e '/^# \${NGINX_LOCAL_RESOLVERS}/d' \
       -e 's|proxy_set_header X-DSP-Proxy-Secret "\${DSP_PROXY_SECRET}";|include /etc/directory-services-portal/nginx-proxy-secret.conf;  # written by install.sh|' \
       -e 's|\${DSP_CERT_HEADERS_HTTP}|proxy_set_header X-SSL-Client-Cert "";|' \
+      -e 's|\${DSP_CSP_HEADER}|Content-Security-Policy|' \
+      -e 's|CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh)|CSP is only reported with the header name Content-Security-Policy-Report-Only|' \
       -e '/X509_EDGE_TERMINATION, see entrypoint.sh/d' \
       "$ROOT/web/nginx/templates/default.conf.template" | cat -s > "$dir/nginx/directory-services-portal.conf"
   if grep -q '\${' "$dir/nginx/directory-services-portal.conf"; then die "Unreplaced template variable in the nginx site"; fi
@@ -220,10 +222,12 @@ package_native() {
     echo
     echo "# --- Server -------------------------------------------------------------------"
     echo "SERVER_ADDRESS=127.0.0.1"
+    echo "# The management port (MANAGEMENT_SERVER_PORT below, when set) listens on this host only too."
+    echo "MANAGEMENT_SERVER_ADDRESS=127.0.0.1"
     echo "PORT=3001"
     echo "DATA_DIR=/var/lib/directory-services-portal"
     echo "# nginx on this host overwrites X-Forwarded-*."
-    echo "FORWARD_HEADERS_STRATEGY=framework"
+    echo "SERVER_FORWARD_HEADERS_STRATEGY=framework"
     echo "# ENS Solutions license: without one only sign-in and the license screen work. Upload it"
     echo "# under Administration > License; it is written to ENS_LICENSE_FILE. ENS_LICENSE_STATE_DIR"
     echo "# keeps this installation's id (shown on the license screen) and must stay writable by dsp."
@@ -240,6 +244,11 @@ package_native() {
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \
             -e 's|(with docker-compose.mtls.yml)|(behind nginx: X509_SOURCE=header)|' \
             -e 's|=\"\(#[0-9a-fA-F]*\)\"$|=\1|' \
+            -e '/^# Its password, or LDAP_BIND_PASSWORD_FILE/,/^LDAP_BIND_PASSWORD=change-me$/c\
+# Its password, in this file (root and dsp only; install.sh creates it empty), which keeps it out\
+# of the API process'"'"'s environment. LDAP_BIND_PASSWORD still works, and is used while the file\
+# is empty.\
+LDAP_BIND_PASSWORD_FILE=/etc/directory-services-portal/ldap-bind-password' \
             -e '/^# The secret the web proxy sends to the API/,/^X509_PROXY_SECRET=$/c\
 # The secret nginx sends to the API with every request (X-DSP-Proxy-Secret): the API accepts a\
 # forwarded client certificate only with it. install.sh generates it into the file below (root\
@@ -249,6 +258,7 @@ package_native() {
 X509_PROXY_SECRET_FILE=/etc/directory-services-portal/proxy-secret'
   } > "$dir/portal.env"
   if grep -q '^X509_PROXY_SECRET=' "$dir/portal.env"; then die "portal.env: the X.509 proxy secret block was not replaced"; fi
+  if grep -q '^LDAP_BIND_PASSWORD=' "$dir/portal.env"; then die "portal.env: the LDAP bind password block was not replaced"; fi
   chmod 644 "$dir/portal.env"
   finish "$dir" "$name-native"
 }

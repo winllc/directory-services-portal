@@ -12,7 +12,18 @@ interface AuthState {
   loginWithCertificate(): Promise<void>;
   /** Why automatic certificate sign-in failed, if it was attempted. */
   certificateError: string | null;
+  /** Why the previous session ended (timed out), shown on the login page. */
+  sessionNotice: string | null;
+  /** The notice-and-consent banner must be acknowledged before signing in (the server enforces it). */
+  consentRequired: boolean;
+  acknowledgeConsent(): Promise<void>;
   logout(): Promise<void>;
+}
+
+interface MeResponse {
+  user: SessionUser | null;
+  certificateError?: string;
+  consentRequired?: boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -21,17 +32,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [certificateError, setCertificateError] = useState<string | null>(null);
+  const [consentRequired, setConsentRequired] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const qc = useQueryClient();
+
+  /** Reads the session: who is signed in, and whether the consent banner comes first. */
+  const checkSession = useCallback(async () => {
+    const r = await api.get<MeResponse>('/api/auth/me');
+    setUser(r.user);
+    setCertificateError(r.certificateError ?? null);
+    setConsentRequired(!!r.consentRequired);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .get<{ user: SessionUser | null; certificateError?: string }>('/api/auth/me')
-      .then((r) => {
-        if (cancelled) return;
-        setUser(r.user);
-        setCertificateError(r.certificateError ?? null);
-      })
+    checkSession()
       .catch((e) => {
         if (!(e instanceof ApiError && e.status === 401)) console.error(e);
       })
@@ -39,34 +54,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [checkSession]);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => {
+    setUnauthorizedHandler((expired) => {
+      if (expired) setSessionNotice(expired);
       setUser(null);
       qc.clear();
+      // The session is gone (signed out elsewhere, or expired): a new one may need the banner first.
+      checkSession().catch(() => undefined);
     });
-  }, [qc]);
+  }, [qc, checkSession]);
 
-  const login = useCallback(
-    async (username: string, password: string) => {
-      const r = await api.post<{ user: SessionUser }>('/api/auth/login', { username, password });
-      qc.clear();
-      setUser(r.user);
+  /** A sign-in the server refused because the banner was not acknowledged shows the banner. */
+  const signIn = useCallback(
+    async (fn: () => Promise<{ user: SessionUser }>) => {
+      try {
+        const r = await fn();
+        qc.clear();
+        setSessionNotice(null);
+        setUser(r.user);
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'consent_required') setConsentRequired(true);
+        throw e;
+      }
     },
     [qc],
   );
 
+  const login = useCallback(
+    (username: string, password: string) => signIn(() => api.post<{ user: SessionUser }>('/api/auth/login', { username, password })),
+    [signIn],
+  );
+
   const loginWithCertificate = useCallback(async () => {
-    const r = await api.post<{ user: SessionUser }>('/api/auth/x509');
-    qc.clear();
+    await signIn(() => api.post<{ user: SessionUser }>('/api/auth/x509'));
     setCertificateError(null);
-    setUser(r.user);
-  }, [qc]);
+  }, [signIn]);
+
+  const acknowledgeConsent = useCallback(async () => {
+    await api.post('/api/auth/consent');
+    // With certificate auto-login, the browser's certificate may now sign the user in.
+    await checkSession();
+  }, [checkSession]);
 
   const logout = useCallback(async () => {
     try {
-      await api.post('/api/auth/logout');
+      const r = await api.post<{ consentRequired?: boolean }>('/api/auth/logout');
+      setConsentRequired(!!r.consentRequired);
     } finally {
       qc.clear();
       setUser(null);
@@ -74,8 +109,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [qc]);
 
   const value = useMemo(
-    () => ({ user, loading, login, loginWithCertificate, certificateError, logout }),
-    [user, loading, login, loginWithCertificate, certificateError, logout],
+    () => ({ user, loading, login, loginWithCertificate, certificateError, sessionNotice, consentRequired, acknowledgeConsent, logout }),
+    [user, loading, login, loginWithCertificate, certificateError, sessionNotice, consentRequired, acknowledgeConsent, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

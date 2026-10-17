@@ -13,6 +13,10 @@ global:
   #   ghcr.io/winllc/directory-services-portal-api -> registry.corp.example:5000/winllc/directory-services-portal-api
   imageRegistry: ""
 
+# API log lines: json (Elastic Common Schema, LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs) or text.
+# Audit events on stdout are ens-audit/1 JSON lines either way.
+logFormat: json
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -90,8 +94,11 @@ api:
     readOnlyRootFilesystem: true
     runAsNonRoot: true
 
-  # GET /api/health on port 3001 (no license needed). The startup probe allows 3 minutes for the
-  # first start (configuration seeding, audit store check).
+  # Spring Boot's probes, no license or sign-in needed: liveness (the API itself) for the startup
+  # and liveness probes, readiness (the directory answers, the audit log is writable, the data disk
+  # has room) for the readiness probe. On the management port with metrics.enabled
+  # (/actuator/health/liveness, /readiness), else on 3001 (/livez, /readyz). The startup probe
+  # allows 3 minutes for the first start (configuration seeding, audit store check).
   startupProbe:
     enabled: true
     initialDelaySeconds: 10
@@ -232,7 +239,8 @@ ldap:
   poolSize: 10
   # Service account used for all directory operations (the portal enforces its own permissions).
   bindDn: cn=portal,ou=system,dc=example,dc=com
-  # LDAP_BIND_PASSWORD: inline (rendered into the chart's Secret) or from an existing Secret.
+  # The bind password: inline (rendered into the chart's Secret) or from an existing Secret,
+  # mounted into the API pod as a file (LDAP_BIND_PASSWORD_FILE), never an environment variable.
   bindPassword:
     value: ""
     existingSecret: ""
@@ -263,14 +271,42 @@ admin:
 
 # --- Server (env.template: Server) ------------------------------------------------------------
 server:
-  sessionTtlMinutes: 480
-  # COOKIE_SECURE. "auto": true when browsers use HTTPS (tls.enabled, ingress.tls or an
+  # Sessions (ENS_SESSION_*): idle timeout, a shorter one for administrators ("": the same; STIG
+  # suggests 15m), the longest a session lasts after sign-in, and concurrent sessions per user
+  # (0: no limit; over it the oldest ends; STIG suggests 3).
+  session:
+    idleTimeout: 30m
+    adminIdleTimeout: ""
+    absoluteTimeout: 12h
+    maxPerUser: 0
+  # Deprecated (SESSION_TTL_MINUTES): when set, the idle timeout in minutes, instead of
+  # session.idleTimeout. The chart's default used to be 480.
+  # sessionTtlMinutes: 480
+  # GROUP_REFRESH_INTERVAL: how often signed-in users' groups and administrator status are read
+  # again from the directory (0: only at sign-in).
+  groupRefreshInterval: 5m
+  # LOGIN_MAX_FAILURES / LOGIN_LOCKOUT_WINDOW: failed password sign-ins per user name and address
+  # before further attempts are refused, and the window they are counted in.
+  login:
+    maxFailures: 8
+    lockoutWindow: 15m
+  # ENS_COOKIE_SECURE. "auto": true when browsers use HTTPS (tls.enabled, ingress.tls or an
   # edge/passthrough/reencrypt route), else false. Or true / false.
   cookieSecure: auto
+  # ENS_CSP_REPORT_ONLY (API and web tier): send Content-Security-Policy-Report-Only instead of
+  # Content-Security-Policy. An escape hatch for a page the policy breaks; turn it off again.
+  cspReportOnly: false
   # Seed example forms, directories, dashboards and analyses into an empty configuration.
   seedDemoConfig: false
   # Optional text on the login page (help-desk contact, ...).
   loginHint: ""
+  # DoD notice-and-consent banner (ENS_CONSENT_BANNER_*), acknowledged before any sign-in. Empty
+  # title and text: the standard DoD wording. text is plain text: blank lines separate paragraphs,
+  # lines starting with "- " are list items (a YAML block scalar, text: |, keeps the new lines).
+  consentBanner:
+    enabled: false
+    title: ""
+    text: ""
   # Optional fixed banner at the top and bottom of every page (off while text is empty).
   banner:
     text: ""
@@ -281,6 +317,25 @@ server:
 
 # --- Metrics, analysis and background tasks ---------------------------------------------------
 metrics:
+  # Prometheus metrics (ens_* and the JVM's) at /actuator/prometheus, and the health probes, on a
+  # management port of their own (MANAGEMENT_SERVER_PORT), named "metrics" on the API's Service.
+  # The ingress and route never publish it. false: no Prometheus endpoint, probes on port 3001.
+  enabled: true
+  port: 9090
+  # A Prometheus Operator ServiceMonitor (monitoring.coreos.com/v1) for the API's metrics port.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels, e.g. the one your Prometheus selects ServiceMonitors by (release: prometheus).
+    labels: {}
+  # With networkPolicy.enabled: who may reach the metrics port (NetworkPolicy peers), e.g. the
+  # monitoring namespace. Empty: nobody (the kubelet's probes are not affected).
+  allowFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  # The portal's own metrics pages (dashboards, explorer):
   maxEntries: 100000
   cacheSeconds: 60
   waitMillis: 2000
@@ -371,10 +426,31 @@ x509:
     value: ""
     existingSecret: ""
     existingSecretKey: ca.pem
+  # Revocation checking (ENS_X509_*; DISA STIG requires it, the API warns while it is off).
+  revocation:
+    # off, ocsp, crl or ocsp-then-crl.
+    mode: "off"
+    # Ask this OCSP responder instead of the one in each certificate (e.g. a local relay).
+    ocspResponderUrl: ""
+    # A directory of CRL files (DER or PEM) inside the API pod, e.g. mounted with api.extraVolumes;
+    # with it set, CRL distribution points are not fetched (air-gapped networks).
+    crlDir: ""
+    # closed: refuse when the status can't be determined; open: allow, with a warning.
+    fail: closed
+    cache: 10m
+    # Egress for OCSP and CRL fetches, with networkPolicy.enabled and a mode other than off.
+    egress:
+      ports: [80, 443]
+      cidrs: [0.0.0.0/0]
+  # Deprecated (X509_CHECK_REVOCATION): true means ocsp-then-crl, failing closed, while
+  # revocation.mode is off.
   checkRevocation: false
+  # ENS_X509_ALLOWED_ISSUERS: only certificates from these issuer DNs, even if a trusted CA chains.
+  allowedIssuers: []
   # "filter" (search with userFilter) or "subject-dn" (the subject DN is the entry DN).
   mapping: filter
-  # Placeholders: {{cn}} {{uid}} {{email}} {{upn}} {{subject}} {{serial}}
+  # Placeholders (filter-escaped), as {{name}} or {name}: cn, uid, email, upn, edipi (DoD EDIPI),
+  # uuid (SAN URI urn:uuid:...), subject, serial.
   userFilter: (&(objectClass=inetOrgPerson)(uid={{cn}}))
   requireCertificateMatch: false
   autoLogin: false

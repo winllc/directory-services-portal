@@ -43,11 +43,24 @@ All settings are in `.env`; after a change run `./portal.sh up`. The first secti
 compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
 
 - `LDAP_URL`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_BASE_DN`: the directory and the service
-  account the portal uses. For `ldaps://` with a private CA, put a trust store in the data volume
+  account the portal uses (`LDAP_BIND_PASSWORD_FILE` reads the password from a file in the
+  container instead). For `ldaps://` with a private CA, put a trust store in the data volume
   and point `JAVA_TOOL_OPTIONS` at it, or set `LDAP_TLS_REJECT_UNAUTHORIZED=false` for testing.
 - `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER`, `LDAP_GROUP_*`: how users and their groups are found.
 - `ADMIN_USERS`, `ADMIN_GROUPS`: who administers the portal (`;` separated).
-- `COOKIE_SECURE=true` whenever users reach the portal over HTTPS (including through your proxy).
+- `ENS_COOKIE_SECURE=true` whenever users reach the portal over HTTPS (including through your
+  proxy; `COOKIE_SECURE`, the older name, still works). The web tier sends the security headers
+  (CSP, HSTS behind an HTTPS proxy that sets `X-Forwarded-Proto`, and others); `ENS_CSP_REPORT_ONLY=true`
+  only reports CSP violations, as an escape hatch.
+- Monitoring: `./portal.sh status` shows whether the API is ready (the directory answers and the
+  audit log is writable). `MANAGEMENT_SERVER_PORT` adds a Prometheus endpoint (see the comments
+  in `.env`); `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` writes JSON log lines.
+- `ENS_SESSION_*` (idle timeout, administrators' idle timeout, absolute lifetime, sessions per
+  user), `GROUP_REFRESH_INTERVAL` and `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_WINDOW`: session and
+  sign-in controls. An `.env` from an earlier release keeps `SESSION_TTL_MINUTES=480`, which still
+  applies until you replace it with `ENS_SESSION_IDLE_TIMEOUT` (new installs: `30m`).
+- `ENS_CONSENT_BANNER_ENABLED=true` for the DoD notice-and-consent banner before sign-in (DISA
+  STIG); the standard DoD text unless `ENS_CONSENT_BANNER_TEXT` / `ENS_CONSENT_BANNER_FILE` say otherwise.
 - `BANNER_TEXT` and colours for a classification banner; `LOGIN_HINT` for help text.
 - Metrics, analysis and background-task limits: see the comments in the file.
 
@@ -97,6 +110,10 @@ API accepts a forwarded certificate only with it, and checks it against `certs/c
 `.env` private (mode 600).
 For a test: `scripts/generate-dev-certs.sh certs` creates a CA, a server certificate and user
 certificates (`certs/alice.p12`, password `password`).
+Set `ENS_X509_REVOCATION` (`ocsp`, `crl` or `ocsp-then-crl`) to check certificates for revocation,
+as DISA STIG requires; the API warns at startup while it is off. For CRLs on an air-gapped
+network, mount a directory of CRL files into the API container (a compose override) and set
+`ENS_X509_CRL_DIR` to it.
 
 ## Operate
 
@@ -134,9 +151,15 @@ license volume (`ens-license`: installed license and installation id) are reused
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
 backup.
 
+Settings a release adds are not written into an existing `.env` (except `X509_PROXY_SECRET`):
+they take their defaults, and older names keep working (`SESSION_TTL_MINUTES`, `COOKIE_SECURE`,
+`X509_CHECK_REVOCATION`). Compare your `.env` with this package's `env.template` to adopt them.
+
 ## Notes
 
 - Both containers run as unprivileged users on unprivileged ports and also run under an
-  arbitrary UID (OpenShift `restricted`).
+  arbitrary UID (OpenShift `restricted`), without Linux capabilities or privilege escalation
+  (`no-new-privileges`), on a read-only root file system (tmpfs where they write) and with memory
+  limits (`API_MEMORY_LIMIT`, default `1536m`; `WEB_MEMORY_LIMIT`, `256m`).
 - The API is never published on the host; only the web tier talks to it.
 - Run one API instance: sessions and background tasks are held in its memory.

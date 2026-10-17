@@ -112,7 +112,7 @@ ingress:
       hosts: [portal.corp.example]
 ```
 
-`server.cookieSecure: auto` (the default) turns on secure session cookies when `ingress.tls`,
+`server.cookieSecure: auto` (the default) turns on secure session cookies (`ENS_COOKIE_SECURE`) when `ingress.tls`,
 a Route or `tls.enabled` is set. Schema imports can be up to 5 MB: raise the controller's body
 size limit if it is lower (ingress-nginx: `nginx.ingress.kubernetes.io/proxy-body-size: 5m`).
 
@@ -266,6 +266,13 @@ edge-terminated setup (without `tls.enabled`) then also needs `x509.trustedCa`,
 `license.*` is copied only into an empty license volume, so a newer license uploaded on the
 license screen is never overwritten. Back up the data PVC before upgrading.
 
+From the release with the platform baseline, the API's probes moved from `/api/health` to
+Spring Boot's liveness and readiness groups on the metrics port (`metrics.enabled`, default on):
+a pod is not Ready while the directory is unreachable or the audit log can't be written. API
+log lines are JSON (`logFormat: json`) unless you set `logFormat: text`. The idle timeout is
+`server.session.idleTimeout` (`30m`); the earlier default was 480 minutes, and a
+`server.sessionTtlMinutes` you set yourself still applies.
+
 ## License
 
 Without a license only sign-in and the license screen work. Sign in as an administrator: you
@@ -318,8 +325,8 @@ Existing claims (`existingClaim`) are never touched.
 | `api.resources` | requests 250m / 768Mi, limit 1536Mi | |
 | `api.podSecurityContext` | non-root 185/185, fsGroup 185, RuntimeDefault seccomp | |
 | `api.securityContext` | no privilege escalation, drop ALL, read-only root filesystem | `/tmp` is an emptyDir |
-| `api.startupProbe` | `/api/health`, 10s + 36 × 5s | generous for the first start |
-| `api.livenessProbe`, `api.readinessProbe` | `/api/health` | `enabled`, `periodSeconds`, `timeoutSeconds`, `failureThreshold` |
+| `api.startupProbe` | liveness, 10s + 36 × 5s | generous for the first start |
+| `api.livenessProbe`, `api.readinessProbe` | `/actuator/health/liveness` / `/readiness` on the metrics port (`/livez` / `/readyz` on 3001 without `metrics.enabled`) | `enabled`, `periodSeconds`, `timeoutSeconds`, `failureThreshold`. Readiness needs the directory, a writable audit log and room on the data disk |
 | `api.service.port` / `.annotations` | `3001` / `{}` | the API's ClusterIP Service |
 | `web.image.repository` | `ghcr.io/winllc/directory-services-portal-web` | |
 | `web.image.tag` / `.pullPolicy` | `""` / `IfNotPresent` | |
@@ -356,7 +363,7 @@ Existing claims (`existingClaim`) are never touched.
 | `ldap.timeoutMs` | `LDAP_TIMEOUT_MS` | `10000` |
 | `ldap.poolSize` | `LDAP_POOL_SIZE` | `10` |
 | `ldap.bindDn` | `LDAP_BIND_DN` | `cn=portal,ou=system,dc=example,dc=com` |
-| `ldap.bindPassword.value` / `.existingSecret` / `.existingSecretKey` | `LDAP_BIND_PASSWORD` | `""` / `""` / `ldap-bind-password` |
+| `ldap.bindPassword.value` / `.existingSecret` / `.existingSecretKey` | `LDAP_BIND_PASSWORD_FILE` (the Secret mounted at `/etc/dsp/ldap/bind-password`) | `""` / `""` / `ldap-bind-password` |
 | `ldap.baseDn` | `LDAP_BASE_DN` | `dc=example,dc=com` |
 | `ldap.userSearchBase` | `LDAP_USER_SEARCH_BASE` | `ou=people,dc=example,dc=com` |
 | `ldap.userFilter` | `LDAP_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{username}}))` |
@@ -372,18 +379,29 @@ Existing claims (`existingClaim`) are never touched.
 
 | Value | Env | Default |
 |---|---|---|
-| `server.sessionTtlMinutes` | `SESSION_TTL_MINUTES` | `480` |
-| `server.cookieSecure` | `COOKIE_SECURE` | `auto` (true with ingress TLS, a Route or `tls.enabled`) |
+| `server.session.idleTimeout` | `ENS_SESSION_IDLE_TIMEOUT` | `30m` (was 480 minutes; the deprecated `server.sessionTtlMinutes`, when set, still wins) |
+| `server.session.adminIdleTimeout` | `ENS_SESSION_ADMIN_IDLE_TIMEOUT` | `""` (the idle timeout; STIG suggests `15m`) |
+| `server.session.absoluteTimeout` | `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` |
+| `server.session.maxPerUser` | `ENS_SESSION_MAX_PER_USER` | `0` (no limit; STIG suggests `3`) |
+| `server.groupRefreshInterval` | `GROUP_REFRESH_INTERVAL` | `5m` |
+| `server.login.maxFailures` / `.lockoutWindow` | `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_WINDOW` | `8` / `15m` |
+| `server.cookieSecure` | `ENS_COOKIE_SECURE` | `auto` (true with ingress TLS, a Route or `tls.enabled`) |
+| `server.cspReportOnly` | `ENS_CSP_REPORT_ONLY` (API and web tier) | `false` |
 | `server.seedDemoConfig` | `SEED_DEMO_CONFIG` | `false` |
 | `server.loginHint` | `LOGIN_HINT` | `""` |
+| `server.consentBanner.enabled` / `.title` / `.text` | `ENS_CONSENT_BANNER_ENABLED` / `_TITLE` / `_TEXT` | `false` / `""` / `""` (the standard DoD notice and consent) |
 | `server.banner.text` / `.foreground` / `.background` | `BANNER_TEXT` / `BANNER_FOREGROUND` / `BANNER_BACKGROUND` | `""` / `#ffffff` / `#007a33` |
 | `server.maxHttpRequestHeaderSize` | `MAX_HTTP_REQUEST_HEADER_SIZE` | `32KB` |
+| `metrics.enabled` / `.port` | `MANAGEMENT_SERVER_PORT` | `true` / `9090`: Prometheus (`/actuator/prometheus`) and the probes on a port of their own, the `metrics` port of the API's Service (never the ingress or route) |
+| `metrics.serviceMonitor.enabled` / `.interval` / `.scrapeTimeout` / `.labels` | | `false` / `30s` / `10s` / `{}`: a Prometheus Operator `ServiceMonitor` |
+| `metrics.allowFrom` | | `[]`: NetworkPolicy peers admitted to the metrics port (with `networkPolicy.enabled`) |
+| `logFormat` | `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` with `json` | `json` (ECS JSON log lines) or `text` |
 | `metrics.maxEntries` / `.cacheSeconds` / `.waitMillis` | `METRICS_MAX_ENTRIES` / `METRICS_CACHE_SECONDS` / `METRICS_WAIT_MILLIS` | `100000` / `60` / `2000` |
 | `analysis.maxIssues` | `ANALYSIS_MAX_ISSUES` | `50000` |
 | `jobs.metricsThreads` / `.analysisThreads` | `JOBS_METRICS_THREADS` / `JOBS_ANALYSIS_THREADS` | `4` / `2` |
 | `jobs.maxActivePerUser` / `.retainMinutes` | `JOBS_MAX_ACTIVE_PER_USER` / `JOBS_RETAIN_MINUTES` | `5` / `1440` |
 
-Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `FORWARD_HEADERS_STRATEGY=framework`, the
+Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `SERVER_FORWARD_HEADERS_STRATEGY=framework`, the
 `ENS_LICENSE_*` paths, and the web tier's `API_URL`.
 
 ### Audit logging (ens-audit/1)
@@ -411,7 +429,12 @@ Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `FORWARD_HEADERS_STRATEGY=fra
 | `x509.trustedProxies` | `X509_TRUSTED_PROXIES` | `10.0.0.0/8;172.16.0.0/12;192.168.0.0/16` (the pod network) |
 | `x509.proxySecret.existingSecret` / `.existingSecretKey` | `X509_PROXY_SECRET_FILE` (API and web) | `""` (generated, kept across upgrades) / `proxy-secret` |
 | `x509.trustedCa.value` / `.existingSecret` / `.existingSecretKey` | `X509_TRUSTED_CA_FILE` | empty: `tls`'s `ca.pem` when `tls.enabled`; required with `x509.enabled` |
-| `x509.checkRevocation` | `X509_CHECK_REVOCATION` | `false` |
+| `x509.revocation.mode` | `ENS_X509_REVOCATION` | `off` (`ocsp`, `crl`, `ocsp-then-crl`) |
+| `x509.revocation.ocspResponderUrl` / `.crlDir` | `ENS_X509_OCSP_RESPONDER_URL` / `ENS_X509_CRL_DIR` | `""` / `""` (mount CRL files with `api.extraVolumes`) |
+| `x509.revocation.fail` / `.cache` | `ENS_X509_REVOCATION_FAIL` / `ENS_X509_REVOCATION_CACHE` | `closed` / `10m` |
+| `x509.revocation.egress.ports` / `.cidrs` | | `[80, 443]` / `[0.0.0.0/0]`: NetworkPolicy egress for OCSP and CRL fetches (with a mode other than `off`) |
+| `x509.allowedIssuers` | `ENS_X509_ALLOWED_ISSUERS` | `[]` (list, or DNs separated by `;`) |
+| `x509.checkRevocation` | `X509_CHECK_REVOCATION` | `false` (deprecated: `true` means `ocsp-then-crl`, failing closed, while the mode is `off`) |
 | `x509.mapping` | `X509_MAPPING` | `filter` |
 | `x509.userFilter` | `X509_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{cn}}))` |
 | `x509.requireCertificateMatch` | `X509_REQUIRE_CERTIFICATE_MATCH` | `false` |

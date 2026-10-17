@@ -13,12 +13,20 @@ services:
     image: ${API_IMAGE:-@API_IMAGE@}
     restart: unless-stopped
     env_file: .env
+    # Hardening: no capabilities or privilege escalation, a read-only root file system (the API
+    # writes only to its volumes and /tmp) and a memory limit (the JVM sizes its heap from it).
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: ${API_MEMORY_LIMIT:-1536m}
     environment:
       # Fixed by the container layout; everything else comes from .env.
       DATA_DIR: /data
       PORT: "3001"
       # Only the web proxy can reach the API, and it overwrites X-Forwarded-*.
-      FORWARD_HEADERS_STRATEGY: framework
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
       # ENS license: the license (uploaded on the license screen, or copied in by install.sh /
@@ -29,7 +37,8 @@ services:
       # log forwarder to tail. The ENS_AUDIT_* settings reach the API through env_file.
       - ens-audit:/var/log/ens
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3001/api/health >/dev/null || exit 1"]
+      # Readiness: the directory answers and the audit log is writable.
+      test: ["CMD-SHELL", "curl -sf http://localhost:3001/readyz >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -38,10 +47,22 @@ services:
   web:
     image: ${WEB_IMAGE:-@WEB_IMAGE@}
     restart: unless-stopped
+    # Hardening: no capabilities or privilege escalation, a read-only root file system (nginx
+    # writes its rendered config, pid, temp files and default log to tmpfs) and a memory limit.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /opt/app-root/etc/dsp.d
+      - /var/log/nginx
+    mem_limit: ${WEB_MEMORY_LIMIT:-256m}
     depends_on:
       - api
     environment:
       API_URL: http://api:3001
+      # Content-Security-Policy only reported (escape hatch; the API reads it from .env).
+      ENS_CSP_REPORT_ONLY: ${ENS_CSP_REPORT_ONLY:-false}
       # Sent to the API with every request; the API accepts client certificates only with it.
       X509_PROXY_SECRET: ${X509_PROXY_SECRET:-}
       # The header the API reads the client certificate from, removed from client requests

@@ -12,8 +12,15 @@ data:
   DATA_DIR: /data
   PORT: "3001"
   # Only the web tier reaches the API, and it overwrites X-Forwarded-*.
-  FORWARD_HEADERS_STRATEGY: framework
+  SERVER_FORWARD_HEADERS_STRATEGY: framework
   JAVA_TOOL_OPTIONS: {{ include "dsp.str" $v.api.javaToolOptions | quote }}
+  {{- if $v.metrics.enabled }}
+  # Health and Prometheus on their own port (the Service's "metrics" port).
+  MANAGEMENT_SERVER_PORT: {{ include "dsp.str" $v.metrics.port | quote }}
+  {{- end }}
+  {{- if eq $v.logFormat "json" }}
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+  {{- end }}
   # Directory connection
   DIRECTORY_MODE: {{ include "dsp.str" $v.directory.mode | quote }}
   LDAP_URL: {{ include "dsp.str" $v.ldap.url | quote }}
@@ -22,6 +29,10 @@ data:
   LDAP_TIMEOUT_MS: {{ include "dsp.str" $v.ldap.timeoutMs | quote }}
   LDAP_POOL_SIZE: {{ include "dsp.str" $v.ldap.poolSize | quote }}
   LDAP_BIND_DN: {{ include "dsp.str" $v.ldap.bindDn | quote }}
+  {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+  # The bind password, mounted from its Secret (ldap.bindPassword).
+  LDAP_BIND_PASSWORD_FILE: /etc/dsp/ldap/bind-password
+  {{- end }}
   LDAP_BASE_DN: {{ include "dsp.str" $v.ldap.baseDn | quote }}
   # Users & groups
   LDAP_USER_SEARCH_BASE: {{ include "dsp.str" $v.ldap.userSearchBase | quote }}
@@ -32,10 +43,20 @@ data:
   ADMIN_USERS: {{ include "dsp.joinSemi" $v.admin.users | quote }}
   ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.admin.groups | quote }}
   # Server
-  SESSION_TTL_MINUTES: {{ include "dsp.str" $v.server.sessionTtlMinutes | quote }}
-  COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
+  ENS_SESSION_IDLE_TIMEOUT: {{ include "dsp.idleTimeout" . | quote }}
+  ENS_SESSION_ADMIN_IDLE_TIMEOUT: {{ include "dsp.str" $v.server.session.adminIdleTimeout | quote }}
+  ENS_SESSION_ABSOLUTE_TIMEOUT: {{ include "dsp.str" $v.server.session.absoluteTimeout | quote }}
+  ENS_SESSION_MAX_PER_USER: {{ include "dsp.str" $v.server.session.maxPerUser | quote }}
+  GROUP_REFRESH_INTERVAL: {{ include "dsp.str" $v.server.groupRefreshInterval | quote }}
+  LOGIN_MAX_FAILURES: {{ include "dsp.str" $v.server.login.maxFailures | quote }}
+  LOGIN_LOCKOUT_WINDOW: {{ include "dsp.str" $v.server.login.lockoutWindow | quote }}
+  ENS_COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
+  ENS_CSP_REPORT_ONLY: {{ $v.server.cspReportOnly | quote }}
   SEED_DEMO_CONFIG: {{ include "dsp.str" $v.server.seedDemoConfig | quote }}
   LOGIN_HINT: {{ include "dsp.str" $v.server.loginHint | quote }}
+  ENS_CONSENT_BANNER_ENABLED: {{ $v.server.consentBanner.enabled | quote }}
+  ENS_CONSENT_BANNER_TITLE: {{ include "dsp.str" $v.server.consentBanner.title | quote }}
+  ENS_CONSENT_BANNER_TEXT: {{ include "dsp.str" $v.server.consentBanner.text | quote }}
   BANNER_TEXT: {{ include "dsp.str" $v.server.banner.text | quote }}
   BANNER_FOREGROUND: {{ include "dsp.str" $v.server.banner.foreground | quote }}
   BANNER_BACKGROUND: {{ include "dsp.str" $v.server.banner.background | quote }}
@@ -73,6 +94,13 @@ data:
   X509_PROXY_SECRET_FILE: {{ ternary "/etc/dsp/x509-proxy/proxy-secret" "" (and $v.x509.enabled true) | quote }}
   X509_TRUSTED_CA_FILE: {{ ternary "/etc/dsp/x509/ca.pem" "" (eq (include "dsp.x509CaConfigured" .) "true") | quote }}
   X509_CHECK_REVOCATION: {{ $v.x509.checkRevocation | quote }}
+  {{- $rev := $v.x509.revocation }}
+  ENS_X509_REVOCATION: {{ toString $rev.mode | quote }}
+  ENS_X509_OCSP_RESPONDER_URL: {{ $rev.ocspResponderUrl | quote }}
+  ENS_X509_CRL_DIR: {{ $rev.crlDir | quote }}
+  ENS_X509_REVOCATION_FAIL: {{ $rev.fail | quote }}
+  ENS_X509_REVOCATION_CACHE: {{ $rev.cache | quote }}
+  ENS_X509_ALLOWED_ISSUERS: {{ include "dsp.joinSemi" $v.x509.allowedIssuers | quote }}
   X509_MAPPING: {{ $v.x509.mapping | quote }}
   X509_USER_FILTER: {{ $v.x509.userFilter | quote }}
   X509_REQUIRE_CERTIFICATE_MATCH: {{ $v.x509.requireCertificateMatch | quote }}

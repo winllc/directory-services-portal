@@ -1,0 +1,6 @@
+# Accepted risks for the CI image scan (trivy image --severity HIGH,CRITICAL --ignore-unfixed).
+# One CVE id per line, each with a comment giving the reason and a review date, e.g.
+#   # Reason: only reachable through X, which the portal never uses. Review by 2027-01-31.
+#   CVE-2026-00000
+# Keep this list short: fix by updating the base image or the dependency whenever possible.
+# None at present.

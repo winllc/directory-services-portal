@@ -3,6 +3,8 @@ package com.winllc.dsp.audit;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.SessionUser;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
@@ -46,6 +48,9 @@ import tools.jackson.databind.json.JsonMapper;
  *       rolling file, see {@link AuditOutputs});
  *   <li>delivered in the background to Splunk HEC and syslog when configured ({@link AuditDelivery}).
  * </ul>
+ *
+ * <p>Every stored event counts in {@code ens_audit_events_total{category,outcome}}, and every
+ * {@code auth.login} also in {@code ens_auth_attempts_total{method,outcome}}.
  */
 @Component
 public class AuditLog {
@@ -59,13 +64,16 @@ public class AuditLog {
   private final JsonMapper mapper;
   private final AuditStore store;
   private final ObjectProvider<Licensing> licensing;
+  private final ObjectProvider<MeterRegistry> meters;
   private final String version;
   private final String host;
   private volatile String installationId;
 
-  public AuditLog(JsonMapper mapper, PortalProperties props, ObjectProvider<BuildProperties> build, ObjectProvider<Licensing> licensing) {
+  public AuditLog(JsonMapper mapper, PortalProperties props, ObjectProvider<BuildProperties> build, ObjectProvider<Licensing> licensing,
+      ObjectProvider<MeterRegistry> meters) {
     this.mapper = mapper;
     this.licensing = licensing;
+    this.meters = meters;
     BuildProperties b = build.getIfAvailable();
     this.version = b != null && b.getVersion() != null ? b.getVersion() : "dev";
     this.host = hostname();
@@ -140,6 +148,7 @@ public class AuditLog {
     private final String action;
     private String category;
     private String severity;
+    private String reason;
     private SessionUser user;
     private AuditEvent.Actor actor;
     private String anonymousId;
@@ -202,6 +211,12 @@ public class AuditLog {
       return this;
     }
 
+    /** The reason, for an outcome that has one without failing (e.g. why a session ended). */
+    public Draft reason(String reason) {
+      this.reason = reason;
+      return this;
+    }
+
     /** Keeps an original time and id (history migration). */
     Draft at(String time, String id) {
       this.time = time;
@@ -239,7 +254,7 @@ public class AuditLog {
     private AuditStore.Stored finish(String outcome, String reason) {
       if (done) return finished;
       done = true;
-      finished = record(build(outcome, reason));
+      finished = record(build(outcome, reason != null ? reason : this.reason));
       return finished;
     }
 
@@ -275,11 +290,29 @@ public class AuditLog {
   AuditStore.Stored record(AuditEvent event) {
     boolean required = AuditCatalog.mustBeRecorded(event.category(), event.action());
     try {
-      return store.append(event, s -> emit(s.line()));
+      AuditStore.Stored stored = store.append(event, s -> emit(s.line()));
+      count(event);
+      return stored;
     } catch (IOException e) {
       log.error("Could not store audit event {} ({}) in {}: {}", event.id(), event.action(), store.dir(), e.getMessage());
       if (required) throw new AuditUnavailableException("The audit log could not be written: " + e.getMessage());
       return null;
+    }
+  }
+
+  private void count(AuditEvent event) {
+    MeterRegistry registry = meters.getIfAvailable();
+    if (registry == null) return;
+    try {
+      Counter.builder("ens.audit.events").description("Audit events stored")
+          .tag("category", event.category()).tag("outcome", event.outcome()).register(registry).increment();
+      if ("auth.login".equals(event.action())) {
+        Object method = event.details() == null ? null : event.details().get("method");
+        Counter.builder("ens.auth.attempts").description("Sign-in attempts")
+            .tag("method", method == null ? "unknown" : method.toString()).tag("outcome", event.outcome()).register(registry).increment();
+      }
+    } catch (RuntimeException e) {
+      log.debug("Could not count audit event {}: {}", event.action(), e.getMessage());
     }
   }
 

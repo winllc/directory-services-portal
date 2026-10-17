@@ -25,6 +25,9 @@ public abstract class AuditForwarder {
     void failed(String output, String error, Instant since);
 
     void recovered(String output, Instant failingSince);
+
+    /** Every delivery attempt that failed (counted in ens_audit_forward_failures_total). */
+    default void attemptFailed(String output) {}
   }
 
   public record Status(String output, boolean enabled, String destination, long lastDeliveredSeq, String lastDeliveredAt,
@@ -145,6 +148,7 @@ public abstract class AuditForwarder {
     if (lastError == null || failingSince == null) log.warn("Audit output {} failed: {}; retrying with backoff", name, message);
     lastError = AuditDetails.truncate(message);
     lastErrorAt = now;
+    notify(() -> listener.attemptFailed(name));
     if (failingSince == null) failingSince = now;
     if (!alerted && Duration.between(failingSince, now).compareTo(alertAfter) >= 0) {
       alerted = true;

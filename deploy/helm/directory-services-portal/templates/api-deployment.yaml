@@ -98,6 +98,11 @@ spec:
             - name: http
               containerPort: 3001
               protocol: TCP
+            {{- if $v.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ $v.metrics.port }}
+              protocol: TCP
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "dsp.apiName" . }}
@@ -110,11 +115,6 @@ spec:
               value: /var/lib/ens/directory-portal
             - name: ENS_LICENSE_FILE
               value: /var/lib/ens/directory-portal/license.lic
-            {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
-            - name: LDAP_BIND_PASSWORD
-              valueFrom:
-                {{- include "dsp.secretRef" (dict "v" $v.ldap.bindPassword "chartKey" "ldap-bind-password" "root" .) | nindent 16 }}
-            {{- end }}
             {{- if include "dsp.secretSet" (dict "v" $v.audit.splunk.token) }}
             - name: ENS_AUDIT_SPLUNK_TOKEN
               valueFrom:
@@ -134,8 +134,7 @@ spec:
           {{- if $v.api.startupProbe.enabled }}
           startupProbe:
             httpGet:
-              path: /api/health
-              port: http
+              {{- include "dsp.apiProbe" (dict "group" "liveness" "root" .) | nindent 14 }}
             initialDelaySeconds: {{ $v.api.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ $v.api.startupProbe.periodSeconds }}
             timeoutSeconds: {{ $v.api.startupProbe.timeoutSeconds }}
@@ -144,8 +143,7 @@ spec:
           {{- if $v.api.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /api/health
-              port: http
+              {{- include "dsp.apiProbe" (dict "group" "liveness" "root" .) | nindent 14 }}
             periodSeconds: {{ $v.api.livenessProbe.periodSeconds }}
             timeoutSeconds: {{ $v.api.livenessProbe.timeoutSeconds }}
             failureThreshold: {{ $v.api.livenessProbe.failureThreshold }}
@@ -153,8 +151,7 @@ spec:
           {{- if $v.api.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /api/health
-              port: http
+              {{- include "dsp.apiProbe" (dict "group" "readiness" "root" .) | nindent 14 }}
             periodSeconds: {{ $v.api.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ $v.api.readinessProbe.timeoutSeconds }}
             failureThreshold: {{ $v.api.readinessProbe.failureThreshold }}
@@ -185,6 +182,13 @@ spec:
             {{- if $truststore.existingSecret }}
             - name: truststore
               mountPath: /etc/dsp/truststore
+              readOnly: true
+            {{- end }}
+            {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+            # LDAP_BIND_PASSWORD_FILE: a file, not an environment variable anyone inspecting the
+            # pod or process can read.
+            - name: ldap-bind-password
+              mountPath: /etc/dsp/ldap
               readOnly: true
             {{- end }}
             {{- with $v.api.extraVolumeMounts }}
@@ -253,6 +257,16 @@ spec:
             items:
               - key: {{ include "dsp.x509ProxySecretKey" . }}
                 path: proxy-secret
+        {{- end }}
+        {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+        - name: ldap-bind-password
+          secret:
+            secretName: {{ $v.ldap.bindPassword.existingSecret | default (include "dsp.fullname" .) }}
+            # Group-readable: the API runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: {{ ternary $v.ldap.bindPassword.existingSecretKey "ldap-bind-password" (not (empty $v.ldap.bindPassword.existingSecret)) }}
+                path: bind-password
         {{- end }}
         {{- if $truststore.existingSecret }}
         - name: truststore

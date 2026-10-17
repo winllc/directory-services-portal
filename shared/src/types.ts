@@ -276,9 +276,12 @@ export interface SelfEntryResult {
 
 export interface ServerInfo {
   mode: 'ldap' | 'memory';
+  /** Administrators only. */
   ldapUrl?: string;
-  baseDn: string;
+  /** Signed-in users only. */
+  baseDn?: string;
   connected: boolean;
+  /** Why the directory doesn't answer: administrators only. */
   error?: string;
   version: string;
   /** Sign-in methods offered by the server. */
@@ -287,6 +290,11 @@ export interface ServerInfo {
   loginHint?: string;
   /** Fixed banner shown at the top and bottom of every page (absent when disabled). */
   banner?: { text: string; foreground: string; background: string };
+  /**
+   * The notice-and-consent banner to acknowledge before signing in (absent when disabled). Plain
+   * text: blank lines separate paragraphs, and lines starting with "- " are list items.
+   */
+  consent?: { title: string; text: string };
 }
 
 /**

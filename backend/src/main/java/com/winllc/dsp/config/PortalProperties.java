@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -25,6 +26,9 @@ public class PortalProperties {
   private final Metrics metrics = new Metrics();
   private final Jobs jobs = new Jobs();
   private final Banner banner = new Banner();
+  private final Login login = new Login();
+  /** How often a signed-in user's groups and administrator status are read again (zero: only at sign-in). */
+  private Duration groupRefreshInterval = Duration.ofMinutes(5);
   /** Allow username/password sign-in (disable for certificate-only deployments). */
   private boolean passwordLoginEnabled = true;
   /** Optional text shown on the login page (e.g. demo credentials or a help-desk contact). */
@@ -48,6 +52,8 @@ public class PortalProperties {
     private String url = "ldap://localhost:389";
     private String bindDn = "";
     private String bindPassword = "";
+    /** File holding the bind password, read instead of {@link #bindPassword} when set (preferred). */
+    private String bindPasswordFile = "";
     private boolean startTls;
     private boolean tlsRejectUnauthorized = true;
     private int timeoutMs = 10_000;
@@ -59,6 +65,26 @@ public class PortalProperties {
     public void setBindDn(String bindDn) { this.bindDn = bindDn; }
     public String getBindPassword() { return bindPassword; }
     public void setBindPassword(String bindPassword) { this.bindPassword = bindPassword; }
+    public String getBindPasswordFile() { return bindPasswordFile; }
+    public void setBindPasswordFile(String bindPasswordFile) { this.bindPasswordFile = bindPasswordFile; }
+
+    /**
+     * The bind password: the content of {@link #bindPasswordFile} (without a trailing new line)
+     * when that is set and not empty, else {@link #bindPassword}.
+     *
+     * @throws UncheckedIOException when the file can't be read
+     */
+    public String resolvedBindPassword() {
+      if (bindPasswordFile != null && !bindPasswordFile.isBlank()) {
+        try {
+          String s = Files.readString(Path.of(bindPasswordFile.trim())).replaceFirst("\\r?\\n$", "");
+          if (!s.isEmpty()) return s;
+        } catch (IOException e) {
+          throw new UncheckedIOException("Cannot read LDAP_BIND_PASSWORD_FILE " + bindPasswordFile + ": " + e.getMessage(), e);
+        }
+      }
+      return bindPassword;
+    }
     public boolean isStartTls() { return startTls; }
     public void setStartTls(boolean startTls) { this.startTls = startTls; }
     public boolean isTlsRejectUnauthorized() { return tlsRejectUnauthorized; }
@@ -67,6 +93,20 @@ public class PortalProperties {
     public void setTimeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; }
     public int getPoolSize() { return poolSize; }
     public void setPoolSize(int poolSize) { this.poolSize = poolSize; }
+  }
+
+  /**
+   * Failed password sign-ins: after {@code maxFailures} for one user name from one address within
+   * {@code lockoutWindow} of the first, further attempts are refused until the window has passed.
+   */
+  public static class Login {
+    private int maxFailures = 8;
+    private Duration lockoutWindow = Duration.ofMinutes(15);
+
+    public int getMaxFailures() { return maxFailures; }
+    public void setMaxFailures(int maxFailures) { this.maxFailures = maxFailures; }
+    public Duration getLockoutWindow() { return lockoutWindow; }
+    public void setLockoutWindow(Duration lockoutWindow) { this.lockoutWindow = lockoutWindow; }
   }
 
   /** The audit log of changes and sign-ins (see {@code AuditLog}). */
@@ -315,6 +355,9 @@ public class PortalProperties {
   public Metrics getMetrics() { return metrics; }
   public Jobs getJobs() { return jobs; }
   public Banner getBanner() { return banner; }
+  public Login getLogin() { return login; }
+  public Duration getGroupRefreshInterval() { return groupRefreshInterval; }
+  public void setGroupRefreshInterval(Duration groupRefreshInterval) { this.groupRefreshInterval = groupRefreshInterval; }
   public boolean isPasswordLoginEnabled() { return passwordLoginEnabled; }
   public String getLoginHint() { return loginHint; }
   public void setLoginHint(String loginHint) { this.loginHint = loginHint; }

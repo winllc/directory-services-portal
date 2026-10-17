@@ -10,7 +10,7 @@ export function DnBrowser({ open, initial, onSelect, onClose }: { open: boolean;
   const [base, setBase] = useState(initial || '');
   const current = base || info.data?.baseDn || '';
   const q = useBrowse(current, open && !!current);
-  const atRoot = !!info.data && current.toLowerCase() === info.data.baseDn.toLowerCase();
+  const atRoot = !!info.data?.baseDn && current.toLowerCase() === info.data.baseDn.toLowerCase();
 
   return (
     <Modal

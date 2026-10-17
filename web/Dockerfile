@@ -1,7 +1,8 @@
 # Portal web client on Red Hat UBI 9: the React build served by nginx, which also proxies /api to
 # the API service so the browser sees a single origin. Build context: repository root
 # (the client depends on the shared/ workspace).
-FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS build
+# Base images are pinned by digest (the tag is for reading); Dependabot proposes new digests.
+FROM registry.access.redhat.com/ubi9/nodejs-22:1@sha256:ec6d5fae468462129f094c6c463207bd950c9e2b0023f6c0fd1ae1cbdc5abd3e AS build
 WORKDIR /opt/app-root/src
 COPY --chown=1001:0 package.json package-lock.json tsconfig.base.json ./
 COPY --chown=1001:0 shared/package.json shared/
@@ -11,7 +12,14 @@ COPY --chown=1001:0 shared shared
 COPY --chown=1001:0 web web
 RUN npm run build -w web
 
-FROM registry.access.redhat.com/ubi9/nginx-126:latest
+FROM registry.access.redhat.com/ubi9/nginx-126:1@sha256:0c3626527f8172f2d54ff67bb25ee286640572ff90a0002bcbe926a9c85ed079
+# They replace the base image's own OCI labels (CI adds version and revision).
+LABEL org.opencontainers.image.title="Directory Services Portal web" \
+      org.opencontainers.image.description="Web client of the Directory Services Portal, served by nginx, which proxies /api to the API" \
+      org.opencontainers.image.vendor="ENS Solutions" \
+      org.opencontainers.image.source="https://github.com/winllc/directory-services-portal" \
+      org.opencontainers.image.documentation="https://github.com/winllc/directory-services-portal#licensing" \
+      org.opencontainers.image.licenses="LicenseRef-ENS-Commercial"
 # Where /api is forwarded to (scheme://host:port, no path).
 # Set NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates-mtls for HTTPS with X.509 client
 # certificates (see docker-compose.mtls.yml). X.509 sign-in also takes the API's proxy secret

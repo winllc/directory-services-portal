@@ -3,7 +3,8 @@
 #   docker run -p 3001:3001 -v dsp-data:/data -v dsp-license:/var/lib/ens/directory-portal directory-services-portal-api
 # Without an ENS Solutions license only sign-in and the license screen work: an administrator
 # uploads the license there (see "Licensing" in the README).
-FROM registry.access.redhat.com/ubi9/openjdk-21:latest AS build
+# Base images are pinned by digest (the tag is for reading); Dependabot proposes new digests.
+FROM registry.access.redhat.com/ubi9/openjdk-21:1.24@sha256:bd995811a45eb587f97a105796f8f43df466a4269411a2a1642f0f9799f885db AS build
 # The builder image runs as an unprivileged user; the build stage is never shipped.
 USER 0
 WORKDIR /src
@@ -14,7 +15,7 @@ RUN mvn -q -B dependency:go-offline
 COPY src src
 RUN mvn -q -B package -DskipTests
 
-FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
+FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:1.24@sha256:856ee6542b8fdf09a065fd5439309fc3f3c821fb8efac48aa6191c93635dd907
 # Set by scripts/package.sh; they replace the base image's own OCI labels.
 ARG VERSION=0.1.0
 ARG REVISION=unknown
@@ -27,6 +28,7 @@ LABEL org.opencontainers.image.title="Directory Services Portal API" \
       org.opencontainers.image.created="$BUILD_DATE" \
       org.opencontainers.image.source="https://github.com/winllc/directory-services-portal" \
       org.opencontainers.image.documentation="https://github.com/winllc/directory-services-portal#licensing" \
+      org.opencontainers.image.licenses="LicenseRef-ENS-Commercial" \
       com.enssolutions.license.path="/var/lib/ens/directory-portal/license.lic"
 # Runs as the image's unprivileged user (uid 185). Directories are group-0 writable so the image
 # also works under an arbitrary UID (OpenShift restricted SCC).
@@ -49,6 +51,8 @@ ENV DATA_DIR=/data PORT=3001 JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
 VOLUME /data /var/lib/ens
 EXPOSE 3001
 USER 185
+# Readiness: the directory answers and the audit log is writable (on the main port also with
+# MANAGEMENT_SERVER_PORT set).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -sf http://localhost:3001/api/health >/dev/null || exit 1
+  CMD curl -sf "http://localhost:${PORT:-3001}/readyz" >/dev/null || exit 1
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar \"$@\"", "--"]

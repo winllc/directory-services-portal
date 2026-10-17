@@ -82,12 +82,35 @@ Call with (dict "image" .Values.api.image "root" $).
 {{- toYaml $ctx -}}
 {{- end -}}
 
+{{/*
+The API's health probe target for a group (liveness or readiness): the management port with
+metrics.enabled, else the main port's /livez and /readyz. Call with (dict "group" "readiness" "root" $).
+*/}}
+{{- define "dsp.apiProbe" -}}
+{{- if .root.Values.metrics.enabled -}}
+path: /actuator/health/{{ .group }}
+port: metrics
+{{- else -}}
+path: {{ ternary "/livez" "/readyz" (eq .group "liveness") }}
+port: http
+{{- end -}}
+{{- end -}}
+
 {{/* "a;b" from a list or a string. */}}
 {{- define "dsp.joinSemi" -}}
 {{- if kindIs "slice" . -}}{{- join ";" . -}}{{- else -}}{{- . | default "" -}}{{- end -}}
 {{- end -}}
 
-{{/* Whether browsers reach the portal over HTTPS (COOKIE_SECURE=auto). */}}
+{{/* ENS_SESSION_IDLE_TIMEOUT: the deprecated server.sessionTtlMinutes (minutes) when set, else server.session.idleTimeout. */}}
+{{- define "dsp.idleTimeout" -}}
+{{- if .Values.server.sessionTtlMinutes -}}
+{{- printf "%sm" (include "dsp.str" .Values.server.sessionTtlMinutes) -}}
+{{- else -}}
+{{- include "dsp.str" .Values.server.session.idleTimeout -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Whether browsers reach the portal over HTTPS (ENS_COOKIE_SECURE=auto). */}}
 {{- define "dsp.cookieSecure" -}}
 {{- $v := .Values.server.cookieSecure -}}
 {{- if or (eq (toString $v) "auto") (eq (toString $v) "") -}}

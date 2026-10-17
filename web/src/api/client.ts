@@ -13,10 +13,21 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
-/** Called whenever the server reports the session is gone. */
-let onUnauthorized: (() => void) | undefined;
-export function setUnauthorizedHandler(fn: () => void) {
+/**
+ * Called whenever the server reports the session is gone, with the server's explanation when the
+ * session expired (idle or absolute timeout).
+ */
+let onUnauthorized: ((expired?: string) => void) | undefined;
+export function setUnauthorizedHandler(fn: (expired?: string) => void) {
   onUnauthorized = fn;
+}
+
+interface RequestOptions {
+  /**
+   * Polling the user didn't ask for (job progress, license and audit status): sent with
+   * X-DSP-Background, so it doesn't count as activity and an unattended session still times out.
+   */
+  background?: boolean;
 }
 
 /**
@@ -29,9 +40,10 @@ export function setLicenseRefusalHandler(fn: ((code: string) => void) | undefine
   onLicenseRefusal = fn;
 }
 
-async function request<T>(method: Method, url: string, body?: unknown, contentType = 'application/json'): Promise<T> {
+async function request<T>(method: Method, url: string, body?: unknown, contentType = 'application/json', options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (method !== 'GET') headers['X-DSP-Request'] = '1';
+  if (options.background) headers['X-DSP-Background'] = '1';
   if (body !== undefined) headers['Content-Type'] = contentType;
   const res = await fetch(url, {
     method,
@@ -51,7 +63,7 @@ async function request<T>(method: Method, url: string, body?: unknown, contentTy
   }
   if (!res.ok) {
     const err = (data ?? {}) as { error?: string; details?: Record<string, string>; code?: string };
-    if (res.status === 401 && !url.endsWith('/auth/login')) onUnauthorized?.();
+    if (res.status === 401 && !url.endsWith('/auth/login')) onUnauthorized?.(err.code === 'session_expired' ? err.error : undefined);
     if (res.status === 403 && (err.code === 'license_required' || err.code === 'license_read_only')) onLicenseRefusal?.(err.code);
     throw new ApiError(res.status, err.error ?? `Request failed (${res.status})`, err.details, err.code);
   }
@@ -59,8 +71,8 @@ async function request<T>(method: Method, url: string, body?: unknown, contentTy
 }
 
 export const api = {
-  get: <T>(url: string) => request<T>('GET', url),
-  post: <T>(url: string, body?: unknown) => request<T>('POST', url, body ?? {}),
+  get: <T>(url: string, options?: RequestOptions) => request<T>('GET', url, undefined, undefined, options),
+  post: <T>(url: string, body?: unknown, options?: RequestOptions) => request<T>('POST', url, body ?? {}, undefined, options),
   put: <T>(url: string, body?: unknown) => request<T>('PUT', url, body ?? {}),
   del: <T = void>(url: string) => request<T>('DELETE', url),
   /** POST a text body (e.g. a license file) as text/plain. */

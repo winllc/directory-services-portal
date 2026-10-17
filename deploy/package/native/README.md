@@ -21,7 +21,17 @@ sudo systemctl restart directory-services-portal
 | `/var/lib/directory-services-portal` | data: configuration, audit log, analysis results (back this up) |
 | `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on port 8080 and proxies `/api` (when nginx is installed) |
 
-- Logs: `journalctl -u directory-services-portal -f`.
+- Logs: `journalctl -u directory-services-portal -f` (`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` in
+  `portal.env` for JSON lines).
+- The LDAP service account's password goes in `/etc/directory-services-portal/ldap-bind-password`
+  (root and `dsp` only; `LDAP_BIND_PASSWORD_FILE` in `portal.env`), not in `portal.env`. A
+  `portal.env` from an earlier release that sets `LDAP_BIND_PASSWORD` keeps working.
+- The unit runs the API without capabilities or devices, with `SystemCallFilter=@system-service`,
+  `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `ProtectSystem=strict` and `UMask=0077`.
+- Health: `curl http://127.0.0.1:3001/readyz` (the directory answers and the audit log is
+  writable) and `/livez`. For Prometheus set `MANAGEMENT_SERVER_PORT` (e.g. 9090) in `portal.env`:
+  `/actuator/prometheus` and the probes are then served there, on 127.0.0.1
+  (`MANAGEMENT_SERVER_ADDRESS`).
 - License: without an ENS Solutions license only sign-in and the license screen work. Sign in as
   an administrator and upload it under *Administration > License* (`/admin/license`), which also
   shows the installation id to bind a license to; or copy it in with
@@ -30,7 +40,9 @@ sudo systemctl restart directory-services-portal
   same defaults); the directory must stay writable by `dsp`. The startup log line `License: ...`
   says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
-  `COOKIE_SECURE=true`. For X.509 sign-in through nginx (`X509_SOURCE=header`,
+  `ENS_COOKIE_SECURE=true`. The site sends the ENS security headers (CSP and others); HSTS when a
+  proxy in front sends `X-Forwarded-Proto: https`; in your own `listen 443 ssl` server add
+  `add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;`. For X.509 sign-in through nginx (`X509_SOURCE=header`,
   `X509_TRUSTED_PROXIES=127.0.0.1/32`, `X509_TRUSTED_CA_FILE`), see the installation guide:
   https://winllc.github.io/ens-apps-documentation/directory-services-portal/install/
   The location that proxies `/api` in that server must

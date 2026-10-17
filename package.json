@@ -1,6 +1,7 @@
 {
   "name": "directory-services-portal",
   "private": true,
+  "license": "LicenseRef-ENS-Commercial",
   "version": "0.1.0",
   "workspaces": [
     "shared",

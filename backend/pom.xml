@@ -16,10 +16,23 @@
   <version>0.1.0</version>
   <name>Directory Services Portal</name>
   <description>Spring Boot backend for the LDAP directory services portal</description>
+  <licenses>
+    <license>
+      <name>LicenseRef-ENS-Commercial</name>
+      <url>https://github.com/winllc/directory-services-portal/blob/main/LICENSE</url>
+      <comments>Proprietary to ENS Solutions; use requires a license.</comments>
+    </license>
+  </licenses>
 
   <properties>
     <java.version>21</java.version>
     <unboundid.version>7.0.5</unboundid.version>
+    <!-- Security fixes ahead of Spring Boot 4.1.1's managed versions (Trivy: CVE-2026-65182,
+         CVE-2026-65905, CVE-2026-68525 in Tomcat 11.0.24; CVE-2026-89407, CVE-2026-89425,
+         CVE-2026-68497, CVE-2026-91776, CVE-2026-91777 in Jackson 3.1.5). Remove once the Boot
+         parent manages these versions or newer. -->
+    <tomcat.version>11.0.27</tomcat.version>
+    <jackson-bom.version>3.1.7</jackson-bom.version>
   </properties>
 
   <dependencies>
@@ -34,6 +47,15 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- Health probes (liveness, readiness) and the Prometheus endpoint on the management port. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
     <dependency>
       <groupId>com.unboundid</groupId>

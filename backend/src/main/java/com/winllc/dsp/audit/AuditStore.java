@@ -99,9 +99,24 @@ public class AuditStore {
     return lastWriteFailure;
   }
 
-  /** True when an append is expected to work (the directory exists and is writable). */
+  /**
+   * True when an append is expected to work: the directory exists, is writable and its file system
+   * has at least {@link #MIN_FREE_BYTES} free.
+   */
   public boolean writable() {
-    return Files.isDirectory(dir) && Files.isWritable(dir);
+    if (!Files.isDirectory(dir) || !Files.isWritable(dir)) return false;
+    try {
+      return enoughSpace(Files.getFileStore(dir).getUsableSpace());
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  /** Room for a few hundred events: below this the disk counts as full. */
+  static final long MIN_FREE_BYTES = 1024 * 1024;
+
+  static boolean enoughSpace(long usableBytes) {
+    return usableBytes >= MIN_FREE_BYTES;
   }
 
   // ---------------------------------------------------------------------------
