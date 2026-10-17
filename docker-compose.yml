@@ -87,11 +87,11 @@ services:
       # BANNER_TEXT: "UNCLASSIFIED"
       # BANNER_FOREGROUND: "#ffffff"
       # BANNER_BACKGROUND: "#007a33"
-      COOKIE_SECURE: "false"
+      ENS_COOKIE_SECURE: "false"
       # Honour X-Forwarded-* set by the web proxy (which overwrites them), so the API sees the real
       # client address (used for login throttling) and scheme. The api service is not published,
       # so only the proxy can reach it.
-      FORWARD_HEADERS_STRATEGY: framework
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
       # Audit logging (README, Audit logging): passed through from your shell or a .env file.
       ENS_AUDIT_STDOUT: ${ENS_AUDIT_STDOUT:-true}
       ENS_AUDIT_FILE: ${ENS_AUDIT_FILE:-}

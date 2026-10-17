@@ -264,9 +264,12 @@ admin:
 # --- Server (env.template: Server) ------------------------------------------------------------
 server:
   sessionTtlMinutes: 480
-  # COOKIE_SECURE. "auto": true when browsers use HTTPS (tls.enabled, ingress.tls or an
+  # ENS_COOKIE_SECURE. "auto": true when browsers use HTTPS (tls.enabled, ingress.tls or an
   # edge/passthrough/reencrypt route), else false. Or true / false.
   cookieSecure: auto
+  # ENS_CSP_REPORT_ONLY (API and web tier): send Content-Security-Policy-Report-Only instead of
+  # Content-Security-Policy. An escape hatch for a page the policy breaks; turn it off again.
+  cspReportOnly: false
   # Seed example forms, directories, dashboards and analyses into an empty configuration.
   seedDemoConfig: false
   # Optional text on the login page (help-desk contact, ...).

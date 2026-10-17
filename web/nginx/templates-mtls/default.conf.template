@@ -38,10 +38,15 @@ server {
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
+    # ENS baseline security headers, on the client's pages and (replacing the API's) on /api. The
+    # CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh). The client has no
+    # inline scripts.
+    add_header ${DSP_CSP_HEADER} "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
-    add_header Referrer-Policy same-origin always;
-    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
 
     # Resolve the API host at request time so the web container starts even if the API isn't
     # up yet, and follows it if its address changes.
@@ -59,6 +64,14 @@ server {
         # The host (and port) the browser used; the port nginx listens on is internal.
         proxy_set_header X-Forwarded-Host $http_host;
         proxy_read_timeout 120s;
+        # The security headers come from this server block; drop the API's copies so each is sent once.
+        proxy_hide_header Content-Security-Policy;
+        proxy_hide_header Content-Security-Policy-Report-Only;
+        proxy_hide_header Strict-Transport-Security;
+        proxy_hide_header X-Content-Type-Options;
+        proxy_hide_header X-Frame-Options;
+        proxy_hide_header Referrer-Policy;
+        proxy_hide_header Permissions-Policy;
         # Proves to the API that the request came through this proxy (the X.509 proxy secret), in
         # place of any value a client sent; the API trusts the certificate header only with it.
         proxy_set_header X-DSP-Proxy-Secret "${DSP_PROXY_SECRET}";

@@ -18,7 +18,7 @@ services:
 
   api:
     environment:
-      COOKIE_SECURE: "true"
+      ENS_COOKIE_SECURE: "true"
       X509_SOURCE: header
       X509_HEADER: X-SSL-Client-Cert
       # Only the web proxy on the compose network may send the certificate header, and only

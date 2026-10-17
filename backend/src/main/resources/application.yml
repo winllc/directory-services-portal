@@ -4,13 +4,19 @@ server:
   port: ${PORT:3001}
   servlet:
     session:
-      timeout: ${SESSION_TTL_MINUTES:480}m
+      # The default for sessions before sign-in; signed-in sessions get ens.session's idle timeout
+      # (shorter for administrators with ENS_SESSION_ADMIN_IDLE_TIMEOUT).
+      timeout: ${ENS_SESSION_IDLE_TIMEOUT:${SESSION_TTL_MINUTES:30}m}
       cookie:
         name: DSP_SESSION
         http-only: true
         same-site: strict
-        secure: ${COOKIE_SECURE:false}
-  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
+        # Secure on direct TLS anyway; ENS_COOKIE_SECURE=true when a proxy terminates TLS
+        # (COOKIE_SECURE is the older name).
+        secure: ${ENS_COOKIE_SECURE:${COOKIE_SECURE:false}}
+  # SERVER_FORWARD_HEADERS_STRATEGY (Boot's own name) or FORWARD_HEADERS_STRATEGY: "framework"
+  # behind the web tier or another proxy that overwrites X-Forwarded-*.
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:${FORWARD_HEADERS_STRATEGY:none}}
   # Room for a forwarded client certificate plus large single-sign-on cookies (default 8KB).
   max-http-request-header-size: ${MAX_HTTP_REQUEST_HEADER_SIZE:32KB}
 
@@ -43,6 +49,14 @@ portal:
   seed-demo-config: ${SEED_DEMO_CONFIG:}
   password-login-enabled: ${PASSWORD_LOGIN_ENABLED:true}
   login-hint: ${LOGIN_HINT:}
+  # Failed password sign-ins: after max-failures within lockout-window (from the first failure),
+  # further attempts for that user name from that address are refused until the window ends.
+  login:
+    max-failures: ${LOGIN_MAX_FAILURES:8}
+    lockout-window: ${LOGIN_LOCKOUT_WINDOW:15m}
+  # How often a signed-in user's groups and administrator status are read again from the
+  # directory (checked on request; 0 = only at sign-in).
+  group-refresh-interval: ${GROUP_REFRESH_INTERVAL:5m}
   # The audit store: monthly ens-audit/1 JSONL files (default $DATA_DIR/audit). AUDIT_MEMORY_EVENTS
   # is accepted for compatibility but no longer used: searches read all retained history.
   audit:
@@ -81,8 +95,36 @@ portal:
     require-certificate-match: ${X509_REQUIRE_CERTIFICATE_MATCH:false}
     auto-login: ${X509_AUTO_LOGIN:false}
 
-# Audit outputs and retention: the shared ENS_AUDIT_* variables (see README, Audit logging).
+# The settings shared by every ENS application (ENS_* variables; see README).
 ens:
+  # Content-Security-Policy-Report-Only instead of Content-Security-Policy (escape hatch).
+  csp:
+    report-only: ${ENS_CSP_REPORT_ONLY:false}
+  cookie:
+    secure: ${ENS_COOKIE_SECURE:${COOKIE_SECURE:false}}
+  # DoD notice-and-consent banner, acknowledged before any sign-in. Empty title and text: the
+  # standard DoD wording. ENS_CONSENT_BANNER_FILE (plain text) wins over ENS_CONSENT_BANNER_TEXT.
+  consent-banner:
+    enabled: ${ENS_CONSENT_BANNER_ENABLED:false}
+    title: ${ENS_CONSENT_BANNER_TITLE:}
+    text: ${ENS_CONSENT_BANNER_TEXT:}
+    file: ${ENS_CONSENT_BANNER_FILE:}
+  # Session controls. SESSION_TTL_MINUTES (minutes) is the older name of the idle timeout.
+  session:
+    idle-timeout: ${ENS_SESSION_IDLE_TIMEOUT:${SESSION_TTL_MINUTES:30}m}
+    admin-idle-timeout: ${ENS_SESSION_ADMIN_IDLE_TIMEOUT:}
+    absolute-timeout: ${ENS_SESSION_ABSOLUTE_TIMEOUT:12h}
+    max-per-user: ${ENS_SESSION_MAX_PER_USER:0}
+  # Client-certificate revocation checking and issuer allowlist. ENS_X509_REVOCATION empty: off,
+  # or ocsp-then-crl (fail closed) with the older X509_CHECK_REVOCATION=true.
+  x509:
+    revocation: ${ENS_X509_REVOCATION:}
+    ocsp-responder-url: ${ENS_X509_OCSP_RESPONDER_URL:}
+    crl-dir: ${ENS_X509_CRL_DIR:}
+    revocation-fail: ${ENS_X509_REVOCATION_FAIL:closed}
+    revocation-cache: ${ENS_X509_REVOCATION_CACHE:10m}
+    allowed-issuers: ${ENS_X509_ALLOWED_ISSUERS:}
+  # Audit outputs and retention: the shared ENS_AUDIT_* variables (see README, Audit logging).
   audit:
     stdout: ${ENS_AUDIT_STDOUT:true}
     file: ${ENS_AUDIT_FILE:}

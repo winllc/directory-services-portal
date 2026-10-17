@@ -112,7 +112,7 @@ ingress:
       hosts: [portal.corp.example]
 ```
 
-`server.cookieSecure: auto` (the default) turns on secure session cookies when `ingress.tls`,
+`server.cookieSecure: auto` (the default) turns on secure session cookies (`ENS_COOKIE_SECURE`) when `ingress.tls`,
 a Route or `tls.enabled` is set. Schema imports can be up to 5 MB: raise the controller's body
 size limit if it is lower (ingress-nginx: `nginx.ingress.kubernetes.io/proxy-body-size: 5m`).
 
@@ -373,7 +373,8 @@ Existing claims (`existingClaim`) are never touched.
 | Value | Env | Default |
 |---|---|---|
 | `server.sessionTtlMinutes` | `SESSION_TTL_MINUTES` | `480` |
-| `server.cookieSecure` | `COOKIE_SECURE` | `auto` (true with ingress TLS, a Route or `tls.enabled`) |
+| `server.cookieSecure` | `ENS_COOKIE_SECURE` | `auto` (true with ingress TLS, a Route or `tls.enabled`) |
+| `server.cspReportOnly` | `ENS_CSP_REPORT_ONLY` (API and web tier) | `false` |
 | `server.seedDemoConfig` | `SEED_DEMO_CONFIG` | `false` |
 | `server.loginHint` | `LOGIN_HINT` | `""` |
 | `server.banner.text` / `.foreground` / `.background` | `BANNER_TEXT` / `BANNER_FOREGROUND` / `BANNER_BACKGROUND` | `""` / `#ffffff` / `#007a33` |
@@ -383,7 +384,7 @@ Existing claims (`existingClaim`) are never touched.
 | `jobs.metricsThreads` / `.analysisThreads` | `JOBS_METRICS_THREADS` / `JOBS_ANALYSIS_THREADS` | `4` / `2` |
 | `jobs.maxActivePerUser` / `.retainMinutes` | `JOBS_MAX_ACTIVE_PER_USER` / `JOBS_RETAIN_MINUTES` | `5` / `1440` |
 
-Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `FORWARD_HEADERS_STRATEGY=framework`, the
+Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `SERVER_FORWARD_HEADERS_STRATEGY=framework`, the
 `ENS_LICENSE_*` paths, and the web tier's `API_URL`.
 
 ### Audit logging (ens-audit/1)

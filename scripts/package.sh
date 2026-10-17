@@ -210,6 +210,8 @@ package_native() {
       -e '/^# \${NGINX_LOCAL_RESOLVERS}/d' \
       -e 's|proxy_set_header X-DSP-Proxy-Secret "\${DSP_PROXY_SECRET}";|include /etc/directory-services-portal/nginx-proxy-secret.conf;  # written by install.sh|' \
       -e 's|\${DSP_CERT_HEADERS_HTTP}|proxy_set_header X-SSL-Client-Cert "";|' \
+      -e 's|\${DSP_CSP_HEADER}|Content-Security-Policy|' \
+      -e 's|CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh)|CSP is only reported with the header name Content-Security-Policy-Report-Only|' \
       -e '/X509_EDGE_TERMINATION, see entrypoint.sh/d' \
       "$ROOT/web/nginx/templates/default.conf.template" | cat -s > "$dir/nginx/directory-services-portal.conf"
   if grep -q '\${' "$dir/nginx/directory-services-portal.conf"; then die "Unreplaced template variable in the nginx site"; fi
@@ -223,7 +225,7 @@ package_native() {
     echo "PORT=3001"
     echo "DATA_DIR=/var/lib/directory-services-portal"
     echo "# nginx on this host overwrites X-Forwarded-*."
-    echo "FORWARD_HEADERS_STRATEGY=framework"
+    echo "SERVER_FORWARD_HEADERS_STRATEGY=framework"
     echo "# ENS Solutions license: without one only sign-in and the license screen work. Upload it"
     echo "# under Administration > License; it is written to ENS_LICENSE_FILE. ENS_LICENSE_STATE_DIR"
     echo "# keeps this installation's id (shown on the license screen) and must stay writable by dsp."

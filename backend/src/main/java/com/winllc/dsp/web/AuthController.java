@@ -1,6 +1,7 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.config.EnsProperties;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
 import com.winllc.dsp.web.dto.LoginRequest;
@@ -40,12 +41,14 @@ public class AuthController {
   private final X509AuthService x509;
   private final SecurityContextRepository contexts;
   private final AuditLog audit;
+  private final EnsProperties ens;
 
-  public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit) {
+  public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit, EnsProperties ens) {
     this.auth = auth;
     this.x509 = x509;
     this.contexts = contexts;
     this.audit = audit;
+    this.ens = ens;
   }
 
   @PostMapping("/login")
@@ -60,7 +63,7 @@ public class AuthController {
   public Map<String, SessionUser> loginWithCertificate(HttpServletRequest request, HttpServletResponse response) {
     SessionUser user = x509.authenticate(request);
     establishSession(user, request, response);
-    setSuppressCookie(response, false);
+    setSuppressCookie(request, response, false);
     return Map.of("user", user);
   }
 
@@ -70,7 +73,7 @@ public class AuthController {
     HttpSession session = request.getSession(false);
     if (session != null) session.invalidate();
     SecurityContextHolder.clearContext();
-    if (x509.enabled()) setSuppressCookie(response, true);
+    if (x509.enabled()) setSuppressCookie(request, response, true);
     return Map.of("ok", true);
   }
 
@@ -106,12 +109,13 @@ public class AuthController {
     return x509.properties();
   }
 
-  private void setSuppressCookie(HttpServletResponse response, boolean suppress) {
+  private void setSuppressCookie(HttpServletRequest request, HttpServletResponse response, boolean suppress) {
     ResponseCookie cookie = ResponseCookie.from(SUPPRESS_AUTO_LOGIN_COOKIE, suppress ? "1" : "")
         .path("/")
         .httpOnly(true)
         .sameSite("Strict")
-        .secure(false)
+        // As the session cookie: Secure over TLS, or always with ENS_COOKIE_SECURE.
+        .secure(request.isSecure() || ens.getCookie().isSecure())
         .maxAge(suppress ? -1 : 0)
         .build();
     response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());

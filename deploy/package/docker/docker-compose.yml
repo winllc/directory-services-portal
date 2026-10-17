@@ -18,7 +18,7 @@ services:
       DATA_DIR: /data
       PORT: "3001"
       # Only the web proxy can reach the API, and it overwrites X-Forwarded-*.
-      FORWARD_HEADERS_STRATEGY: framework
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
     volumes:
       - portal-data:/data
       # ENS license: the license (uploaded on the license screen, or copied in by install.sh /
@@ -42,6 +42,8 @@ services:
       - api
     environment:
       API_URL: http://api:3001
+      # Content-Security-Policy only reported (escape hatch; the API reads it from .env).
+      ENS_CSP_REPORT_ONLY: ${ENS_CSP_REPORT_ONLY:-false}
       # Sent to the API with every request; the API accepts client certificates only with it.
       X509_PROXY_SECRET: ${X509_PROXY_SECRET:-}
       # The header the API reads the client certificate from, removed from client requests

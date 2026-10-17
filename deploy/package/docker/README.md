@@ -47,7 +47,10 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
   and point `JAVA_TOOL_OPTIONS` at it, or set `LDAP_TLS_REJECT_UNAUTHORIZED=false` for testing.
 - `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER`, `LDAP_GROUP_*`: how users and their groups are found.
 - `ADMIN_USERS`, `ADMIN_GROUPS`: who administers the portal (`;` separated).
-- `COOKIE_SECURE=true` whenever users reach the portal over HTTPS (including through your proxy).
+- `ENS_COOKIE_SECURE=true` whenever users reach the portal over HTTPS (including through your
+  proxy; `COOKIE_SECURE`, the older name, still works). The web tier sends the security headers
+  (CSP, HSTS behind an HTTPS proxy that sets `X-Forwarded-Proto`, and others); `ENS_CSP_REPORT_ONLY=true`
+  only reports CSP violations, as an escape hatch.
 - `BANNER_TEXT` and colours for a classification banner; `LOGIN_HINT` for help text.
 - Metrics, analysis and background-task limits: see the comments in the file.
 

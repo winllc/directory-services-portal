@@ -12,7 +12,7 @@ data:
   DATA_DIR: /data
   PORT: "3001"
   # Only the web tier reaches the API, and it overwrites X-Forwarded-*.
-  FORWARD_HEADERS_STRATEGY: framework
+  SERVER_FORWARD_HEADERS_STRATEGY: framework
   JAVA_TOOL_OPTIONS: {{ include "dsp.str" $v.api.javaToolOptions | quote }}
   # Directory connection
   DIRECTORY_MODE: {{ include "dsp.str" $v.directory.mode | quote }}
@@ -33,7 +33,8 @@ data:
   ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.admin.groups | quote }}
   # Server
   SESSION_TTL_MINUTES: {{ include "dsp.str" $v.server.sessionTtlMinutes | quote }}
-  COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
+  ENS_COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
+  ENS_CSP_REPORT_ONLY: {{ $v.server.cspReportOnly | quote }}
   SEED_DEMO_CONFIG: {{ include "dsp.str" $v.server.seedDemoConfig | quote }}
   LOGIN_HINT: {{ include "dsp.str" $v.server.loginHint | quote }}
   BANNER_TEXT: {{ include "dsp.str" $v.server.banner.text | quote }}

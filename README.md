@@ -197,7 +197,7 @@ its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/reso
 | `ADMIN_USERS`, `ADMIN_GROUPS` | portal administrators, separated by `;` |
 | `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) and the audit log are stored |
 | `AUDIT_DIR` | where the audit store goes (default `$DATA_DIR/audit`). `AUDIT_MEMORY_EVENTS` is still accepted but no longer used. Outputs and retention: `ENS_AUDIT_*`, see [Audit logging](#audit-logging) |
-| `PORT`, `SESSION_TTL_MINUTES`, `COOKIE_SECURE`, `FORWARD_HEADERS_STRATEGY` | HTTP settings |
+| `PORT`, `SESSION_TTL_MINUTES`, `ENS_COOKIE_SECURE`, `SERVER_FORWARD_HEADERS_STRATEGY` | HTTP settings (see [Security headers and cookies](#security-headers-and-cookies)) |
 
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
 The service account needs read access to the schema and to the namespaces you expose, and write
@@ -400,7 +400,7 @@ Splunk or any SIEM.
 
 Each event says who (`actor`: user name, display name, roles; `details.actorDn` and
 `authMethod`; `anonymous` with the attempted name for a failed sign-in), from where
-(`source.ip` as the API sees it, honouring `FORWARD_HEADERS_STRATEGY`, and the user agent), what
+(`source.ip` as the API sees it, honouring `SERVER_FORWARD_HEADERS_STRATEGY`, and the user agent), what
 (`target`), the outcome (`success`, `failure`, `denied`) and a severity (`info`, `notice` for
 permission, configuration, form/definition/schema and license changes, `warning` for failures
 and denials, `alert` for lockouts, a broken chain and failing delivery), plus a request id and a
@@ -490,7 +490,7 @@ certificate comes from:
   the API and the web tier). An address alone is not enough: other pods or local processes can
   share it, and the header carries no proof that the sender holds the certificate's key. The
   address check uses the actual connection, never `X-Forwarded-For`, so use
-  `FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite any
+  `SERVER_FORWARD_HEADERS_STRATEGY=framework` or `none`, not `native`. The proxy must overwrite any
   incoming copy of the certificate header and of `X-DSP-Proxy-Secret`; the bundled nginx configs
   always do, and forward the certificate only to the sign-in endpoints (`/api/auth/x509`,
   `/api/auth/me`). `X509_TRUSTED_CA_FILE` is required too, so that the API validates the chain
@@ -567,6 +567,29 @@ configured on the API:
 Colors may be `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`/`hsl()`/`hsla()` or a CSS color
 name. Any other value stops the API at startup with an error naming the setting.
 
+### Security headers and cookies
+Every response carries the ENS baseline security headers: the web tier (nginx) sends them for the
+client's pages and in place of the API's own on `/api`, and the API sends them on its own
+responses for anyone who reaches it directly:
+
+- `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`
+  (the client has no inline scripts or event handlers)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` on HTTPS: always with the
+  mTLS config, behind a TLS-terminating proxy when it sends `X-Forwarded-Proto: https`, and from the
+  API on secure requests (direct TLS, or behind a proxy with `SERVER_FORWARD_HEADERS_STRATEGY=framework`)
+- `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()`
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_CSP_REPORT_ONLY` | `false` | `true` sends `Content-Security-Policy-Report-Only` instead (API and web image): an escape hatch for a page the policy breaks. Report it, and turn this off again |
+| `ENS_COOKIE_SECURE` | `false` | Always mark the session cookie (`DSP_SESSION`) `Secure`, for TLS terminated at a proxy. Over direct TLS it is `Secure` anyway. `COOKIE_SECURE` is the older name and still works |
+| `SERVER_FORWARD_HEADERS_STRATEGY` | `none` | Spring Boot's own setting: `framework` behind a proxy that overwrites `X-Forwarded-*` (the web tier does; every package sets it). `FORWARD_HEADERS_STRATEGY` is the older name and still works |
+
+The session cookie is `HttpOnly` and `SameSite=Strict` (stricter than the baseline's `Lax`; the
+browser only ever reaches the API through the same origin).
+
 ## Security notes
 - LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
   Admin-configured filter templates get their values escaped with `Filter.encodeValue`. DNs are
@@ -585,7 +608,7 @@ name. Any other value stops the API at startup with an error naming the setting.
   throttling relies on) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
   certificate header. The API is not published in Docker Compose, so only the proxy can reach it.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
-  `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`). The session ID is rotated at login,
+  `SameSite=Strict`, `Secure` over TLS or when `ENS_COOKIE_SECURE=true`). The session ID is rotated at login,
   and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).
   `/api/admin/**` requires `ROLE_ADMIN`. Failed logins are throttled.
 - Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
@@ -671,7 +694,7 @@ volume when that has no license yet. The volume keeps the license and the instal
 
 - The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
   `docker compose down -v` after changing it, or if you started the stack from an older version.
-- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=framework`; the
+- The API trusts `X-Forwarded-*` headers from the proxy (`SERVER_FORWARD_HEADERS_STRATEGY=framework`; the
   `api` service is reachable only from the compose network). It therefore sees real client addresses, which login throttling relies on.
 - If a container fails to start, `docker compose logs <service>` shows why.
 - The web container looks up the API (`API_URL`) with the container runtime's own DNS server, the

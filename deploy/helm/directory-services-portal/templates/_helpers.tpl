@@ -87,7 +87,7 @@ Call with (dict "image" .Values.api.image "root" $).
 {{- if kindIs "slice" . -}}{{- join ";" . -}}{{- else -}}{{- . | default "" -}}{{- end -}}
 {{- end -}}
 
-{{/* Whether browsers reach the portal over HTTPS (COOKIE_SECURE=auto). */}}
+{{/* Whether browsers reach the portal over HTTPS (ENS_COOKIE_SECURE=auto). */}}
 {{- define "dsp.cookieSecure" -}}
 {{- $v := .Values.server.cookieSecure -}}
 {{- if or (eq (toString $v) "auto") (eq (toString $v) "") -}}

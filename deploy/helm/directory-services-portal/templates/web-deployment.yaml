@@ -77,6 +77,9 @@ spec:
               value: {{ include "dsp.x509Header" . | quote }}
             - name: X509_EDGE_TERMINATION
               value: {{ ternary "true" "false" (eq (include "dsp.x509Edge" .) "true") | quote }}
+            # Content-Security-Policy only reported (server.cspReportOnly).
+            - name: ENS_CSP_REPORT_ONLY
+              value: {{ $v.server.cspReportOnly | quote }}
             {{- if $v.x509.enabled }}
             # Sent to the API with every request (X-DSP-Proxy-Secret).
             - name: X509_PROXY_SECRET_FILE

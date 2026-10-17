@@ -525,6 +525,9 @@
             ""
           ]
         },
+        "cspReportOnly": {
+          "type": "boolean"
+        },
         "seedDemoConfig": {
           "type": "boolean"
         },

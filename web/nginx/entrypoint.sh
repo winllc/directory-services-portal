@@ -1,8 +1,8 @@
 #!/bin/sh
 # Renders ${NGINX_ENVSUBST_TEMPLATE_DIR}/*.template into /opt/app-root/etc/dsp.d/*.conf, then runs
 # the command (nginx). Only the variables below are substituted, so nginx's own $variables are
-# left alone. Settings: API_URL, HTTPS_PORT_SUFFIX, NGINX_LOCAL_RESOLVERS and, for X.509 sign-in,
-# X509_PROXY_SECRET_FILE / X509_PROXY_SECRET, X509_HEADER and X509_EDGE_TERMINATION.
+# left alone. Settings: API_URL, HTTPS_PORT_SUFFIX, NGINX_LOCAL_RESOLVERS, ENS_CSP_REPORT_ONLY and,
+# for X.509 sign-in, X509_PROXY_SECRET_FILE / X509_PROXY_SECRET, X509_HEADER and X509_EDGE_TERMINATION.
 set -eu
 
 template_dir="${NGINX_ENVSUBST_TEMPLATE_DIR:-/etc/nginx/templates}"
@@ -21,6 +21,17 @@ if [ -z "$(echo "$NGINX_LOCAL_RESOLVERS" | tr -d " ")" ]; then
     echo "dsp-entrypoint: no nameserver in /etc/resolv.conf; set NGINX_LOCAL_RESOLVERS" >&2
     exit 1
 fi
+
+# Content-Security-Policy, or only reported (ENS_CSP_REPORT_ONLY=true: an escape hatch for a page
+# the policy breaks, not a setting to keep).
+case "${ENS_CSP_REPORT_ONLY:-false}" in
+    false) DSP_CSP_HEADER=Content-Security-Policy ;;
+    true) DSP_CSP_HEADER=Content-Security-Policy-Report-Only ;;
+    *)
+        echo "dsp-entrypoint: ENS_CSP_REPORT_ONLY must be true or false" >&2
+        exit 1 ;;
+esac
+export DSP_CSP_HEADER
 
 # The proxy secret, sent to the API in X-DSP-Proxy-Secret with every request in place of any
 # value a client sent: from X509_PROXY_SECRET_FILE (preferred) or X509_PROXY_SECRET. The API
@@ -85,7 +96,7 @@ for template in "$template_dir"/*.template; do
     name=$(basename "$template" .template)
     # Owner-only: the rendered config holds the proxy secret.
     # shellcheck disable=SC2016 # the variables envsubst may replace
-    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS}' \
+    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS}' \
         < "$template" > "$output_dir/$name")
     echo "dsp-entrypoint: rendered $template -> $output_dir/$name" >&2
     found=1
