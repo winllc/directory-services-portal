@@ -287,6 +287,11 @@ export interface ServerInfo {
   loginHint?: string;
   /** Fixed banner shown at the top and bottom of every page (absent when disabled). */
   banner?: { text: string; foreground: string; background: string };
+  /**
+   * The notice-and-consent banner to acknowledge before signing in (absent when disabled). Plain
+   * text: blank lines separate paragraphs, and lines starting with "- " are list items.
+   */
+  consent?: { title: string; text: string };
 }
 
 /**

@@ -37,6 +37,9 @@ data:
   ENS_CSP_REPORT_ONLY: {{ $v.server.cspReportOnly | quote }}
   SEED_DEMO_CONFIG: {{ include "dsp.str" $v.server.seedDemoConfig | quote }}
   LOGIN_HINT: {{ include "dsp.str" $v.server.loginHint | quote }}
+  ENS_CONSENT_BANNER_ENABLED: {{ $v.server.consentBanner.enabled | quote }}
+  ENS_CONSENT_BANNER_TITLE: {{ include "dsp.str" $v.server.consentBanner.title | quote }}
+  ENS_CONSENT_BANNER_TEXT: {{ include "dsp.str" $v.server.consentBanner.text | quote }}
   BANNER_TEXT: {{ include "dsp.str" $v.server.banner.text | quote }}
   BANNER_FOREGROUND: {{ include "dsp.str" $v.server.banner.foreground | quote }}
   BANNER_BACKGROUND: {{ include "dsp.str" $v.server.banner.background | quote }}

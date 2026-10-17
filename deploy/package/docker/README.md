@@ -51,6 +51,8 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
   proxy; `COOKIE_SECURE`, the older name, still works). The web tier sends the security headers
   (CSP, HSTS behind an HTTPS proxy that sets `X-Forwarded-Proto`, and others); `ENS_CSP_REPORT_ONLY=true`
   only reports CSP violations, as an escape hatch.
+- `ENS_CONSENT_BANNER_ENABLED=true` for the DoD notice-and-consent banner before sign-in (DISA
+  STIG); the standard DoD text unless `ENS_CONSENT_BANNER_TEXT` / `ENS_CONSENT_BANNER_FILE` say otherwise.
 - `BANNER_TEXT` and colours for a classification banner; `LOGIN_HINT` for help text.
 - Metrics, analysis and background-task limits: see the comments in the file.
 

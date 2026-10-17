@@ -23,7 +23,7 @@ class StartupChecksTest {
   static Path secretFile;
 
   @Configuration(proxyBeanMethods = false)
-  @EnableConfigurationProperties(PortalProperties.class)
+  @EnableConfigurationProperties({PortalProperties.class, EnsProperties.class})
   @Import(StartupChecks.class)
   static class Checks {}
 
@@ -93,6 +93,17 @@ class StartupChecksTest {
       assertThat(ctx.getBean(PortalProperties.class).getX509().resolvedProxySecret()).isEqualTo(SECRET);
     });
     headerMode("X509_PROXY_SECRET=" + SECRET, "X509_TRUSTED_CA_FILE=" + caFile).run(ctx -> assertThat(ctx).hasNotFailed());
+  }
+
+  @Test
+  void refusesAConsentBannerFileItCannotRead() {
+    runner.withPropertyValues("ENS_CONSENT_BANNER_ENABLED=true", "ENS_CONSENT_BANNER_FILE=" + caFile.resolveSibling("missing-banner.txt"))
+        .run(ctx -> {
+          assertThat(ctx).hasFailed();
+          assertThat(ctx.getStartupFailure()).hasStackTraceContaining("Cannot read ENS_CONSENT_BANNER_FILE");
+        });
+    runner.withPropertyValues("ENS_CONSENT_BANNER_ENABLED=true", "ENS_CONSENT_BANNER_FILE=" + secretFile).run(ctx -> assertThat(ctx).hasNotFailed());
+    runner.withPropertyValues("ENS_CONSENT_BANNER_ENABLED=true").run(ctx -> assertThat(ctx).hasNotFailed());
   }
 
   @Test

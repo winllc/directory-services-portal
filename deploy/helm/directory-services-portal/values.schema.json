@@ -550,6 +550,20 @@
         },
         "maxHttpRequestHeaderSize": {
           "type": "string"
+        },
+        "consentBanner": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          }
         }
       }
     },

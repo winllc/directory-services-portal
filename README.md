@@ -567,6 +567,28 @@ configured on the API:
 Colors may be `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`/`hsl()`/`hsla()` or a CSS color
 name. Any other value stops the API at startup with an error naming the setting.
 
+### Notice and consent banner
+For DoD systems (DISA STIG), the portal can show the standard USG notice-and-consent banner before
+sign-in. The login page shows it with an **I agree** button, and the API enforces it: while it is
+enabled, no sign-in of any kind (password, certificate, certificate auto-login) succeeds until
+this browser session has acknowledged it. The acknowledgement is kept in the session and is
+audited as `auth.consent-acknowledged` (authentication, success, with the client address); a
+sign-in attempted without it is refused (`403`, `"code": "consent_required"`) and audited as an
+`auth.login` denial with `details.reasonCode=consent_required`. Signing out ends the session, so
+the banner comes before every sign-in. `POST /api/auth/consent` (with `X-DSP-Request: 1`) and the
+banner's text in `/api/info` are reachable without signing in.
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_CONSENT_BANNER_ENABLED` | `false` | show and enforce the banner |
+| `ENS_CONSENT_BANNER_TITLE` | `U.S. Government (USG) Information System (IS) Notice and Consent` | |
+| `ENS_CONSENT_BANNER_TEXT` | the standard DoD notice-and-consent text | plain text; blank lines separate paragraphs, paragraphs starting with `- ` are list items |
+| `ENS_CONSENT_BANNER_FILE` | | read the text from this file instead (wins over `_TEXT`); the API does not start if it can't read it |
+
+Exempt, because they are not browser sessions: the audit pull API (`/api/audit/**`, bearer
+tokens), the health probes (`/actuator/health/**`, `/livez`, `/readyz`, `/api/health`) and the
+Prometheus endpoint on the management port.
+
 ### Security headers and cookies
 Every response carries the ENS baseline security headers: the web tier (nginx) sends them for the
 client's pages and in place of the API's own on `/api`, and the API sends them on its own
