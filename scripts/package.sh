@@ -176,9 +176,14 @@ package_native() {
     docker cp "$cid:/app/app.jar" "$from/directory-services-portal.jar" >/dev/null; docker rm "$cid" >/dev/null
     say "Taking the web client from $web_ref"
     cid="$(docker create "$web_ref")"
-    docker cp "$cid:/usr/share/nginx/html" "$from/web" >/dev/null; docker rm "$cid" >/dev/null
-    # The client was copied over the nginx base image's sample pages; leave those out.
-    rm -rf "$from/web/icons" "$from/web"/{404.html,50x.html,nginx-logo.png,poweredby.png,system_noindex_logo.png}
+    # The client was copied over the nginx base image's sample pages; leave those out. Streamed
+    # as a tar because the samples include a symlink out of the directory (icons/poweredby.png),
+    # which newer Docker refuses to extract with a plain `docker cp`.
+    mkdir -p "$from/web"
+    docker cp "$cid:/usr/share/nginx/html/." - \
+      | tar -x -C "$from/web" --exclude='./icons' --exclude='./404.html' --exclude='./50x.html' \
+          --exclude='./nginx-logo.png' --exclude='./poweredby.png' --exclude='./system_noindex_logo.png'
+    docker rm "$cid" >/dev/null
     jar="$from/directory-services-portal.jar"; web_dist="$from/web"
   elif [ -z "$skip_build" ]; then
     command -v npm >/dev/null || die "Node.js/npm is required to build the web client"
