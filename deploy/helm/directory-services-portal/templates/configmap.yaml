@@ -32,7 +32,13 @@ data:
   ADMIN_USERS: {{ include "dsp.joinSemi" $v.admin.users | quote }}
   ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.admin.groups | quote }}
   # Server
-  SESSION_TTL_MINUTES: {{ include "dsp.str" $v.server.sessionTtlMinutes | quote }}
+  ENS_SESSION_IDLE_TIMEOUT: {{ include "dsp.idleTimeout" . | quote }}
+  ENS_SESSION_ADMIN_IDLE_TIMEOUT: {{ include "dsp.str" $v.server.session.adminIdleTimeout | quote }}
+  ENS_SESSION_ABSOLUTE_TIMEOUT: {{ include "dsp.str" $v.server.session.absoluteTimeout | quote }}
+  ENS_SESSION_MAX_PER_USER: {{ include "dsp.str" $v.server.session.maxPerUser | quote }}
+  GROUP_REFRESH_INTERVAL: {{ include "dsp.str" $v.server.groupRefreshInterval | quote }}
+  LOGIN_MAX_FAILURES: {{ include "dsp.str" $v.server.login.maxFailures | quote }}
+  LOGIN_LOCKOUT_WINDOW: {{ include "dsp.str" $v.server.login.lockoutWindow | quote }}
   ENS_COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
   ENS_CSP_REPORT_ONLY: {{ $v.server.cspReportOnly | quote }}
   SEED_DEMO_CONFIG: {{ include "dsp.str" $v.server.seedDemoConfig | quote }}

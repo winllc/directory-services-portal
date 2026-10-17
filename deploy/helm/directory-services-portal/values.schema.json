@@ -509,7 +509,10 @@
       "type": "object",
       "properties": {
         "sessionTtlMinutes": {
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "cookieSecure": {
           "type": [
@@ -562,6 +565,44 @@
             },
             "text": {
               "type": "string"
+            }
+          }
+        },
+        "session": {
+          "type": "object",
+          "properties": {
+            "idleTimeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(ns|us|ms|s|m|h|d)?)?$"
+            },
+            "adminIdleTimeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(ns|us|ms|s|m|h|d)?)?$"
+            },
+            "absoluteTimeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(ns|us|ms|s|m|h|d)?)?$"
+            },
+            "maxPerUser": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "groupRefreshInterval": {
+          "type": "string",
+          "pattern": "^([0-9]+(ns|us|ms|s|m|h|d)?)?$"
+        },
+        "login": {
+          "type": "object",
+          "properties": {
+            "maxFailures": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "lockoutWindow": {
+              "type": "string",
+              "pattern": "^([0-9]+(ns|us|ms|s|m|h|d)?)?$"
             }
           }
         }

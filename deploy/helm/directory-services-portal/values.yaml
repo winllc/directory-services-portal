@@ -263,7 +263,25 @@ admin:
 
 # --- Server (env.template: Server) ------------------------------------------------------------
 server:
-  sessionTtlMinutes: 480
+  # Sessions (ENS_SESSION_*): idle timeout, a shorter one for administrators ("": the same; STIG
+  # suggests 15m), the longest a session lasts after sign-in, and concurrent sessions per user
+  # (0: no limit; over it the oldest ends; STIG suggests 3).
+  session:
+    idleTimeout: 30m
+    adminIdleTimeout: ""
+    absoluteTimeout: 12h
+    maxPerUser: 0
+  # Deprecated (SESSION_TTL_MINUTES): when set, the idle timeout in minutes, instead of
+  # session.idleTimeout. The chart's default used to be 480.
+  # sessionTtlMinutes: 480
+  # GROUP_REFRESH_INTERVAL: how often signed-in users' groups and administrator status are read
+  # again from the directory (0: only at sign-in).
+  groupRefreshInterval: 5m
+  # LOGIN_MAX_FAILURES / LOGIN_LOCKOUT_WINDOW: failed password sign-ins per user name and address
+  # before further attempts are refused, and the window they are counted in.
+  login:
+    maxFailures: 8
+    lockoutWindow: 15m
   # ENS_COOKIE_SECURE. "auto": true when browsers use HTTPS (tls.enabled, ingress.tls or an
   # edge/passthrough/reencrypt route), else false. Or true / false.
   cookieSecure: auto

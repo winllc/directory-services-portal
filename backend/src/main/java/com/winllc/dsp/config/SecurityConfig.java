@@ -1,6 +1,7 @@
 package com.winllc.dsp.config;
 
 import com.winllc.dsp.audit.AccessDenials;
+import com.winllc.dsp.service.SessionService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -81,8 +82,8 @@ public class SecurityConfig {
 
   @Bean
   @Order(2)
-  SecurityFilterChain securityFilterChain(HttpSecurity http, SecurityContextRepository contexts, AccessDenials denials, EnsProperties ens)
-      throws Exception {
+  SecurityFilterChain securityFilterChain(HttpSecurity http, SecurityContextRepository contexts, AccessDenials denials, EnsProperties ens,
+      SessionService sessions) throws Exception {
     http
         // Replaced by RequestHeaderCsrfFilter (custom header + SameSite=Strict cookie).
         .csrf(AbstractHttpConfigurer::disable)
@@ -91,6 +92,8 @@ public class SecurityConfig {
         .logout(AbstractHttpConfigurer::disable)
         .securityContext(sc -> sc.securityContextRepository(contexts))
         .addFilterAfter(new RequestHeaderCsrfFilter(denials), SecurityContextHolderFilter.class)
+        // Idle and absolute timeouts, concurrent sessions and group refresh, before authorization.
+        .addFilterAfter(new SessionControlFilter(sessions), RequestHeaderCsrfFilter.class)
         .authorizeHttpRequests(auth -> auth
             .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/x509", "/api/auth/logout", "/api/auth/consent").permitAll()
             .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/info", "/api/health").permitAll()

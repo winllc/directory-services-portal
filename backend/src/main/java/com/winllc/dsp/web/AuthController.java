@@ -5,6 +5,7 @@ import com.winllc.dsp.config.EnsProperties;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
 import com.winllc.dsp.service.ConsentService;
+import com.winllc.dsp.service.SessionService;
 import com.winllc.dsp.web.dto.LoginRequest;
 import com.winllc.dsp.x509.CertificateRejectedException;
 import com.winllc.dsp.x509.X509AuthService;
@@ -13,16 +14,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.SecurityContextRepository;
@@ -44,15 +40,17 @@ public class AuthController {
   private final AuditLog audit;
   private final EnsProperties ens;
   private final ConsentService consent;
+  private final SessionService sessions;
 
   public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit, EnsProperties ens,
-      ConsentService consent) {
+      ConsentService consent, SessionService sessions) {
     this.auth = auth;
     this.x509 = x509;
     this.contexts = contexts;
     this.audit = audit;
     this.ens = ens;
     this.consent = consent;
+    this.sessions = sessions;
   }
 
   /** Acknowledge the notice-and-consent banner for this browser session (needed before any sign-in). */
@@ -87,7 +85,10 @@ public class AuthController {
   public Map<String, Boolean> logout(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
     if (user != null) audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName()).success();
     HttpSession session = request.getSession(false);
-    if (session != null) session.invalidate();
+    if (session != null) {
+      sessions.signingOut(session);
+      session.invalidate();
+    }
     SecurityContextHolder.clearContext();
     if (x509.enabled()) setSuppressCookie(request, response, true);
     return Map.of("ok", true, "consentRequired", consent.enabled());
@@ -142,15 +143,14 @@ public class AuthController {
   }
 
   private void establishSession(SessionUser user, HttpServletRequest request, HttpServletResponse response) {
-    List<GrantedAuthority> authorities = new ArrayList<>(List.of(new SimpleGrantedAuthority("ROLE_USER")));
-    if (user.isAdmin()) authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
-    SecurityContext context = SecurityContextHolder.createEmptyContext();
-    context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(user, null, authorities));
+    SecurityContext context = SessionService.context(user);
     SecurityContextHolder.setContext(context);
 
     // Prevent session fixation: always issue a fresh session id on sign-in.
     request.getSession(true);
     request.changeSessionId();
     contexts.saveContext(context, request, response);
+    // Idle and absolute timeouts, the concurrent-session limit and group refresh start now.
+    sessions.signedIn(request, user);
   }
 }

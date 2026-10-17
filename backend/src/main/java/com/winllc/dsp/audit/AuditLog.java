@@ -140,6 +140,7 @@ public class AuditLog {
     private final String action;
     private String category;
     private String severity;
+    private String reason;
     private SessionUser user;
     private AuditEvent.Actor actor;
     private String anonymousId;
@@ -202,6 +203,12 @@ public class AuditLog {
       return this;
     }
 
+    /** The reason, for an outcome that has one without failing (e.g. why a session ended). */
+    public Draft reason(String reason) {
+      this.reason = reason;
+      return this;
+    }
+
     /** Keeps an original time and id (history migration). */
     Draft at(String time, String id) {
       this.time = time;
@@ -239,7 +246,7 @@ public class AuditLog {
     private AuditStore.Stored finish(String outcome, String reason) {
       if (done) return finished;
       done = true;
-      finished = record(build(outcome, reason));
+      finished = record(build(outcome, reason != null ? reason : this.reason));
       return finished;
     }
 

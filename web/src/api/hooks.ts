@@ -85,7 +85,7 @@ export const useServerInfo = () => useQuery({ queryKey: keys.info, queryFn: () =
 export const useLicense = () =>
   useQuery({
     queryKey: keys.license,
-    queryFn: () => api.get<LicenseStatus>('/api/license'),
+    queryFn: () => api.get<LicenseStatus>('/api/license', { background: true }),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
   });
@@ -384,7 +384,11 @@ export const useAuditActions = () =>
   useQuery({ queryKey: keys.auditActions, queryFn: () => api.get<AuditActions>('/api/admin/audit/actions'), staleTime: Infinity });
 
 export const useAuditStatus = () =>
-  useQuery({ queryKey: keys.auditStatus, queryFn: () => api.get<AuditStatus>('/api/admin/audit/status'), refetchInterval: 30_000 });
+  useQuery({
+    queryKey: keys.auditStatus,
+    queryFn: () => api.get<AuditStatus>('/api/admin/audit/status', { background: true }),
+    refetchInterval: 30_000,
+  });
 
 export const useAuditTokens = () => useQuery({ queryKey: keys.auditTokens, queryFn: () => api.get<AuditToken[]>('/api/admin/audit/tokens') });
 
@@ -436,7 +440,7 @@ export async function downloadAuditExport(format: 'csv' | 'ndjson', filters: Aud
 export const useJobs = (enabled = true) =>
   useQuery({
     queryKey: keys.jobs,
-    queryFn: () => api.get<Job[]>('/api/jobs'),
+    queryFn: () => api.get<Job[]>('/api/jobs', { background: true }),
     enabled,
     refetchInterval: (q) => (q.state.data?.some(jobActive) ? 1500 : 15_000),
     refetchIntervalInBackground: true,
@@ -447,7 +451,7 @@ export const useJobs = (enabled = true) =>
 export const useJob = (id: string | undefined) =>
   useQuery({
     queryKey: keys.job(id ?? ''),
-    queryFn: () => api.get<Job>(`/api/jobs/${encodeURIComponent(id!)}`),
+    queryFn: () => api.get<Job>(`/api/jobs/${encodeURIComponent(id!)}`, { background: true }),
     enabled: !!id,
     refetchInterval: (q) => (q.state.data && !jobActive(q.state.data) ? false : 1000),
     refetchIntervalInBackground: true,
@@ -497,12 +501,13 @@ export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise
   useEffect(() => {
     if (!current || current.status !== 'succeeded') return;
     let alive = true;
+    // Fetched when the job finishes, not when the user acts: background requests.
     api
-      .get<{ result: T }>(`/api/jobs/${encodeURIComponent(current.id)}/result`)
+      .get<{ result: T }>(`/api/jobs/${encodeURIComponent(current.id)}/result`, { background: true })
       .then((r) => {
         if (!alive) return;
         qc.setQueryData(keyRef.current, r.result);
-        api.post('/api/jobs/seen', { ids: [current.id] }).then(() => qc.invalidateQueries({ queryKey: keys.jobs }));
+        api.post('/api/jobs/seen', { ids: [current.id] }, { background: true }).then(() => qc.invalidateQueries({ queryKey: keys.jobs }));
       })
       .catch(() => undefined);
     return () => {

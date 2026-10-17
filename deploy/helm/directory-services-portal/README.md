@@ -372,7 +372,12 @@ Existing claims (`existingClaim`) are never touched.
 
 | Value | Env | Default |
 |---|---|---|
-| `server.sessionTtlMinutes` | `SESSION_TTL_MINUTES` | `480` |
+| `server.session.idleTimeout` | `ENS_SESSION_IDLE_TIMEOUT` | `30m` (was 480 minutes; the deprecated `server.sessionTtlMinutes`, when set, still wins) |
+| `server.session.adminIdleTimeout` | `ENS_SESSION_ADMIN_IDLE_TIMEOUT` | `""` (the idle timeout; STIG suggests `15m`) |
+| `server.session.absoluteTimeout` | `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` |
+| `server.session.maxPerUser` | `ENS_SESSION_MAX_PER_USER` | `0` (no limit; STIG suggests `3`) |
+| `server.groupRefreshInterval` | `GROUP_REFRESH_INTERVAL` | `5m` |
+| `server.login.maxFailures` / `.lockoutWindow` | `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_WINDOW` | `8` / `15m` |
 | `server.cookieSecure` | `ENS_COOKIE_SECURE` | `auto` (true with ingress TLS, a Route or `tls.enabled`) |
 | `server.cspReportOnly` | `ENS_CSP_REPORT_ONLY` (API and web tier) | `false` |
 | `server.seedDemoConfig` | `SEED_DEMO_CONFIG` | `false` |

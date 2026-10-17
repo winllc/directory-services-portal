@@ -18,7 +18,7 @@ public final class AuditCatalog {
 
   static {
     for (String a : List.of("auth.login", "auth.logout", "auth.lockout", "auth.password-changed", "auth.password-reset",
-        "auth.consent-acknowledged")) {
+        "auth.consent-acknowledged", "auth.session-expired")) {
       ACTIONS.put(a, "authentication");
     }
     ACTIONS.put("access.denied", "authorization");

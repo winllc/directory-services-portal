@@ -335,6 +335,8 @@ public class EntryService {
     List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), List.of());
     event.target("entry", dn, titles.isEmpty() ? rdnValues.get(0) : titles.get(0));
     event.changes(attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList());
+    // Never change the directory unaudited: a full or unwritable audit disk refuses the write (503).
+    audit.requireWritable();
     directory.add(dn, attributes);
     // Recorded as soon as the directory accepts it: reading the entry back can still fail.
     event.success();
@@ -376,6 +378,7 @@ public class EntryService {
       String currentValue = currentRdn.getAttributeValues()[rdnPos];
       if (newRdnValues.stream().noneMatch(v -> v.equalsIgnoreCase(currentValue))) {
         if (rdnNames.length > 1) throw ApiException.badRequest("Entries with multi-valued RDNs cannot be renamed here");
+        audit.requireWritable();
         targetDn = directory.rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
         event.detail("previousDn", current.dn()).target("entry", targetDn, title(def, current));
       }
@@ -408,6 +411,7 @@ public class EntryService {
       }
     }
     event.changes(recorded);
+    if (!changes.isEmpty()) audit.requireWritable();
     directory.modify(targetDn, changes);
     // A save that changed nothing is not worth a line in the audit log.
     if (!recorded.isEmpty()) {
@@ -432,6 +436,7 @@ public class EntryService {
       // What the entry held, so a mistaken delete can be put back by hand.
       event.target("entry", current.dn(), title(def, current))
           .changes(current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList());
+      audit.requireWritable();
       directory.delete(current.dn());
       event.success();
       return null;

@@ -7,7 +7,7 @@ import { Alert, Button, FormRow } from '../components/ui';
 import { ConsentNotice } from '../components/ConsentNotice';
 
 export function LoginPage() {
-  const { user, login, loginWithCertificate, certificateError, consentRequired, acknowledgeConsent } = useAuth();
+  const { user, login, loginWithCertificate, certificateError, sessionNotice, consentRequired, acknowledgeConsent } = useAuth();
   const info = useServerInfo();
   const navigate = useNavigate();
   const location = useLocation();
@@ -64,6 +64,7 @@ export function LoginPage() {
           </p>
         </div>
         {error && <Alert tone="danger">{error}</Alert>}
+        {!error && sessionNotice && <Alert tone="info" title="Signed out">{sessionNotice}</Alert>}
         {!error && certificateError && auth.x509 && <Alert tone="warning" title="Certificate not accepted">{certificateError}</Alert>}
         {info.data && !info.data.connected && (
           <Alert tone="warning" title="Directory unreachable">

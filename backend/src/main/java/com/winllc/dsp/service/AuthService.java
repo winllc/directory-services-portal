@@ -31,8 +31,6 @@ import org.springframework.stereotype.Service;
 public class AuthService {
   private static final Logger log = LoggerFactory.getLogger(AuthService.class);
   private static final Pattern USERNAME = Pattern.compile("^[\\p{L}\\p{N}._@+-]{1,128}$");
-  static final int MAX_FAILURES = 8;
-  private static final long FAILURE_WINDOW_MS = 15 * 60 * 1000L;
 
   private record Failures(int count, long first) {}
 
@@ -68,8 +66,9 @@ public class AuthService {
 
   /**
    * Audited as {@code auth.login} (method password): a failure names the attempted user as an
-   * anonymous actor, and the failure that reaches the limit also records {@code auth.lockout}. The
-   * success is recorded before the session exists, so a sign-in that can't be audited fails.
+   * anonymous actor, and the failure that reaches the limit ({@code LOGIN_MAX_FAILURES} within
+   * {@code LOGIN_LOCKOUT_WINDOW}) also records {@code auth.lockout}. The success is recorded before
+   * the session exists, so a sign-in that can't be audited fails.
    */
   public SessionUser login(String username, String password, String clientKey) {
     // The attempted name is recorded as typed (truncated): it is what an investigation searches for.
@@ -81,7 +80,8 @@ public class AuthService {
     }
     String throttleKey = clientKey + "|" + username.toLowerCase();
     Failures f = failures.get(throttleKey);
-    if (f != null && System.currentTimeMillis() - f.first() < FAILURE_WINDOW_MS && f.count() >= MAX_FAILURES) {
+    int maxFailures = Math.max(1, props.getLogin().getMaxFailures());
+    if (f != null && System.currentTimeMillis() - f.first() < windowMs() && f.count() >= maxFailures) {
       event.anonymous(attempted).denied("Too many failed attempts");
       throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed login attempts. Try again later.");
     }
@@ -89,10 +89,11 @@ public class AuthService {
     if (dn == null || !directory.authenticate(dn, password)) {
       int count = recordFailure(throttleKey);
       event.anonymous(attempted).failed(dn == null ? "Unknown user" : "Wrong password");
-      if (count == MAX_FAILURES) {
+      if (count == maxFailures) {
+        long minutes = Math.max(1, windowMs() / 60_000);
         audit.event("auth.lockout").anonymous(attempted).target("user", attempted, null).severity(AuditEvent.ALERT)
-            .detail("method", "password").detail("failures", count).detail("windowMinutes", FAILURE_WINDOW_MS / 60_000)
-            .denied("Too many failed sign-in attempts: further attempts from this address are refused for 15 minutes");
+            .detail("method", "password").detail("failures", count).detail("windowMinutes", minutes)
+            .denied("Too many failed sign-in attempts: further attempts from this address are refused for " + minutes + " minutes");
       }
       throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
     }
@@ -102,21 +103,48 @@ public class AuthService {
     return user;
   }
 
+  private long windowMs() {
+    return props.getLogin().getLockoutWindow().toMillis();
+  }
+
   private int recordFailure(String key) {
     long now = System.currentTimeMillis();
-    return failures.compute(key, (k, f) -> f == null || now - f.first() > FAILURE_WINDOW_MS ? new Failures(1, now) : new Failures(f.count() + 1, f.first()))
+    long window = windowMs();
+    return failures.compute(key, (k, f) -> f == null || now - f.first() > window ? new Failures(1, now) : new Failures(f.count() + 1, f.first()))
         .count();
   }
 
   @Scheduled(fixedDelay = 60_000)
   void sweepFailures() {
     long now = System.currentTimeMillis();
-    failures.entrySet().removeIf(e -> now - e.getValue().first() > FAILURE_WINDOW_MS);
+    long window = windowMs();
+    failures.entrySet().removeIf(e -> now - e.getValue().first() > window);
   }
 
   public SessionUser buildUser(String dn, String username, String authMethod, String certificateSubject) {
+    DirectoryEntry entry = directory.get(dn, userAttributes());
+    return toUser(entry, dn, username, authMethod, certificateSubject, false);
+  }
+
+  /**
+   * The signed-in user as the directory has them now (groups and administrator status read again),
+   * or null when their entry no longer exists.
+   *
+   * @throws RuntimeException when the directory can't be read: the caller keeps the user as they are
+   */
+  public SessionUser refresh(SessionUser user) {
+    DirectoryEntry entry = directory.get(user.dn(), userAttributes());
+    if (entry == null) return null;
+    return toUser(entry, user.dn(), user.username(), user.authMethod(), user.certificateSubject(), true);
+  }
+
+  private List<String> userAttributes() {
+    return List.of("cn", "displayName", "mail", props.getUsernameAttribute(), "memberOf");
+  }
+
+  /** {@code strict}: a failed group lookup fails, instead of leaving the user with only memberOf. */
+  private SessionUser toUser(DirectoryEntry entry, String dn, String username, String authMethod, String certificateSubject, boolean strict) {
     String ua = props.getUsernameAttribute();
-    DirectoryEntry entry = directory.get(dn, List.of("cn", "displayName", "mail", ua, "memberOf"));
     Set<String> groups = new LinkedHashSet<>(entry == null ? List.of() : entry.values("memberOf"));
     if (props.getGroupFilter() != null && !props.getGroupFilter().isBlank()) {
       try {
@@ -125,6 +153,7 @@ public class AuthService {
             .entries()
             .forEach(g -> groups.add(g.dn()));
       } catch (RuntimeException e) {
+        if (strict) throw e;
         log.warn("Group lookup failed: {}", e.getMessage());
       }
     }

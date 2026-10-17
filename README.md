@@ -197,7 +197,7 @@ its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/reso
 | `ADMIN_USERS`, `ADMIN_GROUPS` | portal administrators, separated by `;` |
 | `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) and the audit log are stored |
 | `AUDIT_DIR` | where the audit store goes (default `$DATA_DIR/audit`). `AUDIT_MEMORY_EVENTS` is still accepted but no longer used. Outputs and retention: `ENS_AUDIT_*`, see [Audit logging](#audit-logging) |
-| `PORT`, `SESSION_TTL_MINUTES`, `ENS_COOKIE_SECURE`, `SERVER_FORWARD_HEADERS_STRATEGY` | HTTP settings (see [Security headers and cookies](#security-headers-and-cookies)) |
+| `PORT`, `ENS_COOKIE_SECURE`, `SERVER_FORWARD_HEADERS_STRATEGY` | HTTP settings (see [Security headers and cookies](#security-headers-and-cookies)); session timeouts and sign-in lockout are under [Sessions](#sessions) |
 
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
 The service account needs read access to the schema and to the namespaces you expose, and write
@@ -389,7 +389,7 @@ Splunk or any SIEM.
 
 | Category | Actions |
 |---|---|
-| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (8 failures in 15 minutes, severity alert), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
+| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent` or `account-removed`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
 | authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
 | account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
 | data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps everything the entry held; a rename records `previousDn`), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
@@ -415,7 +415,9 @@ nor is a save that changes nothing.
   synchronized writer in the API process, so **run one API instance per data directory**: two
   instances writing the same files would fork the chain (the same applies to sessions and
   background tasks). If an event can't be stored, sign-ins and permission, configuration,
-  license and token changes are refused (503); other events log an error.
+  license and token changes are refused (503); other events log an error. Directory changes
+  (create, update, rename, delete) check first that the store is writable, with at least 1 MB
+  free, and are refused (503) rather than made unaudited when it is not.
 - **Upgrading** from the portal's earlier audit format: at the first start the original
   `audit-YYYY-MM.jsonl` files are moved unchanged to `audit/legacy/` (still readable as they
   were) and their events are appended to the new store in time order, keeping time and id, with
@@ -567,6 +569,25 @@ configured on the API:
 Colors may be `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`/`hsl()`/`hsla()` or a CSS color
 name. Any other value stops the API at startup with an error naming the setting.
 
+### Sessions
+Session controls (DISA STIG; the ENS platform baseline):
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_SESSION_IDLE_TIMEOUT` | `30m` | idle timeout (a duration: `30m`, `1h`). `SESSION_TTL_MINUTES` (minutes), its older name, still works when this is not set; its default used to be 480 minutes |
+| `ENS_SESSION_ADMIN_IDLE_TIMEOUT` | the idle timeout | a shorter idle timeout for administrators (STIG suggests `15m`) |
+| `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` | a session ends this long after sign-in, whatever its activity |
+| `ENS_SESSION_MAX_PER_USER` | `0` (no limit) | concurrent sessions per user; signing in once more ends the **oldest** (STIG suggests `3`) |
+| `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists ends its sessions |
+| `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`) |
+| `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory, so a restart clears them |
+
+Idle time counts what the user does: the web client marks its background polling (task progress,
+license and audit status) with `X-DSP-Background: 1`, which keeps nothing alive, so an open but
+unattended tab still times out. An expired session answers `401` with `"code": "session_expired"`
+and the browser shows the sign-in page with the reason; each expiry is audited as
+`auth.session-expired` with the reason `idle`, `absolute`, `concurrent` or `account-removed`.
+
 ### Notice and consent banner
 For DoD systems (DISA STIG), the portal can show the standard USG notice-and-consent banner before
 sign-in. The login page shows it with an **I agree** button, and the API enforces it: while it is
@@ -632,7 +653,9 @@ browser only ever reaches the API through the same origin).
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
   `SameSite=Strict`, `Secure` over TLS or when `ENS_COOKIE_SECURE=true`). The session ID is rotated at login,
   and every state-changing request must carry the `X-DSP-Request` header (CSRF defence).
-  `/api/admin/**` requires `ROLE_ADMIN`. Failed logins are throttled.
+  `/api/admin/**` requires `ROLE_ADMIN`, read again from the directory every
+  `GROUP_REFRESH_INTERVAL`. Failed logins are throttled (`LOGIN_MAX_FAILURES`), and sessions time
+  out (see [Sessions](#sessions)).
 - Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
   Redis or JDBC) before scaling out.
 - Metrics and analyses read through the same permission checks as browsing (see

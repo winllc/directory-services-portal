@@ -12,6 +12,8 @@ interface AuthState {
   loginWithCertificate(): Promise<void>;
   /** Why automatic certificate sign-in failed, if it was attempted. */
   certificateError: string | null;
+  /** Why the previous session ended (timed out), shown on the login page. */
+  sessionNotice: string | null;
   /** The notice-and-consent banner must be acknowledged before signing in (the server enforces it). */
   consentRequired: boolean;
   acknowledgeConsent(): Promise<void>;
@@ -31,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [certificateError, setCertificateError] = useState<string | null>(null);
   const [consentRequired, setConsentRequired] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const qc = useQueryClient();
 
   /** Reads the session: who is signed in, and whether the consent banner comes first. */
@@ -54,7 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [checkSession]);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => {
+    setUnauthorizedHandler((expired) => {
+      if (expired) setSessionNotice(expired);
       setUser(null);
       qc.clear();
       // The session is gone (signed out elsewhere, or expired): a new one may need the banner first.
@@ -68,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const r = await fn();
         qc.clear();
+        setSessionNotice(null);
         setUser(r.user);
       } catch (e) {
         if (e instanceof ApiError && e.code === 'consent_required') setConsentRequired(true);
@@ -104,8 +109,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [qc]);
 
   const value = useMemo(
-    () => ({ user, loading, login, loginWithCertificate, certificateError, consentRequired, acknowledgeConsent, logout }),
-    [user, loading, login, loginWithCertificate, certificateError, consentRequired, acknowledgeConsent, logout],
+    () => ({ user, loading, login, loginWithCertificate, certificateError, sessionNotice, consentRequired, acknowledgeConsent, logout }),
+    [user, loading, login, loginWithCertificate, certificateError, sessionNotice, consentRequired, acknowledgeConsent, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

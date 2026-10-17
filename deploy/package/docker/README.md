@@ -51,6 +51,10 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
   proxy; `COOKIE_SECURE`, the older name, still works). The web tier sends the security headers
   (CSP, HSTS behind an HTTPS proxy that sets `X-Forwarded-Proto`, and others); `ENS_CSP_REPORT_ONLY=true`
   only reports CSP violations, as an escape hatch.
+- `ENS_SESSION_*` (idle timeout, administrators' idle timeout, absolute lifetime, sessions per
+  user), `GROUP_REFRESH_INTERVAL` and `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_WINDOW`: session and
+  sign-in controls. An `.env` from an earlier release keeps `SESSION_TTL_MINUTES=480`, which still
+  applies until you replace it with `ENS_SESSION_IDLE_TIMEOUT` (new installs: `30m`).
 - `ENS_CONSENT_BANNER_ENABLED=true` for the DoD notice-and-consent banner before sign-in (DISA
   STIG); the standard DoD text unless `ENS_CONSENT_BANNER_TEXT` / `ENS_CONSENT_BANNER_FILE` say otherwise.
 - `BANNER_TEXT` and colours for a classification banner; `LOGIN_HINT` for help text.

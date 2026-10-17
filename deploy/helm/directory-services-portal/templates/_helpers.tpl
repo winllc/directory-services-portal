@@ -87,6 +87,15 @@ Call with (dict "image" .Values.api.image "root" $).
 {{- if kindIs "slice" . -}}{{- join ";" . -}}{{- else -}}{{- . | default "" -}}{{- end -}}
 {{- end -}}
 
+{{/* ENS_SESSION_IDLE_TIMEOUT: the deprecated server.sessionTtlMinutes (minutes) when set, else server.session.idleTimeout. */}}
+{{- define "dsp.idleTimeout" -}}
+{{- if .Values.server.sessionTtlMinutes -}}
+{{- printf "%sm" (include "dsp.str" .Values.server.sessionTtlMinutes) -}}
+{{- else -}}
+{{- include "dsp.str" .Values.server.session.idleTimeout -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Whether browsers reach the portal over HTTPS (ENS_COOKIE_SECURE=auto). */}}
 {{- define "dsp.cookieSecure" -}}
 {{- $v := .Values.server.cookieSecure -}}
