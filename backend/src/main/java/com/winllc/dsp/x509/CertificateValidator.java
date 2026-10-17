@@ -26,7 +26,8 @@ import org.springframework.stereotype.Component;
 /**
  * Checks that a client certificate is usable for sign-in: within its validity period, allowed
  * for TLS client authentication and, when trusted CAs are configured, issued by one of them
- * (optionally with revocation checking).
+ * (optionally with revocation checking). Trusted CAs are required in header mode; without them
+ * only the servlet source, where Tomcat has already verified the chain, is accepted.
  */
 @Component
 public class CertificateValidator {
@@ -65,7 +66,13 @@ public class CertificateValidator {
     }
 
     Set<TrustAnchor> trusted = trustAnchors();
-    if (trusted != null) validatePath(chain, trusted);
+    if (trusted != null) {
+      validatePath(chain, trusted);
+    } else if (props.getX509().headerSource()) {
+      // A forwarded certificate is only as good as the API's own chain check (the startup checks
+      // refuse header mode without a CA file; this covers a configuration changed at runtime).
+      throw new CertificateRejectedException("Certificate sign-in through a proxy needs X509_TRUSTED_CA_FILE");
+    }
   }
 
   private void validatePath(X509Certificate[] chain, Set<TrustAnchor> trusted) {

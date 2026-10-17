@@ -29,6 +29,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import tools.jackson.databind.JsonNode;
 
 class X509AuthTest extends ApiTestSupport {
+  static final String PROXY_SECRET = "3f1c9a0e5b7d2c4f8a6e1b0d9c7f5a3e2d4b6c8a0f1e3d5c7b9a2e4f6d8c0b1a";
   static TestCertificates.Ca ca;
   static TestCertificates.Ca rogueCa;
   static Path caFile;
@@ -55,6 +56,8 @@ class X509AuthTest extends ApiTestSupport {
     x.setRequireCertificateMatch(false);
     x.setAutoLogin(false);
     x.setTrustedProxies("127.0.0.1/32;::1/128");
+    x.setProxySecret(PROXY_SECRET);
+    x.setProxySecretFile("");
     props.setPasswordLoginEnabled(true);
   }
 
@@ -66,6 +69,9 @@ class X509AuthTest extends ApiTestSupport {
     x.setSource("servlet");
     x.setAutoLogin(false);
     x.setRequireCertificateMatch(false);
+    x.setHeader("X-SSL-Client-Cert");
+    x.setProxySecret("");
+    x.setProxySecretFile("");
     props.setPasswordLoginEnabled(true);
   }
 
@@ -233,39 +239,120 @@ class X509AuthTest extends ApiTestSupport {
     assertThat(status(certLogin(cert("CN=alice")))).isEqualTo(401);
   }
 
+  /** A request as the portal's web tier sends it: the certificate header and the proxy secret. */
+  private static MockHttpServletRequestBuilder viaProxy(MockHttpServletRequestBuilder req, String header, String value) {
+    return req.header("X-DSP-Request", "1").header(header, value).header("X-DSP-Proxy-Secret", PROXY_SECRET);
+  }
+
+  private static String nginxHeader(X509Certificate c) {
+    return URLEncoder.encode(TestCertificates.pem(c), StandardCharsets.UTF_8).replace("+", "%20");
+  }
+
   @Test
   void acceptsCertificatesFromTrustedProxiesOnly() throws Exception {
     props.getX509().setSource("header");
     X509Certificate c = cert("CN=alice");
-    String nginx = URLEncoder.encode(TestCertificates.pem(c), StandardCharsets.UTF_8).replace("+", "%20");
+    String nginx = nginxHeader(c);
 
-    MvcResult trusted = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", nginx)).andReturn();
+    MvcResult trusted = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", nginx)).andReturn();
     assertThat(status(trusted)).as(trusted.getResponse().getContentAsString()).isEqualTo(200);
 
-    MvcResult spoofed = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", nginx).with(r -> {
+    // The right secret from an address outside X509_TRUSTED_PROXIES is still refused.
+    MvcResult spoofed = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", nginx).with(r -> {
       r.setRemoteAddr("203.0.113.9");
       return r;
     })).andReturn();
     assertThat(status(spoofed)).isEqualTo(401);
-    assertThat(error(spoofed)).isEqualTo("No client certificate was presented");
+    assertThat(error(spoofed)).isEqualTo("The client certificate was not forwarded by the portal's proxy");
 
     // X-Forwarded-For must not influence the proxy trust decision: the connecting peer decides.
-    MvcResult forgedFor = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", nginx)
+    MvcResult forgedFor = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", nginx)
         .header("X-Forwarded-For", "127.0.0.1").with(r -> {
           r.setRemoteAddr("203.0.113.9");
           return r;
         })).andReturn();
     assertThat(status(forgedFor)).isEqualTo(401);
-    MvcResult viaProxy = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", nginx)
+    MvcResult viaForwarding = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", nginx)
         .header("X-Forwarded-For", "198.51.100.7")).andReturn();
-    assertThat(status(viaProxy)).as(viaProxy.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(status(viaForwarding)).as(viaForwarding.getResponse().getContentAsString()).isEqualTo(200);
 
     // Envoy's x-forwarded-client-cert format.
     props.getX509().setHeader("x-forwarded-client-cert");
     String xfcc = "By=spiffe://portal;Hash=abc;Cert=\"" + URLEncoder.encode(TestCertificates.pem(c), StandardCharsets.UTF_8) + "\";Subject=\"CN=alice\"";
-    MvcResult envoy = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("x-forwarded-client-cert", xfcc)).andReturn();
+    MvcResult envoy = mvc.perform(viaProxy(post("/api/auth/x509"), "x-forwarded-client-cert", xfcc)).andReturn();
     assertThat(status(envoy)).as(envoy.getResponse().getContentAsString()).isEqualTo(200);
-    props.getX509().setHeader("X-SSL-Client-Cert");
+  }
+
+  @Test
+  void ignoresCertificateHeadersWithoutTheProxySecret() throws Exception {
+    // Anyone who can reach the API from a trusted address (another pod, a local process) and
+    // knows a user's public certificate: without the web tier's secret the header is refused.
+    props.getX509().setSource("header");
+    String header = nginxHeader(cert("CN=admin,OU=Spoofed,O=Example Corp"));
+
+    MvcResult missing = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", header)).andReturn();
+    assertThat(status(missing)).isEqualTo(401);
+    assertThat(error(missing)).isEqualTo("The client certificate was not forwarded by the portal's proxy");
+
+    for (String wrong : new String[] {"", "wrong", PROXY_SECRET.substring(1), PROXY_SECRET + "0", PROXY_SECRET.toUpperCase()}) {
+      MvcResult r = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1").header("X-SSL-Client-Cert", header)
+          .header("X-DSP-Proxy-Secret", wrong)).andReturn();
+      assertThat(status(r)).as(wrong).isEqualTo(401);
+      assertThat(error(r)).as(wrong).isEqualTo("The client certificate was not forwarded by the portal's proxy");
+    }
+
+    // Auto sign-in ignores it too.
+    props.getX509().setAutoLogin(true);
+    MvcResult me = mvc.perform(get("/api/auth/me").header("X-SSL-Client-Cert", header).header("X-DSP-Proxy-Secret", "wrong")).andReturn();
+    assertThat(status(me)).isEqualTo(200);
+    assertThat(body(me).get("user").isNull()).isTrue();
+
+    // No secret configured on the API: nothing is accepted, whatever is sent.
+    props.getX509().setProxySecret("");
+    MvcResult unconfigured = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", header)).andReturn();
+    assertThat(status(unconfigured)).isEqualTo(401);
+    props.getX509().setProxySecret(PROXY_SECRET);
+
+    // Each attempt is in the audit log, with the address that actually connected.
+    props.getX509().setSource("servlet");
+    MockHttpSession admin = (MockHttpSession) certLogin(cert("CN=admin,O=Example Corp")).getRequest().getSession(false);
+    JsonNode events = body(mvc.perform(get("/api/admin/audit?action=auth.login&outcome=failure").session(admin)).andReturn()).get("events");
+    List<JsonNode> refused = new java.util.ArrayList<>();
+    events.forEach(e -> {
+      if (e.get("details").has("reasonCode") && e.get("details").get("reasonCode").asString().equals("untrusted_certificate_header")) refused.add(e);
+    });
+    assertThat(refused).hasSizeGreaterThanOrEqualTo(8);
+    JsonNode first = refused.get(0);
+    assertThat(first.get("reason").asString()).isEqualTo("The client certificate was not forwarded by the portal's proxy");
+    assertThat(first.get("details").get("method").asString()).isEqualTo("x509");
+    assertThat(first.get("details").get("peerAddress").asString()).isEqualTo("127.0.0.1");
+  }
+
+  @Test
+  void acceptsTheProxySecretFromAFile() throws Exception {
+    props.getX509().setSource("header");
+    Path secretFile = Files.createTempFile("proxy-secret", "");
+    Files.writeString(secretFile, PROXY_SECRET + "\n");
+    props.getX509().setProxySecret("not-the-one-sent-by-the-proxy-0123456789");
+    props.getX509().setProxySecretFile(secretFile.toString());
+    String header = nginxHeader(cert("CN=alice"));
+
+    MvcResult ok = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", header)).andReturn();
+    assertThat(status(ok)).as(ok.getResponse().getContentAsString()).isEqualTo(200);
+
+    // An unreadable file fails closed.
+    Files.delete(secretFile);
+    assertThat(status(mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", header)).andReturn())).isEqualTo(401);
+  }
+
+  @Test
+  void refusesForwardedCertificatesWithoutTrustedCas() throws Exception {
+    // Startup refuses this configuration; changed at runtime, the validator refuses it too.
+    props.getX509().setSource("header");
+    props.getX509().setTrustedCaFile("");
+    MvcResult r = mvc.perform(viaProxy(post("/api/auth/x509"), "X-SSL-Client-Cert", nginxHeader(TestCertificates.client("CN=alice").issuedBy(rogueCa)))).andReturn();
+    assertThat(status(r)).isEqualTo(401);
+    assertThat(error(r)).isEqualTo("Certificate sign-in through a proxy needs X509_TRUSTED_CA_FILE");
   }
 
   @Test

@@ -1,5 +1,10 @@
 package com.winllc.dsp.config;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -161,6 +166,9 @@ public class PortalProperties {
 
   /** X.509 client-certificate sign-in. */
   public static class X509 {
+    /** Shortest proxy secret accepted (the packages generate 64 hex characters). */
+    public static final int MIN_PROXY_SECRET_LENGTH = 32;
+
     private boolean enabled;
     /** "servlet": this server terminates mutual TLS; "header": a trusted reverse proxy forwards the certificate. */
     private String source = "servlet";
@@ -168,7 +176,14 @@ public class PortalProperties {
     private String header = "X-SSL-Client-Cert";
     /** Addresses/CIDRs allowed to send the certificate header, separated by ";" or ",". */
     private String trustedProxies = "127.0.0.1/32;::1/128";
-    /** Optional PEM file of CA certificates; when set the portal validates the chain itself. */
+    /**
+     * Shared secret the portal's web tier sends to the API in {@code X-DSP-Proxy-Secret} with every
+     * request; in header mode the certificate header is honoured only with it.
+     */
+    private String proxySecret = "";
+    /** File holding the proxy secret, read instead of {@link #proxySecret} when set (preferred). */
+    private String proxySecretFile = "";
+    /** PEM file of CA certificates the portal validates the chain against (required in header mode). */
     private String trustedCaFile = "";
     /** Check revocation (OCSP / CRL distribution points) during chain validation. */
     private boolean checkRevocation;
@@ -189,6 +204,10 @@ public class PortalProperties {
     public void setHeader(String header) { this.header = header; }
     public String getTrustedProxies() { return trustedProxies; }
     public void setTrustedProxies(String trustedProxies) { this.trustedProxies = trustedProxies; }
+    public String getProxySecret() { return proxySecret; }
+    public void setProxySecret(String proxySecret) { this.proxySecret = proxySecret; }
+    public String getProxySecretFile() { return proxySecretFile; }
+    public void setProxySecretFile(String proxySecretFile) { this.proxySecretFile = proxySecretFile; }
     public String getTrustedCaFile() { return trustedCaFile; }
     public void setTrustedCaFile(String trustedCaFile) { this.trustedCaFile = trustedCaFile; }
     public boolean isCheckRevocation() { return checkRevocation; }
@@ -209,6 +228,53 @@ public class PortalProperties {
     public List<String> trustedProxyList() {
       return trustedProxies == null ? List.of()
           : Arrays.stream(trustedProxies.split("[;,\\s]+")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
+    /**
+     * The proxy secret: the content of {@link #proxySecretFile} when that is set, else
+     * {@link #proxySecret}; null when neither is configured. Surrounding whitespace is ignored.
+     *
+     * @throws UncheckedIOException when the file can't be read
+     */
+    public String resolvedProxySecret() {
+      if (proxySecretFile != null && !proxySecretFile.isBlank()) {
+        try {
+          String s = Files.readString(Path.of(proxySecretFile.trim())).trim();
+          return s.isEmpty() ? null : s;
+        } catch (IOException e) {
+          throw new UncheckedIOException("Cannot read X509_PROXY_SECRET_FILE " + proxySecretFile + ": " + e.getMessage(), e);
+        }
+      }
+      return proxySecret == null || proxySecret.isBlank() ? null : proxySecret.trim();
+    }
+
+    /**
+     * Problems with the configuration (empty when valid). In header mode anyone who can reach the
+     * API could otherwise sign in as any user: the certificate header must come with the proxy
+     * secret, and the API must check the chain itself.
+     */
+    public List<String> problems() {
+      List<String> out = new ArrayList<>();
+      if (!enabled || !headerSource()) return out;
+      try {
+        String secret = resolvedProxySecret();
+        if (secret == null) {
+          out.add("set X509_PROXY_SECRET_FILE (or X509_PROXY_SECRET) to the secret the portal's web tier sends in"
+              + " X-DSP-Proxy-Secret, so that only it can forward client certificates");
+        } else if (secret.length() < MIN_PROXY_SECRET_LENGTH) {
+          out.add("the proxy secret (X509_PROXY_SECRET_FILE / X509_PROXY_SECRET) must be at least "
+              + MIN_PROXY_SECRET_LENGTH + " characters, e.g. from openssl rand -hex 32");
+        }
+      } catch (UncheckedIOException e) {
+        out.add(e.getMessage());
+      }
+      if (trustedCaFile == null || trustedCaFile.isBlank()) {
+        out.add("set X509_TRUSTED_CA_FILE to the CA certificates (PEM) that issue user certificates, so that the API"
+            + " validates every forwarded certificate itself");
+      } else if (!Files.isReadable(Path.of(trustedCaFile))) {
+        out.add("X509_TRUSTED_CA_FILE " + trustedCaFile + " cannot be read");
+      }
+      return out;
     }
   }
 

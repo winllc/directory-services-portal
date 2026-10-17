@@ -71,6 +71,9 @@ portal:
     source: ${X509_SOURCE:servlet}
     header: ${X509_HEADER:X-SSL-Client-Cert}
     trusted-proxies: ${X509_TRUSTED_PROXIES:127.0.0.1/32;::1/128}
+    # Header mode: the secret the web tier sends in X-DSP-Proxy-Secret (prefer the _FILE form).
+    proxy-secret: ${X509_PROXY_SECRET:}
+    proxy-secret-file: ${X509_PROXY_SECRET_FILE:}
     trusted-ca-file: ${X509_TRUSTED_CA_FILE:}
     check-revocation: ${X509_CHECK_REVOCATION:false}
     mapping: ${X509_MAPPING:filter}
