@@ -1,0 +1,162 @@
+{{- $v := .Values -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dsp.webName" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ $v.web.replicaCount }}
+  revisionHistoryLimit: {{ $v.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "dsp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "dsp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+        {{- with $v.web.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if and $v.tls.enabled (not $v.tls.existingSecret) }}
+        checksum/tls: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with $v.web.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "dsp.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with $v.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.web.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- include "dsp.podSecurityContext" (dict "ctx" $v.web.podSecurityContext "root" .) | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "dsp.image" (dict "image" $v.web.image "root" .) }}
+          imagePullPolicy: {{ $v.web.image.pullPolicy }}
+          securityContext:
+            {{- include "dsp.containerSecurityContext" (dict "ctx" $v.web.securityContext "root" .) | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if $v.tls.enabled }}
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            {{- end }}
+          env:
+            # Fully qualified: nginx resolves it at request time without DNS search domains.
+            - name: API_URL
+              value: {{ printf "http://%s.%s.svc.%s:%v" (include "dsp.apiName" .) .Release.Namespace $v.clusterDomain (include "dsp.str" $v.api.service.port) | quote }}
+            {{- if $v.tls.enabled }}
+            # HTTPS on 8443 with optional client certificates; 8080 redirects to HTTPS.
+            - name: NGINX_ENVSUBST_TEMPLATE_DIR
+              value: /etc/nginx/templates-mtls
+            - name: HTTPS_PORT_SUFFIX
+              value: {{ $v.tls.httpsPortSuffix | quote }}
+            {{- end }}
+            {{- with $v.web.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $v.web.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $v.web.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /
+              {{- if $v.tls.enabled }}
+              port: https
+              scheme: HTTPS
+              {{- else }}
+              port: http
+              {{- end }}
+            periodSeconds: {{ $v.web.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $v.web.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $v.web.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if $v.web.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /
+              {{- if $v.tls.enabled }}
+              port: https
+              scheme: HTTPS
+              {{- else }}
+              port: http
+              {{- end }}
+            periodSeconds: {{ $v.web.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $v.web.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ $v.web.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml $v.web.resources | nindent 12 }}
+          volumeMounts:
+            # Writable paths for a read-only root filesystem: the rendered server config, the pid
+            # and temp files, and nginx's default log directory (logs go to stdout/stderr).
+            - name: rendered-config
+              mountPath: /opt/app-root/etc/dsp.d
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-log
+              mountPath: /var/log/nginx
+            {{- if $v.tls.enabled }}
+            - name: tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            {{- end }}
+            {{- with $v.web.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: rendered-config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-log
+          emptyDir: {}
+        {{- if $v.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "dsp.tlsSecretName" . }}
+            # Group-readable: nginx runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: server.pem
+                path: server.pem
+              - key: server.key
+                path: server.key
+              - key: ca.pem
+                path: ca.pem
+        {{- end }}
+        {{- with $v.web.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $v.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.web.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -28,83 +28,58 @@ The **API** (`backend/`) and the **web client** (`web/`) are built and deployed 
 
 If you host the client elsewhere, route `/api` on the same origin to the API in the same way.
 
-## Quick start (demo directory, no LDAP server needed)
+## Install
 
-Requirements: Java 21 and Node.js 20+. Maven is not needed; the backend ships the Maven wrapper.
+Customers install the portal in one of two supported ways, both from a release (see
+[Releases](#releases)):
 
-```bash
-npm install
-npm run dev            # API on :3001, web client on http://localhost:5173 (proxies /api)
-```
+- **The release package**: the signed download for a host with Docker
+  (`directory-services-portal-<version>.tar.gz`: images, compose files, `env.template`,
+  `install.sh`, `upgrade.sh`, `portal.sh`), or for a Linux host with systemd and no containers
+  (`directory-services-portal-<version>-native.tar.gz`: the API jar, the web client, a systemd
+  unit, an nginx site and `install.sh`).
+- **The Helm chart**: `oci://ghcr.io/winllc/charts/directory-services-portal` for Kubernetes and
+  OpenShift (also in the download as `directory-services-portal-<version>.tgz`). See
+  [`deploy/helm/directory-services-portal/README.md`](deploy/helm/directory-services-portal/README.md).
 
-In demo mode (the default, `DIRECTORY_MODE=memory`) the backend starts an **embedded LDAP server**
-(UnboundID in-memory directory) on a loopback port. The portal talks to it over the LDAP protocol,
-exactly as it would to a production server. The demo server loads the standard schema, a
-non-standard `acme*` schema (`acmePerson`, `acmeDevice`, `acmePartner`), about ten people, groups
-and devices, plus example forms, directories and permissions. Every demo password is `password`:
-
-| user    | what they see                                                              |
-|---------|----------------------------------------------------------------------------|
-| `admin` | administrator: everything, including the admin pages                        |
-| `erin`  | HR group: can edit Staff Directory                                          |
-| `dave`  | helpdesk group: can edit Devices                                            |
-| `alice` | engineering: can view Staff, has a user grant to view Devices, self-service |
-| `bob`   | can view Partners; white pages and groups only otherwise                    |
-| `frank` | external partner (ou=partners)                                              |
-
-The API needs an ENS license in demo mode too: without one you sign in and land on the license
-screen. Download an evaluation license from the ENS licensing portal and upload it there (as
-`admin`); it is kept in `backend/data/ens-license`.
-
-Production build without Docker: `npm run build && npm start`. This builds `web/dist` and
-`backend/target/directory-services-portal.jar`, then runs the API on :3001 and serves the client
-on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real deployment, serve
-`web/dist` from any web server that routes `/api` to the API and falls back to `index.html` for
-other paths. `web/nginx/templates/default.conf.template` is a ready-made example.
-
-## Deployment package
-
-`scripts/package.sh` (or `npm run package`) builds a standalone package: one archive with
-everything a host needs, without the source tree, build tools or internet access.
+The installation guide covers both: <https://winllc.github.io/ens-apps-documentation/directory-services-portal/install/>.
 
 ```bash
-scripts/package.sh                          # dist/directory-services-portal-<version>-docker.tar.gz
-scripts/package.sh --with-openldap          # ... including the demo OpenLDAP image
-scripts/package.sh --target native          # jar + web client + systemd unit + nginx site (no Docker)
-scripts/package.sh --registry reg.example.com/dsp --push --no-images   # images in your registry
-```
-
-The **docker** package holds the images (`docker save`), compose files that use them, every
-setting in one documented `.env`, `install.sh`, `upgrade.sh` and `portal.sh`. On the target host:
-
-```bash
-tar xzf directory-services-portal-<version>-docker.tar.gz && cd directory-services-portal-<version>
-./install.sh --http 8080         # or --https 443 (X.509 sign-in), or nothing published; --demo to try it
+# Docker host: verify the download (see Releases), then
+tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-portal-<version>
+./install.sh --http 8080         # or --https 443 (X.509 sign-in), or nothing published
 vi .env                          # LDAP connection and administrators
-./portal.sh up                   # also: status, logs, backup, restore, down
+./portal.sh up                   # also: status, logs, backup, restore, license, down
+
+# Linux host without containers (Java 21+, systemd, optionally nginx)
+tar xzf directory-services-portal-<version>-native.tar.gz && cd directory-services-portal-<version>-native
+sudo ./install.sh && sudo vi /etc/directory-services-portal/portal.env && sudo systemctl restart directory-services-portal
+
+# Kubernetes / OpenShift
+helm install dsp oci://ghcr.io/winllc/charts/directory-services-portal --version <version> \
+  -n dsp --create-namespace -f my-values.yaml
 ```
 
-The **native** package installs the API as a systemd service (Java 21+, listening on
-127.0.0.1:3001 only) and the client behind nginx: `sudo ./install.sh`, then edit
-`/etc/directory-services-portal/portal.env`. Each package has its own README, a `VERSION` and
-`SHA256SUMS`, which the installers verify; the archive gets a `.sha256` file.
-
-The version defaults to the `package.json` version plus the git revision (`--version` to set
-it). Builds behind a proxy or with a corporate CA can pass `DOCKER_BUILD_ARGS`, or alternative
-Dockerfiles in `API_DOCKERFILE` / `WEB_DOCKERFILE`. `--api-image` / `--web-image` package
-images that are already built (by reference, e.g. `ghcr.io/winllc/directory-services-portal-api:1.2.3`)
-instead of building them.
+Each package has its own README (`deploy/package/docker/README.md`,
+`deploy/package/native/README.md` in this repository), a `VERSION` and `SHA256SUMS`, which the
+installers verify. Building from source, the demo compose stack in this repository and
+`docker build` are for development only (see [Development](#development)).
 
 ## Releases
 
 Cut a release by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`. The CI `image` job
 then tests and publishes the images (`ghcr.io/winllc/directory-services-portal-api|web:1.2.3`)
-and builds the customer bundle from exactly those images with
-`scripts/release-bundle.sh <version> <api-image> <web-image>` (runnable locally too):
+packages the Helm chart (`deploy/helm/directory-services-portal`, version and appVersion set to the
+release) and pushes it to `oci://ghcr.io/winllc/charts`, and builds the customer bundle from
+exactly those images with
+`scripts/release-bundle.sh --chart <chart.tgz> <version> <api-image> <web-image>` (runnable
+locally too):
 
 | File | |
 |---|---|
-| `directory-services-portal-<version>.tar.gz` | the docker deployment package above: images, compose files, `env.template`, `install.sh`, `upgrade.sh`, `portal.sh`, `license/` (a drop-in for the customer's license; never contains one) |
+| `directory-services-portal-<version>.tar.gz` | the docker deployment package: images, compose files, `env.template`, `install.sh`, `upgrade.sh`, `portal.sh`, `license/` (a drop-in for the customer's license; never contains one) |
+| `directory-services-portal-<version>-native.tar.gz` | the native (systemd) package, with the API jar and web client taken from the same images |
+| `directory-services-portal-<version>.tgz` | the Helm chart (also pushed to `oci://ghcr.io/winllc/charts/directory-services-portal`) |
 | `sbom-directory-services-portal-api.spdx.json`, `sbom-...-web.spdx.json` | SPDX SBOMs of the images (syft) |
 | `SHA256SUMS` | checksums of the files above |
 | `SHA256SUMS.asc` | GPG detached signature of `SHA256SUMS` (when a signing key is configured) |
@@ -113,7 +88,8 @@ The files are uploaded to `s3://<bucket>/directory-services-portal/<version>/`, 
 without a `-suffix` `directory-services-portal/latest.txt` is set to the version. They are also
 kept as the workflow artifact `release-directory-services-portal-<version>` (30 days). Every
 pull request does a dry run (version `0.0.0-pr<number>`, artifact kept 3 days, never
-uploaded). Signing and upload are skipped, with a note in the job summary, until configured
+uploaded; the chart is packaged but not pushed). The `helm` job lints the chart and validates
+its output with kubeconform on every push, for each values file in its `ci/` directory. Signing and upload are skipped, with a note in the job summary, until configured
 (repository Settings > Secrets and variables > Actions):
 
 | | Name | |
@@ -195,17 +171,9 @@ declares `VOLUME /var/lib/ens` (owned by the runtime user, group 0 writable for 
 compose files mount the named volume `ens-license` at `/var/lib/ens/directory-portal`. The API
 logs `License: ...` with the state and installation id at startup.
 
-Production image (build context `backend/`, the license is never baked into it):
-
-```bash
-docker build -t directory-services-portal-api:0.1.0 backend
-docker run -d --name dsp-api -p 3001:3001 -v dsp-data:/data -v dsp-license:/var/lib/ens/directory-portal \
-  -e DIRECTORY_MODE=ldap -e LDAP_URL=ldaps://ldap.example.com:636 ... \
-  directory-services-portal-api:0.1.0
-# then upload the license on the license screen, or copy it into the volume:
-docker exec -i dsp-api sh -c 'cat > /var/lib/ens/directory-portal/license.lic' < acme.lic
-# JAVA_OPTS defaults to -XX:MaxRAMPercentage=75.0.
-```
+In the release package the license lives in the `ens-license` volume (`./portal.sh license
+<file>` or the license screen); with the Helm chart it is on the license PVC
+(`persistence.license`, optionally seeded from `license.existingSecret` / `license.file`).
 
 The perpetual-maintenance check uses the build time from Spring Boot's build-info
 (`spring-boot-maven-plugin` `build-info` goal) as the release date. Tests trust the published ENS
@@ -215,8 +183,8 @@ licenses with it); the library's own tests run against the products-page fixture
 
 ## Connecting to a real directory
 
-Set the environment variables from `.env.example` (they map onto `backend/src/main/resources/application.yml`)
-and set `DIRECTORY_MODE=ldap`:
+Set these in `.env` (release package), `portal.env` (native package) or the chart's values (Helm; see
+its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/resources/application.yml`:
 
 | variable | meaning |
 |---|---|
@@ -234,51 +202,6 @@ and set `DIRECTORY_MODE=ldap`:
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
 The service account needs read access to the schema and to the namespaces you expose, and write
 access wherever portal users should be able to edit.
-
-### Docker Compose
-
-`docker compose up --build` starts three services (plus the one-shot `license-init`). **None of them publishes a port on the host.**
-To open the portal, either route a reverse proxy on the compose network to `web:8080`, or uncomment
-the `ports` entry of the `web` service and open http://localhost:8181.
-
-| service | image | published |
-|---|---|---|
-| `web` | `web/Dockerfile`: nginx (UBI 9 `nginx-126`) serving the React client on port 8080, proxying `/api` to `api` (`API_URL`) | no (uncomment `8181`) |
-| `api` | `backend/Dockerfile`: the Spring Boot API (UBI 9 `openjdk-21-runtime`) on port 3001 | no (uncomment `3001` to call it directly) |
-| `openldap` | `deploy/openldap`: Ubuntu's `slapd`, built locally (amd64 and arm64, incl. Apple Silicon) | no (uncomment `1389`) |
-| `license-init` | the API image: copies `./license/license.lic` into the `ens-license` volume if it has none, then exits | no |
-
-OpenLDAP is loaded with the same demo organisation, ACME schema and **default credentials as
-the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `erin`, `dave`,
-`frank` with password `password`. The example directories and permissions are seeded too.
-
-The demo needs an ENS license (download an evaluation license from the ENS licensing portal):
-upload it on the license screen after signing in as `admin`, or save it as `license/license.lic`
-before `docker compose up`; the one-shot `license-init` service copies it into the `ens-license`
-volume when that has no license yet. The volume keeps the license and the installation id
-(`docker compose down -v` deletes them).
-
-- The `web` and `api` images are built on Red Hat Universal Base Image 9
-  (`registry.access.redhat.com/ubi9/...`: `nodejs-22` and `openjdk-21` to build, `nginx-126` and
-  `openjdk-21-runtime` to run). Both run as unprivileged users (uid 1001 and 185, group 0) and
-  listen on unprivileged ports, so they also run under an arbitrary UID (OpenShift `restricted`).
-  The demo `openldap` image stays on Ubuntu because RHEL 9 no longer ships the OpenLDAP server.
-- Building the `web` and `api` images applies the latest Red Hat updates to their runtime layers
-  (`yum update`, or `microdnf update` on the minimal Java image), so the build needs access to
-  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes.
-
-- The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
-  `docker compose down -v` after changing it, or if you started the stack from an older version.
-- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=framework`; the
-  `api` service is reachable only from the compose network). It therefore sees real client addresses, which login throttling relies on.
-- If a container fails to start, `docker compose logs <service>` shows why.
-- The web container looks up the API (`API_URL`) with the container runtime's own DNS server, the
-  first `nameserver` in its `/etc/resolv.conf` (Docker `127.0.0.11`, Podman's aardvark-dns).
-  Other listed servers (Podman adds the host's) don't know service names, so they are not used.
-  Set `NGINX_LOCAL_RESOLVERS` on the web service to choose the server yourself. In Kubernetes,
-  give `API_URL` a fully qualified service name, because nginx doesn't apply search domains.
-- Requests may carry up to 32 KB of headers (`MAX_HTTP_REQUEST_HEADER_SIZE` on the API), which
-  leaves room for large single-sign-on cookies.
 
 ## Features
 
@@ -500,10 +423,13 @@ certificate comes from:
   certificate only to the sign-in endpoints (`/api/auth/x509`, `/api/auth/me`). Also set
   `X509_TRUSTED_CA_FILE` so the API validates the chain itself.
 
-  Docker Compose has this ready as an overlay: the web image's `templates-mtls` nginx config
-  runs HTTPS with `ssl_verify_client optional`, so password sign-in keeps working. nginx runs
-  unprivileged (uid 1001, group 0), so the mounted `server.key` must be readable by that user or
-  group (for example `chgrp 0 server.key && chmod 0640 server.key`).
+  The web image's `templates-mtls` nginx config does this: HTTPS with `ssl_verify_client
+  optional`, so password sign-in keeps working. The release package turns it on with
+  `./install.sh --https` (`docker-compose.mtls.yml`, certificates in `./certs`); the Helm chart
+  with `tls.enabled` and `x509.enabled` (TLS passthrough to the web pod; the chart README also
+  covers edge termination at the ingress, with `x509.header`). nginx runs unprivileged (uid 1001,
+  group 0), so `server.key` must be readable by that user or group (for example
+  `chgrp 0 server.key && chmod 0640 server.key`). To try it from the source tree (development):
   ```bash
   scripts/generate-dev-certs.sh certs          # throw-away CA, server cert, admin/alice/bob .p12 (password: password)
   docker compose -f docker-compose.yml -f docker-compose.mtls.yml up --build
@@ -587,6 +513,140 @@ name. Any other value stops the API at startup with an error naming the setting.
 
 ## Development
 
+This section is for contributors. None of it is an installation method: customers install the
+release package or the Helm chart (see [Install](#install)).
+
+### Quick start (demo directory, no LDAP server needed)
+
+Requirements: Java 21 and Node.js 20+. Maven is not needed; the backend ships the Maven wrapper.
+
+```bash
+npm install
+npm run dev            # API on :3001, web client on http://localhost:5173 (proxies /api)
+```
+
+In demo mode (the default, `DIRECTORY_MODE=memory`) the backend starts an **embedded LDAP server**
+(UnboundID in-memory directory) on a loopback port. The portal talks to it over the LDAP protocol,
+exactly as it would to a production server. The demo server loads the standard schema, a
+non-standard `acme*` schema (`acmePerson`, `acmeDevice`, `acmePartner`), about ten people, groups
+and devices, plus example forms, directories and permissions. Every demo password is `password`:
+
+| user    | what they see                                                              |
+|---------|----------------------------------------------------------------------------|
+| `admin` | administrator: everything, including the admin pages                        |
+| `erin`  | HR group: can edit Staff Directory                                          |
+| `dave`  | helpdesk group: can edit Devices                                            |
+| `alice` | engineering: can view Staff, has a user grant to view Devices, self-service |
+| `bob`   | can view Partners; white pages and groups only otherwise                    |
+| `frank` | external partner (ou=partners)                                              |
+
+The API needs an ENS license in demo mode too: without one you sign in and land on the license
+screen. Download an evaluation license from the ENS licensing portal and upload it there (as
+`admin`); it is kept in `backend/data/ens-license`.
+
+Production build without Docker: `npm run build && npm start`. This builds `web/dist` and
+`backend/target/directory-services-portal.jar`, then runs the API on :3001 and serves the client
+on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real deployment, serve
+`web/dist` from any web server that routes `/api` to the API and falls back to `index.html` for
+other paths. `web/nginx/templates/default.conf.template` is a ready-made example.
+
+### Docker Compose (demo stack in the source tree)
+
+For development and demos only; customers use the release package or the Helm chart.
+
+`docker compose up --build` starts three services (plus the one-shot `license-init`). **None of them publishes a port on the host.**
+To open the portal, either route a reverse proxy on the compose network to `web:8080`, or uncomment
+the `ports` entry of the `web` service and open http://localhost:8181.
+
+| service | image | published |
+|---|---|---|
+| `web` | `web/Dockerfile`: nginx (UBI 9 `nginx-126`) serving the React client on port 8080, proxying `/api` to `api` (`API_URL`) | no (uncomment `8181`) |
+| `api` | `backend/Dockerfile`: the Spring Boot API (UBI 9 `openjdk-21-runtime`) on port 3001 | no (uncomment `3001` to call it directly) |
+| `openldap` | `deploy/openldap`: Ubuntu's `slapd`, built locally (amd64 and arm64, incl. Apple Silicon) | no (uncomment `1389`) |
+| `license-init` | the API image: copies `./license/license.lic` into the `ens-license` volume if it has none, then exits | no |
+
+OpenLDAP is loaded with the same demo organisation, ACME schema and **default credentials as
+the built-in demo**: `admin` / `password` (administrator), or `alice`, `bob`, `erin`, `dave`,
+`frank` with password `password`. The example directories and permissions are seeded too.
+
+The demo needs an ENS license (download an evaluation license from the ENS licensing portal):
+upload it on the license screen after signing in as `admin`, or save it as `license/license.lic`
+before `docker compose up`; the one-shot `license-init` service copies it into the `ens-license`
+volume when that has no license yet. The volume keeps the license and the installation id
+(`docker compose down -v` deletes them).
+
+- The `web` and `api` images are built on Red Hat Universal Base Image 9
+  (`registry.access.redhat.com/ubi9/...`: `nodejs-22` and `openjdk-21` to build, `nginx-126` and
+  `openjdk-21-runtime` to run). Both run as unprivileged users (uid 1001 and 185, group 0) and
+  listen on unprivileged ports, so they also run under an arbitrary UID (OpenShift `restricted`).
+  The demo `openldap` image stays on Ubuntu because RHEL 9 no longer ships the OpenLDAP server.
+- Building the `web` and `api` images applies the latest Red Hat updates to their runtime layers
+  (`yum update`, or `microdnf update` on the minimal Java image), so the build needs access to
+  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes.
+
+- The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
+  `docker compose down -v` after changing it, or if you started the stack from an older version.
+- The API trusts `X-Forwarded-*` headers from the proxy (`FORWARD_HEADERS_STRATEGY=framework`; the
+  `api` service is reachable only from the compose network). It therefore sees real client addresses, which login throttling relies on.
+- If a container fails to start, `docker compose logs <service>` shows why.
+- The web container looks up the API (`API_URL`) with the container runtime's own DNS server, the
+  first `nameserver` in its `/etc/resolv.conf` (Docker `127.0.0.11`, Podman's aardvark-dns).
+  Other listed servers (Podman adds the host's) don't know service names, so they are not used.
+  Set `NGINX_LOCAL_RESOLVERS` on the web service to choose the server yourself. In Kubernetes,
+  give `API_URL` a fully qualified service name, because nginx doesn't apply search domains.
+- Requests may carry up to 32 KB of headers (`MAX_HTTP_REQUEST_HEADER_SIZE` on the API), which
+  leaves room for large single-sign-on cookies.
+
+### Building the images
+
+The production images (the license is never baked into them):
+
+```bash
+docker build -t directory-services-portal-api:0.1.0 backend
+docker run -d --name dsp-api -p 3001:3001 -v dsp-data:/data -v dsp-license:/var/lib/ens/directory-portal \
+  -e DIRECTORY_MODE=ldap -e LDAP_URL=ldaps://ldap.example.com:636 ... \
+  directory-services-portal-api:0.1.0
+# then upload the license on the license screen, or copy it into the volume:
+docker exec -i dsp-api sh -c 'cat > /var/lib/ens/directory-portal/license.lic' < acme.lic
+# JAVA_OPTS defaults to -XX:MaxRAMPercentage=75.0.
+```
+
+### Building deployment packages
+
+`scripts/package.sh` (or `npm run package`) builds a standalone package: one archive with
+everything a host needs, without the source tree, build tools or internet access.
+
+```bash
+scripts/package.sh                          # dist/directory-services-portal-<version>-docker.tar.gz
+scripts/package.sh --with-openldap          # ... including the demo OpenLDAP image
+scripts/package.sh --target native          # jar + web client + systemd unit + nginx site (no Docker)
+scripts/package.sh --registry reg.example.com/dsp --push --no-images   # images in your registry
+```
+
+CI builds the release packages with `scripts/release-bundle.sh` (see [Releases](#releases));
+`scripts/package.sh` builds the same packages locally, for testing them. The **docker** package
+holds the images (`docker save`), compose files that use them, every setting in one documented
+`.env`, `install.sh`, `upgrade.sh` and `portal.sh`. The **native** package installs the API as a
+systemd service (Java 21+, listening on 127.0.0.1:3001 only) and the client behind nginx. Each
+package has its own README (templates in `deploy/package/`), a `VERSION` and `SHA256SUMS`, which
+the installers verify; the archive gets a `.sha256` file.
+
+The version defaults to the `package.json` version plus the git revision (`--version` to set
+it). Builds behind a proxy or with a corporate CA can pass `DOCKER_BUILD_ARGS`, or alternative
+Dockerfiles in `API_DOCKERFILE` / `WEB_DOCKERFILE`. `--api-image` / `--web-image` package
+images that are already built (by reference, e.g. `ghcr.io/winllc/directory-services-portal-api:1.2.3`)
+instead of building them; with `--target native` they supply the jar and the web client (this is
+how CI builds the native package from the images it tested).
+
+### Helm chart
+
+```bash
+helm lint --strict deploy/helm/directory-services-portal -f deploy/helm/directory-services-portal/ci/default-values.yaml
+helm template dsp deploy/helm/directory-services-portal -f deploy/helm/directory-services-portal/ci/mtls-values.yaml
+```
+
+### Tests and layout
+
 ```bash
 npm test            # backend: JUnit + MockMvc against the embedded LDAP server; web: Vitest
 npm run typecheck   # shared + web TypeScript
@@ -612,6 +672,9 @@ Layout:
   `web/Dockerfile` and its nginx setup in `web/nginx/` (`nginx.conf`, the server `templates`
   and `entrypoint.sh`, which renders them at start).
 - `backend/Dockerfile`: the API image. `deploy/openldap/`: the demo OpenLDAP image.
-- `scripts/release-bundle.sh`: the customer release bundle (docker package, SBOMs, checksums).
+- `scripts/release-bundle.sh`: the customer release bundle (docker and native packages, Helm
+  chart, SBOMs, checksums).
+- `deploy/helm/directory-services-portal/`: the Helm chart (its `ci/` values files are what CI
+  lints and validates).
 - `scripts/package.sh` and `deploy/package/`: the standalone deployment packages (templates for
   their compose files, installers and READMEs).

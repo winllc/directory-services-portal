@@ -45,12 +45,57 @@ jobs:
       - run: npm run typecheck
       - run: npm test -w web
 
+  helm:
+    # The Helm chart: lint it and validate what it renders, for every example values file.
+    runs-on: ubuntu-latest
+    env:
+      CHART: deploy/helm/directory-services-portal
+      KUBECONFORM_VERSION: v0.6.7
+      KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/kubeconform.tar.gz" \
+            "https://github.com/yannh/kubeconform/releases/download/$KUBECONFORM_VERSION/kubeconform-linux-amd64.tar.gz"
+          echo "$KUBECONFORM_SHA256  $RUNNER_TEMP/kubeconform.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/kubeconform.tar.gz" -C "$RUNNER_TEMP/bin" kubeconform
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Lint the chart
+        run: |
+          helm lint --strict "$CHART"
+          for f in "$CHART"/ci/*.yaml; do
+            echo "::group::helm lint $f"
+            helm lint --strict "$CHART" -f "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Validate the rendered manifests
+        run: |
+          for f in "$CHART"/ci/*.yaml; do
+            echo "::group::kubeconform $f"
+            # The OpenShift Route has no schema in the Kubernetes catalogue.
+            extra=()
+            case "$f" in *openshift*) extra=(-ignore-missing-schemas) ;; esac
+            helm template dsp "$CHART" -f "$f" \
+              | kubeconform -strict -summary -kubernetes-version 1.29.0 "${extra[@]}"
+            echo "::endgroup::"
+          done
+
   image:
     # Builds both images on every push, checks the pair starts and answers through the web
     # tier, and publishes what it just checked. Nothing is published from a pull request: a
     # fork's token cannot write packages, and unreviewed code is not for the registry.
     runs-on: ubuntu-latest
-    needs: [api-test, web-test]
+    needs: [api-test, web-test, helm]
 
     permissions:
       contents: read
@@ -199,6 +244,25 @@ jobs:
         if: steps.bundle.outputs.enabled == 'true'
         uses: anchore/sbom-action/download-syft@v0
 
+      - name: Set up Helm
+        if: steps.bundle.outputs.enabled == 'true'
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Package the Helm chart
+        id: chart
+        if: steps.bundle.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ steps.bundle.outputs.version }}
+        run: |
+          # version and appVersion from the release (0.0.0-pr<N> on a pull request); the chart's
+          # default image tag is its appVersion, i.e. the images just published.
+          mkdir -p "$RUNNER_TEMP/chart"
+          helm package deploy/helm/directory-services-portal --version "$VERSION" --app-version "$VERSION" \
+            --destination "$RUNNER_TEMP/chart"
+          echo "file=$RUNNER_TEMP/chart/directory-services-portal-$VERSION.tgz" >> "$GITHUB_OUTPUT"
+
       - name: Build the release bundle
         if: steps.bundle.outputs.enabled == 'true'
         env:
@@ -207,11 +271,27 @@ jobs:
           IMAGE_BASE: ghcr.io/${{ github.repository }}
           SYFT: ${{ steps.syft.outputs.cmd }}
           REQUIRE_SBOM: "1"
+          CHART: ${{ steps.chart.outputs.file }}
         run: |
           # The images that were smoke-tested above, under the names customers pull them by.
+          # The bundle holds the docker package, the native (systemd) package with the jar and
+          # web client taken from these same images, and the Helm chart.
           docker tag dsp-api:ci "$IMAGE_BASE-api:$VERSION"
           docker tag dsp-web:ci "$IMAGE_BASE-web:$VERSION"
-          scripts/release-bundle.sh --output "$OUT" "$VERSION" "$IMAGE_BASE-api:$VERSION" "$IMAGE_BASE-web:$VERSION"
+          scripts/release-bundle.sh --output "$OUT" --chart "$CHART" \
+            "$VERSION" "$IMAGE_BASE-api:$VERSION" "$IMAGE_BASE-web:$VERSION"
+
+      - name: Publish the Helm chart
+        # Releases only (the images it points at were published above); never from a pull request.
+        if: steps.bundle.outputs.release == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHART: ${{ steps.chart.outputs.file }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
+          helm push "$CHART" oci://ghcr.io/winllc/charts
+          echo "- Helm chart: \`oci://ghcr.io/winllc/charts/directory-services-portal\` $(basename "$CHART" .tgz | sed 's/^directory-services-portal-//')" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Sign the checksums
         id: sign

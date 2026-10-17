@@ -1,0 +1,22 @@
+apiVersion: v2
+name: directory-services-portal
+description: >-
+  Directory Services Portal: a web front end for LDAP directories (forms, directory definitions,
+  permissions, self-service profiles, metrics and data analysis). Runs the API and the web tier
+  (nginx) from the images published with each release.
+type: application
+# Set from the release tag when CI packages the chart (helm package --version/--app-version).
+version: 0.0.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.25.0-0"
+home: https://winllc.github.io/ens-apps-documentation/directory-services-portal/
+sources:
+  - https://github.com/winllc/directory-services-portal
+keywords:
+  - ldap
+  - directory
+  - ens
+maintainers:
+  - name: ENS Solutions
+annotations:
+  licenses: Proprietary

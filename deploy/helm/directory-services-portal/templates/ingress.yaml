@@ -1,0 +1,50 @@
+{{- if .Values.ingress.enabled -}}
+{{- $v := .Values -}}
+{{- $fullname := include "dsp.fullname" . -}}
+{{- /* TLS passthrough reaches the web pod's HTTPS port; otherwise plain HTTP. */ -}}
+{{- $port := ternary "https" "http" (and $v.tls.enabled true) -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with $v.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $v.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $v.ingress.tls }}
+  tls:
+    {{- range . }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- with .secretName }}
+      secretName: {{ . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range $v.ingress.hosts }}
+    - {{- with .host }}
+      host: {{ . | quote }}
+      {{- end }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ $fullname }}
+                port:
+                  name: {{ $port }}
+          {{- end }}
+    {{- end }}
+{{- end }}

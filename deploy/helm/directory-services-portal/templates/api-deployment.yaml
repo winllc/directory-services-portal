@@ -1,0 +1,268 @@
+{{- $v := .Values -}}
+{{- $licenseGiven := or $v.license.existingSecret $v.license.file -}}
+{{- $truststore := $v.ldap.truststore -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dsp.apiName" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  # One API pod at most: it is the single writer of the audit store, configuration and license
+  # state (see api.replicaCount in values.yaml).
+  replicas: {{ $v.api.replicaCount }}
+  revisionHistoryLimit: {{ $v.revisionHistoryLimit }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "dsp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "dsp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+        {{- with $v.api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with $v.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "dsp.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with $v.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.api.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- include "dsp.podSecurityContext" (dict "ctx" $v.api.podSecurityContext "root" .) | nindent 8 }}
+      {{- if $licenseGiven }}
+      initContainers:
+        # Copies the given license into the license volume only when no license is installed there
+        # yet (as the release bundle's install.sh does), so a license uploaded later on the license
+        # screen is never overwritten by an upgrade.
+        - name: license-init
+          image: {{ include "dsp.image" (dict "image" $v.api.image "root" .) }}
+          imagePullPolicy: {{ $v.api.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              f="$ENS_LICENSE_FILE"
+              mkdir -p "$(dirname "$f")" "$ENS_LICENSE_STATE_DIR"
+              if [ -s "$f" ]; then
+                echo "license-init: a license is already installed ($f); keeping it"
+              elif ! grep -q -- '-----BEGIN ENS LICENSE-----' /license-src/license.lic; then
+                echo "license-init: the given license is not an ENS license file; not installed" >&2
+              else
+                cp /license-src/license.lic "$f.new" && mv -f "$f.new" "$f"
+                echo "license-init: installed the given license into $f"
+              fi
+          env:
+            - name: ENS_LICENSE_STATE_DIR
+              value: /var/lib/ens/directory-portal
+            - name: ENS_LICENSE_FILE
+              value: /var/lib/ens/directory-portal/license.lic
+          securityContext:
+            {{- include "dsp.containerSecurityContext" (dict "ctx" $v.api.securityContext "root" .) | nindent 12 }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: license
+              mountPath: /var/lib/ens
+            - name: license-src
+              mountPath: /license-src
+              readOnly: true
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "dsp.image" (dict "image" $v.api.image "root" .) }}
+          imagePullPolicy: {{ $v.api.image.pullPolicy }}
+          securityContext:
+            {{- include "dsp.containerSecurityContext" (dict "ctx" $v.api.securityContext "root" .) | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3001
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "dsp.apiName" . }}
+            {{- with $v.api.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            # As in the image: the license and this installation's id, on the license volume.
+            - name: ENS_LICENSE_STATE_DIR
+              value: /var/lib/ens/directory-portal
+            - name: ENS_LICENSE_FILE
+              value: /var/lib/ens/directory-portal/license.lic
+            {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+            - name: LDAP_BIND_PASSWORD
+              valueFrom:
+                {{- include "dsp.secretRef" (dict "v" $v.ldap.bindPassword "chartKey" "ldap-bind-password" "root" .) | nindent 16 }}
+            {{- end }}
+            {{- if include "dsp.secretSet" (dict "v" $v.audit.splunk.token) }}
+            - name: ENS_AUDIT_SPLUNK_TOKEN
+              valueFrom:
+                {{- include "dsp.secretRef" (dict "v" $v.audit.splunk.token "chartKey" "splunk-hec-token" "root" .) | nindent 16 }}
+            {{- end }}
+            {{- if and $truststore.existingSecret (include "dsp.secretSet" (dict "v" $truststore.password)) }}
+            - name: DSP_TRUSTSTORE_PASSWORD
+              valueFrom:
+                {{- include "dsp.secretRef" (dict "v" $truststore.password "chartKey" "truststore-password" "root" .) | nindent 16 }}
+            {{- end }}
+            # Passed to java by the image's entrypoint (not echoed by the JVM, unlike JAVA_TOOL_OPTIONS).
+            - name: JAVA_OPTS
+              value: {{ include "dsp.javaOpts" . | quote }}
+            {{- with $v.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if $v.api.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: {{ $v.api.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ $v.api.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ $v.api.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ $v.api.startupProbe.failureThreshold }}
+          {{- end }}
+          {{- if $v.api.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: {{ $v.api.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $v.api.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $v.api.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if $v.api.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: {{ $v.api.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $v.api.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ $v.api.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml $v.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: license
+              mountPath: /var/lib/ens
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            {{- if $v.audit.file.enabled }}
+            - name: audit-log
+              mountPath: /var/log/ens
+            {{- end }}
+            {{- if include "dsp.x509CaConfigured" . }}
+            - name: x509-ca
+              mountPath: /etc/dsp/x509
+              readOnly: true
+            {{- end }}
+            {{- if $truststore.existingSecret }}
+            - name: truststore
+              mountPath: /etc/dsp/truststore
+              readOnly: true
+            {{- end }}
+            {{- with $v.api.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: license
+          {{- if $v.persistence.license.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $v.persistence.license.existingClaim | default (printf "%s-license" (include "dsp.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: data
+          {{- if $v.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $v.persistence.data.existingClaim | default (printf "%s-data" (include "dsp.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- if $v.audit.file.enabled }}
+        - name: audit-log
+          {{- if $v.audit.file.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $v.audit.file.persistence.existingClaim | default (printf "%s-audit" (include "dsp.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- if $licenseGiven }}
+        - name: license-src
+          secret:
+            secretName: {{ include "dsp.licenseSecretName" . }}
+            items:
+              - key: license.lic
+                path: license.lic
+        {{- end }}
+        {{- if include "dsp.x509CaConfigured" . }}
+        - name: x509-ca
+          secret:
+            {{- if $v.x509.trustedCa.existingSecret }}
+            secretName: {{ $v.x509.trustedCa.existingSecret }}
+            items:
+              - key: {{ $v.x509.trustedCa.existingSecretKey }}
+                path: ca.pem
+            {{- else if $v.x509.trustedCa.value }}
+            secretName: {{ include "dsp.fullname" . }}-x509-ca
+            items:
+              - key: ca.pem
+                path: ca.pem
+            {{- else }}
+            secretName: {{ include "dsp.tlsSecretName" . }}
+            items:
+              - key: ca.pem
+                path: ca.pem
+            {{- end }}
+        {{- end }}
+        {{- if $truststore.existingSecret }}
+        - name: truststore
+          secret:
+            secretName: {{ $truststore.existingSecret }}
+            items:
+              - key: {{ $truststore.key }}
+                path: {{ $truststore.key }}
+        {{- end }}
+        {{- with $v.api.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $v.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $v.api.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

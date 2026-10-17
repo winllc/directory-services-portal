@@ -1,0 +1,46 @@
+# Ingress with TLS at the ingress controller, a license from --set-file, network policies.
+ldap:
+  url: ldaps://ldap.corp.example:636
+  bindDn: cn=portal,ou=system,dc=corp,dc=example
+  bindPassword:
+    value: change-me
+  baseDn: dc=corp,dc=example
+admin:
+  users: [jdoe]
+  groups: [cn=directory-admins,ou=groups,dc=corp,dc=example]
+license:
+  file: |
+    -----BEGIN ENS LICENSE-----
+    placeholder for lint only
+    -----END ENS LICENSE-----
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 5m
+  hosts:
+    - host: portal.corp.example
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: portal-tls
+      hosts: [portal.corp.example]
+networkPolicy:
+  enabled: true
+  webIngressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    ldap:
+      ports: [636]
+      cidrs: [10.20.0.0/16]
+audit:
+  file:
+    enabled: true
+    persistence:
+      enabled: true
+  syslog:
+    host: siem.corp.example
+    protocol: udp

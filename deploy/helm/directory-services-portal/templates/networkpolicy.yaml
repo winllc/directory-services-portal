@@ -1,0 +1,107 @@
+{{- if .Values.networkPolicy.enabled -}}
+{{- $v := .Values -}}
+{{- $np := $v.networkPolicy -}}
+# Web tier: users (or only webIngressFrom) on 8080/8443; it talks to DNS and the API only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dsp.webName" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dsp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+        {{- if $v.tls.enabled }}
+        - port: 8443
+          protocol: TCP
+        {{- end }}
+      {{- with $np.webIngressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "dsp.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - port: 3001
+          protocol: TCP
+---
+# API: only the web tier may connect (it is also the only trusted sender of client certificates).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dsp.apiName" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dsp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "dsp.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+      ports:
+        - port: 3001
+          protocol: TCP
+  egress:
+    {{- if $np.egress.allowAll }}
+    - {}
+    {{- else }}
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- range $rule := list $np.egress.ldap $np.egress.audit }}
+    {{- if and $rule.ports $rule.cidrs }}
+    - to:
+        {{- range $rule.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range $rule.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if $v.audit.syslog.host }}
+    {{- if eq $v.audit.syslog.protocol "udp" }}
+    - to:
+        {{- range $np.egress.audit.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ $v.audit.syslog.port | default 514 }}
+          protocol: UDP
+    {{- end }}
+    {{- end }}
+    {{- with $np.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+{{- end }}

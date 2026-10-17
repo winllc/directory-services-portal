@@ -1,0 +1,34 @@
+# X.509 smart-card sign-in with TLS passthrough to the web pod (LoadBalancer Service and an
+# ingress-nginx ssl-passthrough Ingress).
+ldap:
+  url: ldaps://ldap.corp.example:636
+  bindDn: cn=portal,ou=system,dc=corp,dc=example
+  bindPassword:
+    existingSecret: dsp-ldap
+    existingSecretKey: password
+  baseDn: dc=corp,dc=example
+tls:
+  enabled: true
+  existingSecret: dsp-web-tls
+x509:
+  enabled: true
+  mapping: filter
+  userFilter: (&(objectClass=inetOrgPerson)(userPrincipalName={{upn}}))
+  autoLogin: true
+service:
+  type: LoadBalancer
+  port: 80
+  httpsPort: 443
+  externalTrafficPolicy: Local
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+  hosts:
+    - host: portal.corp.example
+      paths:
+        - path: /
+          pathType: Prefix
+networkPolicy:
+  enabled: true

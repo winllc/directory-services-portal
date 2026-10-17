@@ -1,0 +1,49 @@
+{{- if .Values.route.enabled -}}
+{{- $v := .Values -}}
+{{- $t := $v.route.tls -}}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "dsp.fullname" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with $v.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $v.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "dsp.fullname" . }}
+    weight: 100
+  port:
+    # passthrough and reencrypt reach the web pod's HTTPS port (tls.enabled).
+    targetPort: {{ ternary "http" "https" (eq $t.termination "edge") }}
+  tls:
+    termination: {{ $t.termination }}
+    {{- if ne $t.termination "passthrough" }}
+    insecureEdgeTerminationPolicy: {{ $t.insecureEdgeTerminationPolicy }}
+    {{- with $t.certificate }}
+    certificate: |
+      {{- . | nindent 6 }}
+    {{- end }}
+    {{- with $t.key }}
+    key: |
+      {{- . | nindent 6 }}
+    {{- end }}
+    {{- with $t.caCertificate }}
+    caCertificate: |
+      {{- . | nindent 6 }}
+    {{- end }}
+    {{- else }}
+    insecureEdgeTerminationPolicy: {{ ternary "None" $t.insecureEdgeTerminationPolicy (eq $t.insecureEdgeTerminationPolicy "Allow") }}
+    {{- end }}
+    {{- if and (eq $t.termination "reencrypt") $t.destinationCACertificate }}
+    destinationCACertificate: |
+      {{- $t.destinationCACertificate | nindent 6 }}
+    {{- end }}
+{{- end }}
