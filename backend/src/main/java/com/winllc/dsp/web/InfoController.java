@@ -3,6 +3,7 @@ package com.winllc.dsp.web;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.model.ServerInfo;
+import com.winllc.dsp.service.ConsentService;
 import com.winllc.dsp.x509.X509AuthService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,11 +16,13 @@ public class InfoController {
   private final LdapDirectory directory;
   private final PortalProperties props;
   private final X509AuthService x509;
+  private final ConsentService consent;
 
-  public InfoController(LdapDirectory directory, PortalProperties props, X509AuthService x509) {
+  public InfoController(LdapDirectory directory, PortalProperties props, X509AuthService x509, ConsentService consent) {
     this.directory = directory;
     this.props = props;
     this.x509 = x509;
+    this.consent = consent;
   }
 
   @GetMapping("/api/health")
@@ -40,11 +43,12 @@ public class InfoController {
     ServerInfo.AuthOptions auth = new ServerInfo.AuthOptions(
         // Certificate sign-in is offered only when the license includes it (smart-card-sign-in).
         props.isPasswordLoginEnabled(), x509.available(), x509.available() && props.getX509().isAutoLogin());
+    ServerInfo.Consent notice = consent.enabled() ? new ServerInfo.Consent(consent.title(), consent.text()) : null;
     try {
       directory.ping();
-      return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth, hint, banner);
+      return new ServerInfo(mode, url, props.getBaseDn(), true, null, VERSION, auth, hint, banner, notice);
     } catch (RuntimeException e) {
-      return new ServerInfo(mode, url, props.getBaseDn(), false, e.getMessage(), VERSION, auth, hint, banner);
+      return new ServerInfo(mode, url, props.getBaseDn(), false, e.getMessage(), VERSION, auth, hint, banner, notice);
     }
   }
 }

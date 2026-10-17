@@ -2250,6 +2250,26 @@ textarea.input {
   white-space: nowrap;
   word-break: normal;
 }
+.consent-card {
+  width: min(720px, 100%);
+}
+.consent-text {
+  max-height: 55vh;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.consent-text p,
+.consent-text ul {
+  margin: 0 0 10px;
+}
+.consent-text ul {
+  padding-left: 20px;
+}
+.consent-text li {
+  margin-bottom: 6px;
+}
 
 /* --------------------------------------------------------------------------
    Audit log

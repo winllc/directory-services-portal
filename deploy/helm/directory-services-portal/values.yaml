@@ -274,6 +274,13 @@ server:
   seedDemoConfig: false
   # Optional text on the login page (help-desk contact, ...).
   loginHint: ""
+  # DoD notice-and-consent banner (ENS_CONSENT_BANNER_*), acknowledged before any sign-in. Empty
+  # title and text: the standard DoD wording. text is plain text: blank lines separate paragraphs,
+  # lines starting with "- " are list items (a YAML block scalar, text: |, keeps the new lines).
+  consentBanner:
+    enabled: false
+    title: ""
+    text: ""
   # Optional fixed banner at the top and bottom of every page (off while text is empty).
   banner:
     text: ""

@@ -4,6 +4,7 @@ import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.EnsProperties;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
+import com.winllc.dsp.service.ConsentService;
 import com.winllc.dsp.web.dto.LoginRequest;
 import com.winllc.dsp.x509.CertificateRejectedException;
 import com.winllc.dsp.x509.X509AuthService;
@@ -42,18 +43,31 @@ public class AuthController {
   private final SecurityContextRepository contexts;
   private final AuditLog audit;
   private final EnsProperties ens;
+  private final ConsentService consent;
 
-  public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit, EnsProperties ens) {
+  public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit, EnsProperties ens,
+      ConsentService consent) {
     this.auth = auth;
     this.x509 = x509;
     this.contexts = contexts;
     this.audit = audit;
     this.ens = ens;
+    this.consent = consent;
+  }
+
+  /** Acknowledge the notice-and-consent banner for this browser session (needed before any sign-in). */
+  @PostMapping("/consent")
+  public Map<String, Boolean> acknowledgeConsent(HttpServletRequest request) {
+    consent.acknowledge(request);
+    return Map.of("consentRequired", consent.required(request));
   }
 
   @PostMapping("/login")
   public Map<String, SessionUser> login(@Valid @RequestBody LoginRequest body, HttpServletRequest request, HttpServletResponse response) {
-    SessionUser user = auth.login(body.username().trim(), body.password(), request.getRemoteAddr());
+    String attempted = body.username().trim();
+    consent.requireAcknowledged(request, audit.event("auth.login").anonymous(attempted)
+        .target("user", attempted.length() > 128 ? attempted.substring(0, 128) : attempted, null).detail("method", "password"));
+    SessionUser user = auth.login(attempted, body.password(), request.getRemoteAddr());
     establishSession(user, request, response);
     return Map.of("user", user);
   }
@@ -61,12 +75,14 @@ public class AuthController {
   /** Sign in with the client certificate presented on this request. */
   @PostMapping("/x509")
   public Map<String, SessionUser> loginWithCertificate(HttpServletRequest request, HttpServletResponse response) {
+    consent.requireAcknowledged(request, audit.event("auth.login").anonymous(null).detail("method", "x509"));
     SessionUser user = x509.authenticate(request);
     establishSession(user, request, response);
     setSuppressCookie(request, response, false);
     return Map.of("user", user);
   }
 
+  /** {@code consentRequired}: the banner must be acknowledged again before the next sign-in. */
   @PostMapping("/logout")
   public Map<String, Boolean> logout(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
     if (user != null) audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName()).success();
@@ -74,18 +90,21 @@ public class AuthController {
     if (session != null) session.invalidate();
     SecurityContextHolder.clearContext();
     if (x509.enabled()) setSuppressCookie(request, response, true);
-    return Map.of("ok", true);
+    return Map.of("ok", true, "consentRequired", consent.enabled());
   }
 
   /**
    * Current session; {@code user} is null when signed out. With certificate auto-login enabled,
-   * a browser presenting a valid certificate is signed in here transparently.
+   * a browser presenting a valid certificate is signed in here transparently, once the
+   * notice-and-consent banner (if enabled) has been acknowledged. {@code consentRequired}: the
+   * banner must be acknowledged before signing in.
    */
   @GetMapping("/me")
   public Map<String, Object> me(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
     Map<String, Object> body = new HashMap<>();
     SessionUser current = user;
-    if (current == null && x509.available() && autoLoginAllowed(request) && x509.hasCertificate(request)) {
+    boolean consentRequired = current == null && consent.required(request);
+    if (current == null && !consentRequired && x509.available() && autoLoginAllowed(request) && x509.hasCertificate(request)) {
       try {
         current = x509.authenticate(request);
         establishSession(current, request, response);
@@ -94,6 +113,7 @@ public class AuthController {
       }
     }
     body.put("user", current);
+    body.put("consentRequired", consentRequired);
     return body;
   }
 

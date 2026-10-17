@@ -377,6 +377,7 @@ Existing claims (`existingClaim`) are never touched.
 | `server.cspReportOnly` | `ENS_CSP_REPORT_ONLY` (API and web tier) | `false` |
 | `server.seedDemoConfig` | `SEED_DEMO_CONFIG` | `false` |
 | `server.loginHint` | `LOGIN_HINT` | `""` |
+| `server.consentBanner.enabled` / `.title` / `.text` | `ENS_CONSENT_BANNER_ENABLED` / `_TITLE` / `_TEXT` | `false` / `""` / `""` (the standard DoD notice and consent) |
 | `server.banner.text` / `.foreground` / `.background` | `BANNER_TEXT` / `BANNER_FOREGROUND` / `BANNER_BACKGROUND` | `""` / `#ffffff` / `#007a33` |
 | `server.maxHttpRequestHeaderSize` | `MAX_HTTP_REQUEST_HEADER_SIZE` | `32KB` |
 | `metrics.maxEntries` / `.cacheSeconds` / `.waitMillis` | `METRICS_MAX_ENTRIES` / `METRICS_CACHE_SECONDS` / `METRICS_WAIT_MILLIS` | `100000` / `60` / `2000` |

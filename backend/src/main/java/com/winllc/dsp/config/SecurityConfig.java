@@ -92,7 +92,7 @@ public class SecurityConfig {
         .securityContext(sc -> sc.securityContextRepository(contexts))
         .addFilterAfter(new RequestHeaderCsrfFilter(denials), SecurityContextHolderFilter.class)
         .authorizeHttpRequests(auth -> auth
-            .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/x509", "/api/auth/logout").permitAll()
+            .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/x509", "/api/auth/logout", "/api/auth/consent").permitAll()
             .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/info", "/api/health").permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/**").authenticated()
