@@ -1,0 +1,59 @@
+{{- $v := .Values -}}
+{{- $fullname := include "dsp.fullname" . -}}
+{{- $scheme := ternary "https" "http" (eq (include "dsp.cookieSecure" .) "true") -}}
+Directory Services Portal {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+1. Reach the portal
+{{- if $v.ingress.enabled }}
+{{- range $v.ingress.hosts }}
+   {{ $scheme }}://{{ .host }}/
+{{- end }}
+{{- else if $v.route.enabled }}
+   https://{{ $v.route.host | default (printf "<route host: oc get route %s -n %s>" $fullname .Release.Namespace) }}/
+{{- else if eq $v.service.type "LoadBalancer" }}
+   kubectl get svc {{ $fullname }} -n {{ .Release.Namespace }}   # EXTERNAL-IP
+   {{ ternary "https" "http" $v.tls.enabled }}://<EXTERNAL-IP>:{{ ternary $v.service.httpsPort $v.service.port $v.tls.enabled }}/
+{{- else }}
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ $fullname }} 8080:{{ ternary $v.service.httpsPort $v.service.port $v.tls.enabled }}
+   {{ ternary "https" "http" $v.tls.enabled }}://localhost:8080/
+{{- end }}
+   Sign in as a user in admin.users / admin.groups.
+
+2. License
+   Without an ENS license only sign-in and the license screen work. Sign in as an administrator:
+   you land on Administration > License (/admin/license). Upload the .lic file there.
+{{- if or $v.license.existingSecret $v.license.file }}
+   A license was given to the chart: the license-init container copied it into the license
+   volume if none was installed yet (kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "dsp.apiName" . }} -c license-init).
+{{- end }}
+   For a trial, download an evaluation license from your account on the ENS licensing portal.
+
+   Installation id (to bind a license to this installation): shown on the license screen, and in
+   the API's startup log:
+     kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "dsp.apiName" . }} -c api | grep 'License:'
+
+3. Keep the license volume
+{{- if $v.persistence.license.enabled }}
+   The license and the installation id are on PVC "{{ $v.persistence.license.existingClaim | default (printf "%s-license" $fullname) }}" (/var/lib/ens).
+   `helm upgrade` keeps it. `helm uninstall` deletes PVCs the chart created: back it up, or use
+   persistence.license.existingClaim, before uninstalling. A new installation id means re-binding
+   bound licenses on the ENS licensing portal.
+{{- else }}
+   WARNING: persistence.license.enabled=false. The license and installation id are lost whenever
+   the API pod is replaced. Use this for evaluation only.
+{{- end }}
+{{- if not $v.persistence.data.enabled }}
+   WARNING: persistence.data.enabled=false. Forms, definitions, grants and the audit store are
+   lost whenever the API pod is replaced.
+{{- end }}
+{{- if eq $v.directory.mode "memory" }}
+
+   directory.mode=memory: the built-in demo directory (evaluation only; entries are lost on restart).
+{{- else if contains "example.com" $v.ldap.url }}
+
+   NOTE: ldap.url is still the example ({{ $v.ldap.url }}). Set ldap.url, ldap.bindDn,
+   ldap.bindPassword, ldap.baseDn and admin.* for your directory.
+{{- end }}
+
+4. Check it
+   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

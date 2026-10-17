@@ -17,7 +17,9 @@
 #   --api-image REF             use this already built API image instead of building one (docker);
 #   --web-image REF             likewise for the web image. The package refers to REF as given,
 #                               e.g. ghcr.io/winllc/directory-services-portal-api:1.2.3 (used by
-#                               scripts/release-bundle.sh to package the images CI tested)
+#                               scripts/release-bundle.sh to package the images CI tested). With
+#                               --target native, the jar and the web client are taken from these
+#                               images instead of being built (both are needed)
 #   --platform PLATFORM         build images for another platform, e.g. linux/arm64 (needs buildx)
 #   --keep                      keep the unpacked staging directory next to the archive
 #
@@ -32,7 +34,7 @@ TEMPLATES="$ROOT/deploy/package"
 target=docker; version=""; out="$ROOT/dist"; with_ldap=""; registry=""; no_images=""; skip_build=""; platform=""; keep=""; push=""
 api_ref=""; web_ref=""
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 need() { [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"; }
@@ -159,20 +161,44 @@ package_docker() {
 # --- Native package --------------------------------------------------------------------
 package_native() {
   local dir="$staging_root/$name-native"
-  local jar="$ROOT/backend/target/directory-services-portal.jar"
-  if [ -z "$skip_build" ]; then
+  local jar="$ROOT/backend/target/directory-services-portal.jar" web_dist="$ROOT/web/dist"
+  if [ -n "$api_ref" ] || [ -n "$web_ref" ]; then
+    # The jar and the client from built images (CI: the images it just tested and published).
+    [ -n "$api_ref" ] && [ -n "$web_ref" ] || die "--target native takes both --api-image and --web-image, or neither"
+    command -v docker >/dev/null || die "Docker is required to read the images"
+    local from="$staging_root/from-images" cid
+    mkdir -p "$from"
+    for img in "$api_ref" "$web_ref"; do
+      docker image inspect "$img" >/dev/null 2>&1 || die "Image $img not found (build or pull it first)"
+    done
+    say "Taking the API jar from $api_ref"
+    cid="$(docker create "$api_ref")"
+    docker cp "$cid:/app/app.jar" "$from/directory-services-portal.jar" >/dev/null; docker rm "$cid" >/dev/null
+    say "Taking the web client from $web_ref"
+    cid="$(docker create "$web_ref")"
+    # The client was copied over the nginx base image's sample pages; leave those out. Streamed
+    # as a tar because the samples include a symlink out of the directory (icons/poweredby.png),
+    # which newer Docker refuses to extract with a plain `docker cp`.
+    mkdir -p "$from/web"
+    docker cp "$cid:/usr/share/nginx/html/." - \
+      | tar -x -C "$from/web" --exclude='./icons' --exclude='./404.html' --exclude='./50x.html' \
+          --exclude='./nginx-logo.png' --exclude='./poweredby.png' --exclude='./system_noindex_logo.png'
+    docker rm "$cid" >/dev/null
+    jar="$from/directory-services-portal.jar"; web_dist="$from/web"
+  elif [ -z "$skip_build" ]; then
     command -v npm >/dev/null || die "Node.js/npm is required to build the web client"
     say "Building the web client and the API"
     [ -d "$ROOT/node_modules" ] || (cd "$ROOT" && npm ci)
     (cd "$ROOT" && npm run build)
   fi
   [ -f "$jar" ] || die "$jar not found (build it, or drop --skip-build)"
-  [ -f "$ROOT/web/dist/index.html" ] || die "web/dist not found (build it, or drop --skip-build)"
+  [ -f "$web_dist/index.html" ] || die "$web_dist/index.html not found (build it, or drop --skip-build)"
 
   say "Assembling $name-native"
   mkdir -p "$dir/api" "$dir/nginx"
-  install -m 644 "$jar" "$dir/api/"
-  cp -r "$ROOT/web/dist" "$dir/web"
+  install -m 644 "$jar" "$dir/api/directory-services-portal.jar"
+  cp -r "$web_dist" "$dir/web"
+  chmod -R u+rwX,go+rX,go-w "$dir/web"
   render "$TEMPLATES/native/install.sh" "$dir/install.sh"
   render "$TEMPLATES/native/directory-services-portal.service" "$dir/directory-services-portal.service"
   render "$TEMPLATES/native/README.md" "$dir/README.md"

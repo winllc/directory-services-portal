@@ -1,0 +1,20 @@
+# OpenShift: the restricted SCC assigns the UIDs; an edge Route terminates TLS.
+openshift:
+  enabled: true
+ldap:
+  url: ldaps://ldap.corp.example:636
+  bindDn: cn=portal,ou=system,dc=corp,dc=example
+  bindPassword:
+    existingSecret: dsp-ldap
+    existingSecretKey: password
+  baseDn: dc=corp,dc=example
+route:
+  enabled: true
+  host: portal.apps.ocp.corp.example
+  tls:
+    termination: edge
+persistence:
+  license:
+    storageClass: gp3-csi
+  data:
+    storageClass: gp3-csi

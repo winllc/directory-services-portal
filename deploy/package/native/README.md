@@ -29,7 +29,8 @@ sudo systemctl restart directory-services-portal
   same defaults); the directory must stay writable by `dsp`. The startup log line `License: ...`
   says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
-  `COOKIE_SECURE=true`. For X.509 sign-in through nginx, see the main project README
-  (`X509_SOURCE=header`, `X509_TRUSTED_PROXIES=127.0.0.1/32`).
+  `COOKIE_SECURE=true`. For X.509 sign-in through nginx (`X509_SOURCE=header`,
+  `X509_TRUSTED_PROXIES=127.0.0.1/32`), see the installation guide:
+  https://winllc.github.io/ens-apps-documentation/directory-services-portal/install/
 - With SELinux enforcing, nginx needs `setsebool -P httpd_can_network_connect 1` to reach the API.
 - Upgrade: run the new package's `install.sh`; settings and data are kept.

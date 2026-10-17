@@ -1,0 +1,59 @@
+{{- if .Values.tests.enabled -}}
+{{- $v := .Values -}}
+# helm test: the portal answers through the web tier, and the web tier reaches the API.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "dsp.fullname" . }}-test-health
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  serviceAccountName: {{ include "dsp.serviceAccountName" . }}
+  {{- with $v.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    {{- include "dsp.podSecurityContext" (dict "ctx" $v.web.podSecurityContext "root" .) | nindent 4 }}
+  containers:
+    - name: curl
+      # The web image has curl; no extra image to mirror.
+      image: {{ include "dsp.image" (dict "image" $v.web.image "root" .) }}
+      imagePullPolicy: {{ $v.web.image.pullPolicy }}
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          {{- if $v.tls.enabled }}
+          base="https://{{ include "dsp.fullname" . }}:{{ $v.service.httpsPort }}"
+          {{- else }}
+          base="http://{{ include "dsp.fullname" . }}:{{ $v.service.port }}"
+          {{- end }}
+          for i in $(seq 1 30); do
+            if out="$(curl -ksSf --max-time 5 "$base/api/health")"; then
+              echo "$base/api/health: $out"
+              echo "$out" | grep -q '"ok":true'
+              curl -ksSf --max-time 5 -o /dev/null "$base/"
+              echo "$base/ serves the web client"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "$base/api/health did not answer" >&2
+          exit 1
+      securityContext:
+        {{- include "dsp.containerSecurityContext" (dict "ctx" $v.web.securityContext "root" .) | nindent 8 }}
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+{{- end }}

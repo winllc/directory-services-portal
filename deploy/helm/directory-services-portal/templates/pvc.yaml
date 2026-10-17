@@ -1,0 +1,31 @@
+{{- $root := . -}}
+{{- $claims := list
+  (dict "id" "license" "p" .Values.persistence.license "on" .Values.persistence.license.enabled)
+  (dict "id" "data" "p" .Values.persistence.data "on" .Values.persistence.data.enabled)
+  (dict "id" "audit" "p" .Values.audit.file.persistence "on" (and .Values.audit.file.enabled .Values.audit.file.persistence.enabled)) -}}
+{{- range $claims }}
+{{- if and .on (not .p.existingClaim) }}
+---
+# {{ .id }} volume of the API (see persistence.* in values.yaml). Kept across `helm upgrade`.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dsp.fullname" $root }}-{{ .id }}
+  labels:
+    {{- include "dsp.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: api
+  {{- with .p.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .p.accessModes | nindent 4 }}
+  {{- if .p.storageClass }}
+  storageClassName: {{ if eq .p.storageClass "-" }}""{{ else }}{{ .p.storageClass | quote }}{{ end }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .p.size | quote }}
+{{- end }}
+{{- end }}

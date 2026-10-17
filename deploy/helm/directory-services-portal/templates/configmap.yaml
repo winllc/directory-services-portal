@@ -1,0 +1,78 @@
+{{- include "dsp.validate" . -}}
+{{- $v := .Values -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dsp.apiName" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+data:
+  # Fixed by the container layout.
+  DATA_DIR: /data
+  PORT: "3001"
+  # Only the web tier reaches the API, and it overwrites X-Forwarded-*.
+  FORWARD_HEADERS_STRATEGY: framework
+  JAVA_TOOL_OPTIONS: {{ include "dsp.str" $v.api.javaToolOptions | quote }}
+  # Directory connection
+  DIRECTORY_MODE: {{ include "dsp.str" $v.directory.mode | quote }}
+  LDAP_URL: {{ include "dsp.str" $v.ldap.url | quote }}
+  LDAP_STARTTLS: {{ include "dsp.str" $v.ldap.startTls | quote }}
+  LDAP_TLS_REJECT_UNAUTHORIZED: {{ include "dsp.str" $v.ldap.tlsRejectUnauthorized | quote }}
+  LDAP_TIMEOUT_MS: {{ include "dsp.str" $v.ldap.timeoutMs | quote }}
+  LDAP_POOL_SIZE: {{ include "dsp.str" $v.ldap.poolSize | quote }}
+  LDAP_BIND_DN: {{ include "dsp.str" $v.ldap.bindDn | quote }}
+  LDAP_BASE_DN: {{ include "dsp.str" $v.ldap.baseDn | quote }}
+  # Users & groups
+  LDAP_USER_SEARCH_BASE: {{ include "dsp.str" $v.ldap.userSearchBase | quote }}
+  LDAP_USER_FILTER: {{ include "dsp.str" $v.ldap.userFilter | quote }}
+  LDAP_USERNAME_ATTRIBUTE: {{ include "dsp.str" $v.ldap.usernameAttribute | quote }}
+  LDAP_GROUP_SEARCH_BASE: {{ include "dsp.str" $v.ldap.groupSearchBase | quote }}
+  LDAP_GROUP_FILTER: {{ include "dsp.str" $v.ldap.groupFilter | quote }}
+  ADMIN_USERS: {{ include "dsp.joinSemi" $v.admin.users | quote }}
+  ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.admin.groups | quote }}
+  # Server
+  SESSION_TTL_MINUTES: {{ include "dsp.str" $v.server.sessionTtlMinutes | quote }}
+  COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
+  SEED_DEMO_CONFIG: {{ include "dsp.str" $v.server.seedDemoConfig | quote }}
+  LOGIN_HINT: {{ include "dsp.str" $v.server.loginHint | quote }}
+  BANNER_TEXT: {{ include "dsp.str" $v.server.banner.text | quote }}
+  BANNER_FOREGROUND: {{ include "dsp.str" $v.server.banner.foreground | quote }}
+  BANNER_BACKGROUND: {{ include "dsp.str" $v.server.banner.background | quote }}
+  MAX_HTTP_REQUEST_HEADER_SIZE: {{ include "dsp.str" $v.server.maxHttpRequestHeaderSize | quote }}
+  # Audit log
+  AUDIT_DIR: {{ include "dsp.str" $v.audit.dir | quote }}
+  AUDIT_MEMORY_EVENTS: {{ include "dsp.str" $v.audit.memoryEvents | quote }}
+  ENS_AUDIT_STDOUT: {{ include "dsp.str" $v.audit.stdout | quote }}
+  ENS_AUDIT_FILE: {{ ternary $v.audit.file.path "" (and $v.audit.file.enabled true) | quote }}
+  ENS_AUDIT_FILE_KEEP: {{ include "dsp.str" $v.audit.file.keep | quote }}
+  ENS_AUDIT_RETENTION_DAYS: {{ include "dsp.str" $v.audit.retentionDays | quote }}
+  ENS_AUDIT_SPLUNK_URL: {{ include "dsp.str" $v.audit.splunk.url | quote }}
+  ENS_AUDIT_SPLUNK_INDEX: {{ include "dsp.str" $v.audit.splunk.index | quote }}
+  ENS_AUDIT_SPLUNK_SOURCETYPE: {{ include "dsp.str" $v.audit.splunk.sourcetype | quote }}
+  ENS_AUDIT_SPLUNK_INSECURE: {{ include "dsp.str" $v.audit.splunk.insecure | quote }}
+  ENS_AUDIT_SYSLOG_HOST: {{ include "dsp.str" $v.audit.syslog.host | quote }}
+  ENS_AUDIT_SYSLOG_PORT: {{ include "dsp.str" $v.audit.syslog.port | quote }}
+  ENS_AUDIT_SYSLOG_PROTOCOL: {{ include "dsp.str" $v.audit.syslog.protocol | quote }}
+  ENS_AUDIT_SYSLOG_FACILITY: {{ include "dsp.str" $v.audit.syslog.facility | quote }}
+  # Metrics, analysis and background tasks
+  METRICS_MAX_ENTRIES: {{ include "dsp.str" $v.metrics.maxEntries | quote }}
+  METRICS_CACHE_SECONDS: {{ include "dsp.str" $v.metrics.cacheSeconds | quote }}
+  METRICS_WAIT_MILLIS: {{ include "dsp.str" $v.metrics.waitMillis | quote }}
+  ANALYSIS_MAX_ISSUES: {{ include "dsp.str" $v.analysis.maxIssues | quote }}
+  JOBS_METRICS_THREADS: {{ include "dsp.str" $v.jobs.metricsThreads | quote }}
+  JOBS_ANALYSIS_THREADS: {{ include "dsp.str" $v.jobs.analysisThreads | quote }}
+  JOBS_MAX_ACTIVE_PER_USER: {{ include "dsp.str" $v.jobs.maxActivePerUser | quote }}
+  JOBS_RETAIN_MINUTES: {{ include "dsp.str" $v.jobs.retainMinutes | quote }}
+  # X.509 client-certificate sign-in
+  PASSWORD_LOGIN_ENABLED: {{ $v.x509.passwordLoginEnabled | quote }}
+  X509_ENABLED: {{ $v.x509.enabled | quote }}
+  X509_SOURCE: header
+  X509_HEADER: {{ include "dsp.x509Header" . | quote }}
+  X509_TRUSTED_PROXIES: {{ $v.x509.trustedProxies | quote }}
+  X509_TRUSTED_CA_FILE: {{ ternary "/etc/dsp/x509/ca.pem" "" (eq (include "dsp.x509CaConfigured" .) "true") | quote }}
+  X509_CHECK_REVOCATION: {{ $v.x509.checkRevocation | quote }}
+  X509_MAPPING: {{ $v.x509.mapping | quote }}
+  X509_USER_FILTER: {{ $v.x509.userFilter | quote }}
+  X509_REQUIRE_CERTIFICATE_MATCH: {{ $v.x509.requireCertificateMatch | quote }}
+  X509_AUTO_LOGIN: {{ $v.x509.autoLogin | quote }}
