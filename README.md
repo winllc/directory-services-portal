@@ -101,6 +101,26 @@ its output with kubeconform on every push, for each values file in its `ci/` dir
 | variable | `RELEASE_S3_ENDPOINT` | S3 endpoint URL for Cloudflare R2 / MinIO (empty for AWS) |
 | variable | `RELEASE_S3_REGION` | region (default `us-east-1`; `auto` for R2) |
 
+**Supply chain** (`.github/`): Dependabot proposes weekly updates (Maven, npm, the Dockerfiles'
+base images, GitHub Actions; minor and patch versions grouped). Actions are pinned to commit SHAs
+and base images to digests. Every push and pull request runs CodeQL (Java and TypeScript, also
+weekly), fails on `npm audit --omit=dev --audit-level=high`, and scans both images with Trivy
+(`--severity HIGH,CRITICAL --ignore-unfixed`; accepted risks, with their reason and a review date,
+go in `.trivyignore`). On a release tag, both images (by digest) and the chart are signed with
+cosign (keyless, GitHub OIDC), and each image gets its SPDX SBOM as an attestation. Verify an image
+with:
+
+```bash
+cosign verify ghcr.io/winllc/directory-services-portal-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/winllc/directory-services-portal/.github/workflows/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify-attestation --type spdxjson ghcr.io/winllc/directory-services-portal-api@<digest> \
+  --certificate-identity-regexp 'https://github.com/winllc/directory-services-portal/.github/workflows/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+(and the same for `-web` and `ghcr.io/winllc/charts/directory-services-portal@<digest>`).
+
 A customer verifies a download (with the ENS release signing key imported) before unpacking:
 
 ```bash
@@ -111,6 +131,9 @@ tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-port
 ```
 
 ## Licensing
+
+The portal is proprietary to ENS Solutions (`LicenseRef-ENS-Commercial`, see [LICENSE](LICENSE));
+using it requires a license.
 
 The portal runs under a license file issued by the **ENS licensing portal** (format
 `ens-license/1`, product id `directory-portal`) and checked offline against the ENS public key
@@ -819,7 +842,8 @@ volume when that has no license yet. The volume keeps the license and the instal
   The demo `openldap` image stays on Ubuntu because RHEL 9 no longer ships the OpenLDAP server.
 - Building the `web` and `api` images applies the latest Red Hat updates to their runtime layers
   (`yum update`, or `microdnf update` on the minimal Java image), so the build needs access to
-  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes.
+  the UBI repositories (`cdn-ubi.redhat.com`). Rebuild regularly to pick up security fixes. The
+  base images are pinned by digest (Dependabot proposes new ones).
 
 - The LDIF in `deploy/openldap/ldif` is only loaded into an empty directory. Run
   `docker compose down -v` after changing it, or if you started the stack from an older version.

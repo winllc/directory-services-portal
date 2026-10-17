@@ -1,0 +1,40 @@
+# Weekly dependency updates, minor and patch versions grouped into one pull request per
+# ecosystem (major versions come one by one). Docker base images are pinned by digest; Dependabot
+# proposes new digests and tags. GitHub Actions are pinned by commit SHA with the version in a
+# comment, which Dependabot keeps up to date.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      maven-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /web
+      - /deploy/openldap
+    schedule:
+      interval: weekly
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]

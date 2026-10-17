@@ -1,0 +1,13 @@
+Directory Services Portal
+Copyright (c) ENS Solutions. All rights reserved.
+
+SPDX-License-Identifier: LicenseRef-ENS-Commercial
+
+This software is proprietary to ENS Solutions. The source is published for review only: using,
+installing, copying, modifying or distributing it, in source or binary form (including the
+container images, the release packages and the Helm chart), requires a license from ENS
+Solutions, and is subject to its terms. The portal checks for an ENS license file at run time;
+see "Licensing" in README.md.
+
+Third-party components keep their own licenses; the SPDX SBOMs published with each release list
+them.

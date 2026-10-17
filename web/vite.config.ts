@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite';
+// vitest/config: Vite's defineConfig, typed with the test settings below.
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 // The API runs as a separate service; the dev server and `vite preview` forward /api to it.

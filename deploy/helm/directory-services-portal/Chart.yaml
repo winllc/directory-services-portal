@@ -19,4 +19,5 @@ keywords:
 maintainers:
   - name: ENS Solutions
 annotations:
-  licenses: Proprietary
+  # Proprietary to ENS Solutions; see LICENSE in the source repository.
+  licenses: LicenseRef-ENS-Commercial

@@ -17,10 +17,10 @@ jobs:
   api-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           java-version: "21"
           distribution: temurin
@@ -33,15 +33,18 @@ jobs:
   web-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
 
       - run: npm ci
+      # Known vulnerabilities in what ships (the web client's runtime dependencies) fail the build.
+      - name: Audit the runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm test -w web
 
@@ -53,10 +56,10 @@ jobs:
       KUBECONFORM_VERSION: v0.6.7
       KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.16.4
 
@@ -129,6 +132,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless signing of release images and the chart (cosign, GitHub OIDC).
+      id-token: write
 
     env:
       # Release bundles: signing and upload are skipped when these aren't configured. Secrets
@@ -136,16 +141,18 @@ jobs:
       HAS_GPG: ${{ secrets.RELEASE_GPG_PRIVATE_KEY != '' }}
       HAS_AWS: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
       S3_BUCKET: ${{ vars.RELEASE_S3_BUCKET }}
+      TRIVY_VERSION: "0.75.0"
+      TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Work out the API tags
         id: api-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}-api
           tags: |
@@ -157,7 +164,7 @@ jobs:
 
       - name: Work out the web tags
         id: web-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}-web
           tags: |
@@ -168,7 +175,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build the API image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: backend
           load: true
@@ -180,7 +187,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build the web image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: web/Dockerfile
@@ -211,7 +218,8 @@ jobs:
               # The probes, on the API itself (the web tier publishes only /api).
               docker exec api curl -fsS http://localhost:3001/readyz
               docker exec api curl -fsS http://localhost:3001/livez
-              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health)" != 200
+              # The web tier publishes no actuator endpoint (the path is just the client's page).
+              ! curl -s http://localhost:8080/actuator/health | grep -q '"status"'
               exit 0
             fi
             sleep 1
@@ -221,9 +229,25 @@ jobs:
           docker logs web
           exit 1
 
+      - name: Scan the images
+        run: |
+          # HIGH and CRITICAL vulnerabilities with a fix available fail the build; accepted risks
+          # are listed, with their reason and a review date, in .trivyignore.
+          curl -fsSLo "$RUNNER_TEMP/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v$TRIVY_VERSION/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "$TRIVY_SHA256  $RUNNER_TEMP/trivy.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/trivy"
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP/trivy" trivy
+          for image in dsp-api:ci dsp-web:ci; do
+            echo "::group::trivy $image"
+            "$RUNNER_TEMP/trivy/trivy" image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+              --ignorefile .trivyignore --no-progress "$image"
+            echo "::endgroup::"
+          done
+
       - name: Sign in to the registry
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -236,7 +260,7 @@ jobs:
           WEB_TAGS: ${{ steps.web-meta.outputs.tags }}
         run: |
           # Tag and push the images that were just started rather than building them again:
-          # the base images are floating tags, and what is published has to be what was tested.
+          # what is published has to be what was tested (and scanned).
           for tag in $API_TAGS; do docker tag dsp-api:ci "$tag"; docker push "$tag"; done
           for tag in $WEB_TAGS; do docker tag dsp-web:ci "$tag"; docker push "$tag"; done
           {
@@ -275,11 +299,11 @@ jobs:
       - name: Set up syft
         id: syft
         if: steps.bundle.outputs.enabled == 'true'
-        uses: anchore/sbom-action/download-syft@v0
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       - name: Set up Helm
         if: steps.bundle.outputs.enabled == 'true'
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.16.4
 
@@ -323,8 +347,39 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
-          helm push "$CHART" oci://ghcr.io/winllc/charts
+          helm push "$CHART" oci://ghcr.io/winllc/charts 2>&1 | tee "$RUNNER_TEMP/helm-push.log"
           echo "- Helm chart: \`oci://ghcr.io/winllc/charts/directory-services-portal\` $(basename "$CHART" .tgz | sed 's/^directory-services-portal-//')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up cosign
+        if: steps.bundle.outputs.release == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the images and the chart, and attest the images' SBOMs
+        # Releases only: keyless (GitHub OIDC), by digest. Verify with
+        #   cosign verify ghcr.io/winllc/<image>@<digest> \
+        #     --certificate-identity-regexp 'https://github.com/winllc/directory-services-portal/.github/workflows/.*' \
+        #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+        if: steps.bundle.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.bundle.outputs.version }}
+          OUT: ${{ steps.bundle.outputs.dir }}
+          IMAGE_BASE: ghcr.io/${{ github.repository }}
+        run: |
+          {
+            echo "### Signed (cosign, keyless)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          for part in api web; do
+            digest="$(docker buildx imagetools inspect "$IMAGE_BASE-$part:$VERSION" --format '{{.Manifest.Digest}}')"
+            ref="$IMAGE_BASE-$part@$digest"
+            cosign sign --yes "$ref"
+            cosign attest --yes --type spdxjson --predicate "$OUT/sbom-directory-services-portal-$part.spdx.json" "$ref"
+            echo "- \`$ref\` (signature and SPDX SBOM attestation)" >> "$GITHUB_STEP_SUMMARY"
+          done
+          chart_digest="$(sed -n 's/^Digest: *//p' "$RUNNER_TEMP/helm-push.log" | head -n1)"
+          [ -n "$chart_digest" ] || { echo "No digest in the helm push output"; exit 1; }
+          cosign sign --yes "ghcr.io/winllc/charts/directory-services-portal@$chart_digest"
+          echo "- \`ghcr.io/winllc/charts/directory-services-portal@$chart_digest\` (signature)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Sign the checksums
         id: sign
@@ -347,7 +402,7 @@ jobs:
 
       - name: Keep the bundle as a workflow artifact
         if: steps.bundle.outputs.enabled == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-directory-services-portal-${{ steps.bundle.outputs.version }}
           path: ${{ steps.bundle.outputs.dir }}
