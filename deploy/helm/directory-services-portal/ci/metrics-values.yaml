@@ -1,0 +1,13 @@
+# Prometheus Operator ServiceMonitor and a NetworkPolicy that admits the scraper to the metrics port.
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus
+  allowFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+networkPolicy:
+  enabled: true
+logFormat: text

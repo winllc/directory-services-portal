@@ -13,6 +13,10 @@ global:
   #   ghcr.io/winllc/directory-services-portal-api -> registry.corp.example:5000/winllc/directory-services-portal-api
   imageRegistry: ""
 
+# API log lines: json (Elastic Common Schema, LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs) or text.
+# Audit events on stdout are ens-audit/1 JSON lines either way.
+logFormat: json
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -90,8 +94,11 @@ api:
     readOnlyRootFilesystem: true
     runAsNonRoot: true
 
-  # GET /api/health on port 3001 (no license needed). The startup probe allows 3 minutes for the
-  # first start (configuration seeding, audit store check).
+  # Spring Boot's probes, no license or sign-in needed: liveness (the API itself) for the startup
+  # and liveness probes, readiness (the directory answers, the audit log is writable, the data disk
+  # has room) for the readiness probe. On the management port with metrics.enabled
+  # (/actuator/health/liveness, /readiness), else on 3001 (/livez, /readyz). The startup probe
+  # allows 3 minutes for the first start (configuration seeding, audit store check).
   startupProbe:
     enabled: true
     initialDelaySeconds: 10
@@ -309,6 +316,25 @@ server:
 
 # --- Metrics, analysis and background tasks ---------------------------------------------------
 metrics:
+  # Prometheus metrics (ens_* and the JVM's) at /actuator/prometheus, and the health probes, on a
+  # management port of their own (MANAGEMENT_SERVER_PORT), named "metrics" on the API's Service.
+  # The ingress and route never publish it. false: no Prometheus endpoint, probes on port 3001.
+  enabled: true
+  port: 9090
+  # A Prometheus Operator ServiceMonitor (monitoring.coreos.com/v1) for the API's metrics port.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels, e.g. the one your Prometheus selects ServiceMonitors by (release: prometheus).
+    labels: {}
+  # With networkPolicy.enabled: who may reach the metrics port (NetworkPolicy peers), e.g. the
+  # monitoring namespace. Empty: nobody (the kubelet's probes are not affected).
+  allowFrom: []
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  # The portal's own metrics pages (dashboards, explorer):
   maxEntries: 100000
   cacheSeconds: 60
   waitMillis: 2000

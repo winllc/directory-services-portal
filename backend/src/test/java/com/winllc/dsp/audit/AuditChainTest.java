@@ -217,7 +217,8 @@ class AuditChainTest {
     PortalProperties props = new PortalProperties();
     props.getAudit().setDir(auditDir.toString());
     StaticListableBeanFactory none = new StaticListableBeanFactory();
-    return new AuditLog(MAPPER, props, none.getBeanProvider(BuildProperties.class), none.getBeanProvider(Licensing.class));
+    return new AuditLog(MAPPER, props, none.getBeanProvider(BuildProperties.class), none.getBeanProvider(Licensing.class),
+        none.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
   }
 
   static Instant at(String s) {

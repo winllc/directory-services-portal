@@ -82,9 +82,10 @@ jobs:
         run: |
           for f in "$CHART"/ci/*.yaml; do
             echo "::group::kubeconform $f"
-            # The OpenShift Route has no schema in the Kubernetes catalogue.
+            # The OpenShift Route and the Prometheus Operator's ServiceMonitor have no schema in the
+            # Kubernetes catalogue.
             extra=()
-            case "$f" in *openshift*) extra=(-ignore-missing-schemas) ;; esac
+            case "$f" in *openshift*|*metrics*) extra=(-ignore-missing-schemas) ;; esac
             helm template dsp "$CHART" -f "$f" \
               | kubeconform -strict -summary -kubernetes-version 1.29.0 "${extra[@]}"
             echo "::endgroup::"
@@ -207,6 +208,10 @@ jobs:
               curl -fsS -c /tmp/jar -H 'X-DSP-Request: 1' -H 'Content-Type: application/json' \
                 -d '{"username":"alice","password":"password"}' http://localhost:8080/api/auth/login > /dev/null
               curl -sS -b /tmp/jar http://localhost:8080/api/definitions | tee /dev/stderr | grep -q '"code":"license_required"'
+              # The probes, on the API itself (the web tier publishes only /api).
+              docker exec api curl -fsS http://localhost:3001/readyz
+              docker exec api curl -fsS http://localhost:3001/livez
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health)" != 200
               exit 0
             fi
             sleep 1

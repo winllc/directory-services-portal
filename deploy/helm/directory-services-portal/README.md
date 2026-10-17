@@ -266,6 +266,13 @@ edge-terminated setup (without `tls.enabled`) then also needs `x509.trustedCa`,
 `license.*` is copied only into an empty license volume, so a newer license uploaded on the
 license screen is never overwritten. Back up the data PVC before upgrading.
 
+From the release with the platform baseline, the API's probes moved from `/api/health` to
+Spring Boot's liveness and readiness groups on the metrics port (`metrics.enabled`, default on):
+a pod is not Ready while the directory is unreachable or the audit log can't be written. API
+log lines are JSON (`logFormat: json`) unless you set `logFormat: text`. The idle timeout is
+`server.session.idleTimeout` (`30m`); the earlier default was 480 minutes, and a
+`server.sessionTtlMinutes` you set yourself still applies.
+
 ## License
 
 Without a license only sign-in and the license screen work. Sign in as an administrator: you
@@ -318,8 +325,8 @@ Existing claims (`existingClaim`) are never touched.
 | `api.resources` | requests 250m / 768Mi, limit 1536Mi | |
 | `api.podSecurityContext` | non-root 185/185, fsGroup 185, RuntimeDefault seccomp | |
 | `api.securityContext` | no privilege escalation, drop ALL, read-only root filesystem | `/tmp` is an emptyDir |
-| `api.startupProbe` | `/api/health`, 10s + 36 × 5s | generous for the first start |
-| `api.livenessProbe`, `api.readinessProbe` | `/api/health` | `enabled`, `periodSeconds`, `timeoutSeconds`, `failureThreshold` |
+| `api.startupProbe` | liveness, 10s + 36 × 5s | generous for the first start |
+| `api.livenessProbe`, `api.readinessProbe` | `/actuator/health/liveness` / `/readiness` on the metrics port (`/livez` / `/readyz` on 3001 without `metrics.enabled`) | `enabled`, `periodSeconds`, `timeoutSeconds`, `failureThreshold`. Readiness needs the directory, a writable audit log and room on the data disk |
 | `api.service.port` / `.annotations` | `3001` / `{}` | the API's ClusterIP Service |
 | `web.image.repository` | `ghcr.io/winllc/directory-services-portal-web` | |
 | `web.image.tag` / `.pullPolicy` | `""` / `IfNotPresent` | |
@@ -385,6 +392,10 @@ Existing claims (`existingClaim`) are never touched.
 | `server.consentBanner.enabled` / `.title` / `.text` | `ENS_CONSENT_BANNER_ENABLED` / `_TITLE` / `_TEXT` | `false` / `""` / `""` (the standard DoD notice and consent) |
 | `server.banner.text` / `.foreground` / `.background` | `BANNER_TEXT` / `BANNER_FOREGROUND` / `BANNER_BACKGROUND` | `""` / `#ffffff` / `#007a33` |
 | `server.maxHttpRequestHeaderSize` | `MAX_HTTP_REQUEST_HEADER_SIZE` | `32KB` |
+| `metrics.enabled` / `.port` | `MANAGEMENT_SERVER_PORT` | `true` / `9090`: Prometheus (`/actuator/prometheus`) and the probes on a port of their own, the `metrics` port of the API's Service (never the ingress or route) |
+| `metrics.serviceMonitor.enabled` / `.interval` / `.scrapeTimeout` / `.labels` | | `false` / `30s` / `10s` / `{}`: a Prometheus Operator `ServiceMonitor` |
+| `metrics.allowFrom` | | `[]`: NetworkPolicy peers admitted to the metrics port (with `networkPolicy.enabled`) |
+| `logFormat` | `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` with `json` | `json` (ECS JSON log lines) or `text` |
 | `metrics.maxEntries` / `.cacheSeconds` / `.waitMillis` | `METRICS_MAX_ENTRIES` / `METRICS_CACHE_SECONDS` / `METRICS_WAIT_MILLIS` | `100000` / `60` / `2000` |
 | `analysis.maxIssues` | `ANALYSIS_MAX_ISSUES` | `50000` |
 | `jobs.metricsThreads` / `.analysisThreads` | `JOBS_METRICS_THREADS` / `JOBS_ANALYSIS_THREADS` | `4` / `2` |

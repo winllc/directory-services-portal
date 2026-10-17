@@ -21,7 +21,12 @@ sudo systemctl restart directory-services-portal
 | `/var/lib/directory-services-portal` | data: configuration, audit log, analysis results (back this up) |
 | `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on port 8080 and proxies `/api` (when nginx is installed) |
 
-- Logs: `journalctl -u directory-services-portal -f`.
+- Logs: `journalctl -u directory-services-portal -f` (`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` in
+  `portal.env` for JSON lines).
+- Health: `curl http://127.0.0.1:3001/readyz` (the directory answers and the audit log is
+  writable) and `/livez`. For Prometheus set `MANAGEMENT_SERVER_PORT` (e.g. 9090) in `portal.env`:
+  `/actuator/prometheus` and the probes are then served there, on 127.0.0.1
+  (`MANAGEMENT_SERVER_ADDRESS`).
 - License: without an ENS Solutions license only sign-in and the license screen work. Sign in as
   an administrator and upload it under *Administration > License* (`/admin/license`), which also
   shows the installation id to bind a license to; or copy it in with

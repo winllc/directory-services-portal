@@ -49,6 +49,8 @@ ENV DATA_DIR=/data PORT=3001 JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
 VOLUME /data /var/lib/ens
 EXPOSE 3001
 USER 185
+# Readiness: the directory answers and the audit log is writable (on the main port also with
+# MANAGEMENT_SERVER_PORT set).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -sf http://localhost:3001/api/health >/dev/null || exit 1
+  CMD curl -sf "http://localhost:${PORT:-3001}/readyz" >/dev/null || exit 1
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar \"$@\"", "--"]

@@ -29,7 +29,8 @@ services:
       # log forwarder to tail. The ENS_AUDIT_* settings reach the API through env_file.
       - ens-audit:/var/log/ens
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3001/api/health >/dev/null || exit 1"]
+      # Readiness: the directory answers and the audit log is writable.
+      test: ["CMD-SHELL", "curl -sf http://localhost:3001/readyz >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

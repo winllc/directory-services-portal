@@ -9,6 +9,7 @@ import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditDetails;
 import com.winllc.dsp.audit.AuditEvent;
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.audit.AuditUnavailableException;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
@@ -31,6 +32,8 @@ import com.winllc.dsp.schema.SchemaIndex;
 import com.winllc.dsp.schema.SchemaService;
 import com.winllc.dsp.store.ConfigStore;
 import com.winllc.dsp.web.ApiException;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -64,12 +67,14 @@ public class EntryService {
   private final AuditLog audit;
   private final DirectoryOptions options;
   private final Licensing licensing;
+  private final MeterRegistry meters;
 
   public record ListQuery(String q, Integer page, Integer pageSize, String sort, String order) {}
 
   public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options,
-      Licensing licensing) {
+      Licensing licensing, MeterRegistry meters) {
     this.directory = directory;
+    this.meters = meters;
     this.licensing = licensing;
     this.options = options;
     this.store = store;
@@ -306,7 +311,7 @@ public class EntryService {
 
   public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
     AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).target("entry", parentDn, null);
-    return audited(event, () -> doCreate(event, user, def, parentDn, input));
+    return audited("create", event, () -> doCreate(event, user, def, parentDn, input));
   }
 
   private DirectoryEntry doCreate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
@@ -349,7 +354,7 @@ public class EntryService {
 
   public DirectoryEntry update(SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
     AuditLog.Draft event = audit.event(self ? "entry.self_update" : "entry.update").by(user).definition(def.id()).target("entry", dn, null);
-    return audited(event, () -> doUpdate(event, user, def, dn, input, self));
+    return audited("update", event, () -> doUpdate(event, user, def, dn, input, self));
   }
 
   private DirectoryEntry doUpdate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
@@ -430,7 +435,7 @@ public class EntryService {
 
   public void remove(SessionUser user, DirectoryDefinition def, String dn) {
     AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).target("entry", dn, null);
-    audited(event, () -> {
+    audited("delete", event, () -> {
       require(user, def, AccessLevel.WRITE);
       DirectoryEntry current = loadEntry(def, form(def), dn);
       // What the entry held, so a mistaken delete can be put back by hand.
@@ -449,19 +454,34 @@ public class EntryService {
 
   /**
    * Run a write, recording it as denied when the portal refuses it and failed when the
-   * directory does. The operation records its own success. Input that fails validation (400) or
-   * names an entry outside the directory (404) is not recorded: nothing was attempted.
+   * directory does (or the audit log can't be written). The operation records its own success.
+   * Input that fails validation (400) or names an entry outside the directory (404) is not
+   * recorded: nothing was attempted. Counted in {@code ens_dsp_entry_writes_total{operation,outcome}}.
    */
-  private <T> T audited(AuditLog.Draft event, Supplier<T> operation) {
+  private <T> T audited(String operation, AuditLog.Draft event, Supplier<T> write) {
     try {
-      return operation.get();
+      T result = write.get();
+      count(operation, "success");
+      return result;
     } catch (ApiException e) {
-      if (e.status() == HttpStatus.FORBIDDEN) event.denied(e.getMessage());
+      if (e.status() == HttpStatus.FORBIDDEN) {
+        event.denied(e.getMessage());
+        count(operation, "denied");
+      }
       throw e;
     } catch (DirectoryException e) {
       event.failed(e.getMessage());
+      count(operation, "failure");
+      throw e;
+    } catch (AuditUnavailableException e) {
+      count(operation, "failure");
       throw e;
     }
+  }
+
+  private void count(String operation, String outcome) {
+    Counter.builder("ens.dsp.entry.writes").description("Directory entry writes through the portal")
+        .tag("operation", operation).tag("outcome", outcome).register(meters).increment();
   }
 
   private static AuditEvent.Change change(String attribute, List<String> before, List<String> after) {

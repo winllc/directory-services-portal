@@ -27,6 +27,36 @@ spring:
     deserialization:
       fail-on-unknown-properties: false
 
+# Health probes and metrics. On the main port: /actuator/health with its liveness and readiness
+# groups (also /livez and /readyz), details for administrators only. MANAGEMENT_SERVER_PORT (Boot's
+# own setting, unset by default) moves them to a separate port that also serves
+# /actuator/prometheus, both without sign-in; never publish that port. Without it, Prometheus is
+# not exposed at all (see ManagementEndpoints).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: ADMIN
+      probes:
+        enabled: true
+        add-additional-paths: true
+      group:
+        liveness:
+          include: livenessState
+        # What the API can't serve without: the directory, the audit log and its disk.
+        readiness:
+          include: readinessState,ldap,auditLog,diskSpace
+  health:
+    diskspace:
+      path: ${portal.data-dir}
+
+# Structured JSON logs: LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs (Boot's own setting; the audit lines
+# on the ens.audit logger stay raw ens-audit/1 JSON either way).
+
 portal:
   directory-mode: ${DIRECTORY_MODE:memory}
   ldap:

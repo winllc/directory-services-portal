@@ -588,6 +588,42 @@ unattended tab still times out. An expired session answers `401` with `"code": "
 and the browser shows the sign-in page with the reason; each expiry is audited as
 `auth.session-expired` with the reason `idle`, `absolute`, `concurrent` or `account-removed`.
 
+### Health and metrics
+The API uses Spring Boot's probes, which need no sign-in or license:
+
+| path | answers |
+|---|---|
+| `/actuator/health/liveness` (also `/livez`) | the API itself is running |
+| `/actuator/health/readiness` (also `/readyz`) | it can serve: the directory answers (`ldap`), the audit log is writable (`auditLog`), and the data disk has 10 MB free (`diskSpace`); `503` otherwise |
+| `/actuator/health` | both; details (components and errors) only for signed-in administrators |
+| `/api/health` | kept for existing monitoring: always `{"ok":true}` while the API runs (liveness only) |
+
+The web tier publishes only `/api`, so none of these is reachable from browsers. The image's
+`HEALTHCHECK`, the release package's compose file and the Helm chart use readiness (and liveness
+for restarts in Kubernetes).
+
+**Prometheus** (`/actuator/prometheus`) is served only on a management port of its own:
+`MANAGEMENT_SERVER_PORT` (Spring Boot's setting, unset by default; `MANAGEMENT_SERVER_ADDRESS` to
+bind it, the native package uses `127.0.0.1`). Without it there is no Prometheus endpoint. On the
+management port, health and Prometheus are open without sign-in, and `/livez` and `/readyz`
+stay on the main port; never publish the management port to users. Metrics, besides the JVM's and
+Tomcat's:
+
+| metric | |
+|---|---|
+| `ens_license_mode{mode}` | 1 for the mode in effect (`full`, `read_only`, `unlicensed`), 0 for the others |
+| `ens_license_days_remaining` | days until the license (or its grace) ends; NaN for a perpetual license or none |
+| `ens_audit_events_total{category,outcome}` | audit events stored |
+| `ens_audit_forward_failures_total{output}` | failed deliveries to `splunk` or `syslog` |
+| `ens_auth_attempts_total{method,outcome}` | sign-ins (`password`, `x509`) by outcome (`success`, `failure`, `denied`) |
+| `ens_dsp_ldap_operation_seconds{operation,outcome}` | LDAP operations (`search`, `scan`, `get`, `add`, `modify`, `rename`, `delete`, `bind`, `schema`, `ping`), timed; `failure` when one failed |
+| `ens_dsp_ldap_pool_available` | idle connections in the service account's pool |
+| `ens_dsp_entry_writes_total{operation,outcome}` | entry `create`, `update` and `delete` through the portal (`success`, `failure`, `denied`) |
+
+**Logs**: `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` (Spring Boot's setting) writes log lines as JSON
+in the Elastic Common Schema; the Helm chart does by default (`logFormat: json`). Audit events on
+stdout stay `ens-audit/1` JSON lines either way.
+
 ### Notice and consent banner
 For DoD systems (DISA STIG), the portal can show the standard USG notice-and-consent banner before
 sign-in. The login page shows it with an **I agree** button, and the API enforces it: while it is

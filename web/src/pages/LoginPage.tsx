@@ -68,7 +68,7 @@ export function LoginPage() {
         {!error && certificateError && auth.x509 && <Alert tone="warning" title="Certificate not accepted">{certificateError}</Alert>}
         {info.data && !info.data.connected && (
           <Alert tone="warning" title="Directory unreachable">
-            {info.data.error}
+            {info.data.error ?? 'The portal cannot reach the directory right now, so signing in may fail. Try again later.'}
           </Alert>
         )}
 

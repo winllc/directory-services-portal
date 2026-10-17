@@ -222,6 +222,8 @@ package_native() {
     echo
     echo "# --- Server -------------------------------------------------------------------"
     echo "SERVER_ADDRESS=127.0.0.1"
+    echo "# The management port (MANAGEMENT_SERVER_PORT below, when set) listens on this host only too."
+    echo "MANAGEMENT_SERVER_ADDRESS=127.0.0.1"
     echo "PORT=3001"
     echo "DATA_DIR=/var/lib/directory-services-portal"
     echo "# nginx on this host overwrites X-Forwarded-*."

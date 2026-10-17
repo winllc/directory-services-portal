@@ -38,11 +38,11 @@ wait_healthy() {
     status="$(docker inspect -f '{{.State.Health.Status}}' "$id" 2>/dev/null || echo unknown)"
     case "$status" in
       healthy) return 0 ;;
-      unhealthy) die "The API is unhealthy; see ./portal.sh logs api" ;;
+      unhealthy) die "The API is not ready: it can't reach the directory, write its audit log or its data disk is full; see ./portal.sh logs api" ;;
     esac
     sleep 2
   done
-  die "The API did not become healthy in time; see ./portal.sh logs api"
+  die "The API did not become ready in time (directory, audit log, data disk); see ./portal.sh logs api"
 }
 
 cmd="${1:-help}"; shift || true

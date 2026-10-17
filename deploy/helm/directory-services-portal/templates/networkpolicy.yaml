@@ -65,6 +65,14 @@ spec:
       ports:
         - port: 3001
           protocol: TCP
+    {{- if and $v.metrics.enabled $v.metrics.allowFrom }}
+    # Prometheus (metrics.allowFrom) on the management port.
+    - from:
+        {{- toYaml $v.metrics.allowFrom | nindent 8 }}
+      ports:
+        - port: {{ $v.metrics.port }}
+          protocol: TCP
+    {{- end }}
   egress:
     {{- if $np.egress.allowAll }}
     - {}

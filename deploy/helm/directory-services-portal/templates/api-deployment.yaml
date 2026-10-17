@@ -98,6 +98,11 @@ spec:
             - name: http
               containerPort: 3001
               protocol: TCP
+            {{- if $v.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ $v.metrics.port }}
+              protocol: TCP
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "dsp.apiName" . }}
@@ -134,8 +139,7 @@ spec:
           {{- if $v.api.startupProbe.enabled }}
           startupProbe:
             httpGet:
-              path: /api/health
-              port: http
+              {{- include "dsp.apiProbe" (dict "group" "liveness" "root" .) | nindent 14 }}
             initialDelaySeconds: {{ $v.api.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ $v.api.startupProbe.periodSeconds }}
             timeoutSeconds: {{ $v.api.startupProbe.timeoutSeconds }}
@@ -144,8 +148,7 @@ spec:
           {{- if $v.api.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /api/health
-              port: http
+              {{- include "dsp.apiProbe" (dict "group" "liveness" "root" .) | nindent 14 }}
             periodSeconds: {{ $v.api.livenessProbe.periodSeconds }}
             timeoutSeconds: {{ $v.api.livenessProbe.timeoutSeconds }}
             failureThreshold: {{ $v.api.livenessProbe.failureThreshold }}
@@ -153,8 +156,7 @@ spec:
           {{- if $v.api.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /api/health
-              port: http
+              {{- include "dsp.apiProbe" (dict "group" "readiness" "root" .) | nindent 14 }}
             periodSeconds: {{ $v.api.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ $v.api.readinessProbe.timeoutSeconds }}
             failureThreshold: {{ $v.api.readinessProbe.failureThreshold }}

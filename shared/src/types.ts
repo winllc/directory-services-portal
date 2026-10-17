@@ -276,9 +276,12 @@ export interface SelfEntryResult {
 
 export interface ServerInfo {
   mode: 'ldap' | 'memory';
+  /** Administrators only. */
   ldapUrl?: string;
-  baseDn: string;
+  /** Signed-in users only. */
+  baseDn?: string;
   connected: boolean;
+  /** Why the directory doesn't answer: administrators only. */
   error?: string;
   version: string;
   /** Sign-in methods offered by the server. */

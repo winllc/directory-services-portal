@@ -619,6 +619,37 @@
         },
         "waitMillis": {
           "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "interval": {
+              "type": "string"
+            },
+            "scrapeTimeout": {
+              "type": "string"
+            },
+            "labels": {
+              "type": "object"
+            }
+          }
+        },
+        "allowFrom": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
         }
       }
     },
@@ -1049,6 +1080,13 @@
           "type": "boolean"
         }
       }
+    },
+    "logFormat": {
+      "type": "string",
+      "enum": [
+        "json",
+        "text"
+      ]
     }
   }
 }

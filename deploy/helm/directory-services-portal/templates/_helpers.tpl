@@ -82,6 +82,20 @@ Call with (dict "image" .Values.api.image "root" $).
 {{- toYaml $ctx -}}
 {{- end -}}
 
+{{/*
+The API's health probe target for a group (liveness or readiness): the management port with
+metrics.enabled, else the main port's /livez and /readyz. Call with (dict "group" "readiness" "root" $).
+*/}}
+{{- define "dsp.apiProbe" -}}
+{{- if .root.Values.metrics.enabled -}}
+path: /actuator/health/{{ .group }}
+port: metrics
+{{- else -}}
+path: {{ ternary "/livez" "/readyz" (eq .group "liveness") }}
+port: http
+{{- end -}}
+{{- end -}}
+
 {{/* "a;b" from a list or a string. */}}
 {{- define "dsp.joinSemi" -}}
 {{- if kindIs "slice" . -}}{{- join ";" . -}}{{- else -}}{{- . | default "" -}}{{- end -}}

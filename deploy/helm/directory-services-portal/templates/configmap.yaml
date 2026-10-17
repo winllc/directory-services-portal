@@ -14,6 +14,13 @@ data:
   # Only the web tier reaches the API, and it overwrites X-Forwarded-*.
   SERVER_FORWARD_HEADERS_STRATEGY: framework
   JAVA_TOOL_OPTIONS: {{ include "dsp.str" $v.api.javaToolOptions | quote }}
+  {{- if $v.metrics.enabled }}
+  # Health and Prometheus on their own port (the Service's "metrics" port).
+  MANAGEMENT_SERVER_PORT: {{ include "dsp.str" $v.metrics.port | quote }}
+  {{- end }}
+  {{- if eq $v.logFormat "json" }}
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+  {{- end }}
   # Directory connection
   DIRECTORY_MODE: {{ include "dsp.str" $v.directory.mode | quote }}
   LDAP_URL: {{ include "dsp.str" $v.ldap.url | quote }}
