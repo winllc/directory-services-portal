@@ -189,7 +189,7 @@ its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/reso
 | variable | meaning |
 |---|---|
 | `LDAP_URL` | `ldap://` or `ldaps://` URL; `LDAP_STARTTLS=true` upgrades plain connections. Certificates are verified against the JVM trust store unless `LDAP_TLS_REJECT_UNAUTHORIZED=false` |
-| `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account used for every read and write |
+| `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account used for every read and write. `LDAP_BIND_PASSWORD_FILE` names a file holding the password instead (it wins when set and not empty; the Helm chart mounts it from a Secret, the native package uses `/etc/directory-services-portal/ldap-bind-password`) |
 | `LDAP_BASE_DN` | default suffix (used by the DN browser) |
 | `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER` | how to find a user at login (`{{username}}` is escaped) |
 | `LDAP_USERNAME_ATTRIBUTE` | login name attribute (`uid`, `sAMAccountName`, …) |

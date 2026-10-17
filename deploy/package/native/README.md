@@ -23,6 +23,11 @@ sudo systemctl restart directory-services-portal
 
 - Logs: `journalctl -u directory-services-portal -f` (`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` in
   `portal.env` for JSON lines).
+- The LDAP service account's password goes in `/etc/directory-services-portal/ldap-bind-password`
+  (root and `dsp` only; `LDAP_BIND_PASSWORD_FILE` in `portal.env`), not in `portal.env`. A
+  `portal.env` from an earlier release that sets `LDAP_BIND_PASSWORD` keeps working.
+- The unit runs the API without capabilities or devices, with `SystemCallFilter=@system-service`,
+  `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `ProtectSystem=strict` and `UMask=0077`.
 - Health: `curl http://127.0.0.1:3001/readyz` (the directory answers and the audit log is
   writable) and `/livez`. For Prometheus set `MANAGEMENT_SERVER_PORT` (e.g. 9090) in `portal.env`:
   `/actuator/prometheus` and the probes are then served there, on 127.0.0.1

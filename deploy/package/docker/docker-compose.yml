@@ -13,6 +13,14 @@ services:
     image: ${API_IMAGE:-@API_IMAGE@}
     restart: unless-stopped
     env_file: .env
+    # Hardening: no capabilities or privilege escalation, a read-only root file system (the API
+    # writes only to its volumes and /tmp) and a memory limit (the JVM sizes its heap from it).
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: ${API_MEMORY_LIMIT:-1536m}
     environment:
       # Fixed by the container layout; everything else comes from .env.
       DATA_DIR: /data
@@ -39,6 +47,16 @@ services:
   web:
     image: ${WEB_IMAGE:-@WEB_IMAGE@}
     restart: unless-stopped
+    # Hardening: no capabilities or privilege escalation, a read-only root file system (nginx
+    # writes its rendered config, pid, temp files and default log to tmpfs) and a memory limit.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /opt/app-root/etc/dsp.d
+      - /var/log/nginx
+    mem_limit: ${WEB_MEMORY_LIMIT:-256m}
     depends_on:
       - api
     environment:

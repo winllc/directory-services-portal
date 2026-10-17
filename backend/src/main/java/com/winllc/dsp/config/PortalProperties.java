@@ -52,6 +52,8 @@ public class PortalProperties {
     private String url = "ldap://localhost:389";
     private String bindDn = "";
     private String bindPassword = "";
+    /** File holding the bind password, read instead of {@link #bindPassword} when set (preferred). */
+    private String bindPasswordFile = "";
     private boolean startTls;
     private boolean tlsRejectUnauthorized = true;
     private int timeoutMs = 10_000;
@@ -63,6 +65,26 @@ public class PortalProperties {
     public void setBindDn(String bindDn) { this.bindDn = bindDn; }
     public String getBindPassword() { return bindPassword; }
     public void setBindPassword(String bindPassword) { this.bindPassword = bindPassword; }
+    public String getBindPasswordFile() { return bindPasswordFile; }
+    public void setBindPasswordFile(String bindPasswordFile) { this.bindPasswordFile = bindPasswordFile; }
+
+    /**
+     * The bind password: the content of {@link #bindPasswordFile} (without a trailing new line)
+     * when that is set and not empty, else {@link #bindPassword}.
+     *
+     * @throws UncheckedIOException when the file can't be read
+     */
+    public String resolvedBindPassword() {
+      if (bindPasswordFile != null && !bindPasswordFile.isBlank()) {
+        try {
+          String s = Files.readString(Path.of(bindPasswordFile.trim())).replaceFirst("\\r?\\n$", "");
+          if (!s.isEmpty()) return s;
+        } catch (IOException e) {
+          throw new UncheckedIOException("Cannot read LDAP_BIND_PASSWORD_FILE " + bindPasswordFile + ": " + e.getMessage(), e);
+        }
+      }
+      return bindPassword;
+    }
     public boolean isStartTls() { return startTls; }
     public void setStartTls(boolean startTls) { this.startTls = startTls; }
     public boolean isTlsRejectUnauthorized() { return tlsRejectUnauthorized; }

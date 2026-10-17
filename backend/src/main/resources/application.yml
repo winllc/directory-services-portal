@@ -63,6 +63,9 @@ portal:
     url: ${LDAP_URL:ldap://localhost:389}
     bind-dn: ${LDAP_BIND_DN:}
     bind-password: ${LDAP_BIND_PASSWORD:}
+    # A file holding the password, read instead of LDAP_BIND_PASSWORD when set (preferred: the
+    # environment can be read by anyone who can inspect the process or container).
+    bind-password-file: ${LDAP_BIND_PASSWORD_FILE:}
     start-tls: ${LDAP_STARTTLS:false}
     tls-reject-unauthorized: ${LDAP_TLS_REJECT_UNAUTHORIZED:true}
     timeout-ms: ${LDAP_TIMEOUT_MS:10000}

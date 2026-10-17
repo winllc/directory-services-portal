@@ -43,7 +43,8 @@ All settings are in `.env`; after a change run `./portal.sh up`. The first secti
 compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
 
 - `LDAP_URL`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_BASE_DN`: the directory and the service
-  account the portal uses. For `ldaps://` with a private CA, put a trust store in the data volume
+  account the portal uses (`LDAP_BIND_PASSWORD_FILE` reads the password from a file in the
+  container instead). For `ldaps://` with a private CA, put a trust store in the data volume
   and point `JAVA_TOOL_OPTIONS` at it, or set `LDAP_TLS_REJECT_UNAUTHORIZED=false` for testing.
 - `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER`, `LDAP_GROUP_*`: how users and their groups are found.
 - `ADMIN_USERS`, `ADMIN_GROUPS`: who administers the portal (`;` separated).

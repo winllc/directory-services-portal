@@ -239,7 +239,8 @@ ldap:
   poolSize: 10
   # Service account used for all directory operations (the portal enforces its own permissions).
   bindDn: cn=portal,ou=system,dc=example,dc=com
-  # LDAP_BIND_PASSWORD: inline (rendered into the chart's Secret) or from an existing Secret.
+  # The bind password: inline (rendered into the chart's Secret) or from an existing Secret,
+  # mounted into the API pod as a file (LDAP_BIND_PASSWORD_FILE), never an environment variable.
   bindPassword:
     value: ""
     existingSecret: ""

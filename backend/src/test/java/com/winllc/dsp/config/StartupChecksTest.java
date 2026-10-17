@@ -142,6 +142,26 @@ class StartupChecksTest {
   }
 
   @Test
+  void readsTheBindPasswordFromItsFile() throws Exception {
+    java.nio.file.Path file = java.nio.file.Files.createTempFile("bind-password", "");
+    java.nio.file.Files.writeString(file, " s3cret pass \n");
+    PortalProperties.Ldap ldap = new PortalProperties().getLdap();
+    ldap.setBindPassword("from-env");
+    assertThat(ldap.resolvedBindPassword()).isEqualTo("from-env");
+    ldap.setBindPasswordFile(file.toString());
+    // Only the trailing new line goes: the password itself may have spaces.
+    assertThat(ldap.resolvedBindPassword()).isEqualTo(" s3cret pass ");
+    java.nio.file.Files.writeString(file, "");
+    assertThat(ldap.resolvedBindPassword()).isEqualTo("from-env");
+
+    runner.withPropertyValues("DIRECTORY_MODE=ldap", "LDAP_BIND_PASSWORD_FILE=" + file.resolveSibling("missing-password")).run(ctx -> {
+      assertThat(ctx).hasFailed();
+      assertThat(ctx.getStartupFailure()).hasStackTraceContaining("Cannot read LDAP_BIND_PASSWORD_FILE");
+    });
+    runner.withPropertyValues("DIRECTORY_MODE=ldap", "LDAP_BIND_PASSWORD_FILE=" + file).run(ctx -> assertThat(ctx).hasNotFailed());
+  }
+
+  @Test
   void leavesOtherModesAlone() {
     // Certificate sign-in off, or the API terminating mutual TLS itself (Tomcat checks the chain).
     runner.withPropertyValues("X509_ENABLED=false", "X509_SOURCE=header").run(ctx -> assertThat(ctx).hasNotFailed());

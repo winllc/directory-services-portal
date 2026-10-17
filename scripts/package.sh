@@ -244,6 +244,11 @@ package_native() {
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \
             -e 's|(with docker-compose.mtls.yml)|(behind nginx: X509_SOURCE=header)|' \
             -e 's|=\"\(#[0-9a-fA-F]*\)\"$|=\1|' \
+            -e '/^# Its password, or LDAP_BIND_PASSWORD_FILE/,/^LDAP_BIND_PASSWORD=change-me$/c\
+# Its password, in this file (root and dsp only; install.sh creates it empty), which keeps it out\
+# of the API process'"'"'s environment. LDAP_BIND_PASSWORD still works, and is used while the file\
+# is empty.\
+LDAP_BIND_PASSWORD_FILE=/etc/directory-services-portal/ldap-bind-password' \
             -e '/^# The secret the web proxy sends to the API/,/^X509_PROXY_SECRET=$/c\
 # The secret nginx sends to the API with every request (X-DSP-Proxy-Secret): the API accepts a\
 # forwarded client certificate only with it. install.sh generates it into the file below (root\
@@ -253,6 +258,7 @@ package_native() {
 X509_PROXY_SECRET_FILE=/etc/directory-services-portal/proxy-secret'
   } > "$dir/portal.env"
   if grep -q '^X509_PROXY_SECRET=' "$dir/portal.env"; then die "portal.env: the X.509 proxy secret block was not replaced"; fi
+  if grep -q '^LDAP_BIND_PASSWORD=' "$dir/portal.env"; then die "portal.env: the LDAP bind password block was not replaced"; fi
   chmod 644 "$dir/portal.env"
   finish "$dir" "$name-native"
 }

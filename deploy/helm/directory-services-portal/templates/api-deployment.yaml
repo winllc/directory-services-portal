@@ -115,11 +115,6 @@ spec:
               value: /var/lib/ens/directory-portal
             - name: ENS_LICENSE_FILE
               value: /var/lib/ens/directory-portal/license.lic
-            {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
-            - name: LDAP_BIND_PASSWORD
-              valueFrom:
-                {{- include "dsp.secretRef" (dict "v" $v.ldap.bindPassword "chartKey" "ldap-bind-password" "root" .) | nindent 16 }}
-            {{- end }}
             {{- if include "dsp.secretSet" (dict "v" $v.audit.splunk.token) }}
             - name: ENS_AUDIT_SPLUNK_TOKEN
               valueFrom:
@@ -189,6 +184,13 @@ spec:
               mountPath: /etc/dsp/truststore
               readOnly: true
             {{- end }}
+            {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+            # LDAP_BIND_PASSWORD_FILE: a file, not an environment variable anyone inspecting the
+            # pod or process can read.
+            - name: ldap-bind-password
+              mountPath: /etc/dsp/ldap
+              readOnly: true
+            {{- end }}
             {{- with $v.api.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -255,6 +257,16 @@ spec:
             items:
               - key: {{ include "dsp.x509ProxySecretKey" . }}
                 path: proxy-secret
+        {{- end }}
+        {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+        - name: ldap-bind-password
+          secret:
+            secretName: {{ $v.ldap.bindPassword.existingSecret | default (include "dsp.fullname" .) }}
+            # Group-readable: the API runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: {{ ternary $v.ldap.bindPassword.existingSecretKey "ldap-bind-password" (not (empty $v.ldap.bindPassword.existingSecret)) }}
+                path: bind-password
         {{- end }}
         {{- if $truststore.existingSecret }}
         - name: truststore

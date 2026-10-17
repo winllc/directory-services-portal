@@ -29,6 +29,10 @@ data:
   LDAP_TIMEOUT_MS: {{ include "dsp.str" $v.ldap.timeoutMs | quote }}
   LDAP_POOL_SIZE: {{ include "dsp.str" $v.ldap.poolSize | quote }}
   LDAP_BIND_DN: {{ include "dsp.str" $v.ldap.bindDn | quote }}
+  {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
+  # The bind password, mounted from its Secret (ldap.bindPassword).
+  LDAP_BIND_PASSWORD_FILE: /etc/dsp/ldap/bind-password
+  {{- end }}
   LDAP_BASE_DN: {{ include "dsp.str" $v.ldap.baseDn | quote }}
   # Users & groups
   LDAP_USER_SEARCH_BASE: {{ include "dsp.str" $v.ldap.userSearchBase | quote }}

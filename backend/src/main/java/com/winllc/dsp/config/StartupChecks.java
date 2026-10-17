@@ -22,6 +22,13 @@ public class StartupChecks {
 
   @PostConstruct
   void check() {
+    if (!props.isMemoryMode()) {
+      try {
+        props.getLdap().resolvedBindPassword();
+      } catch (UncheckedIOException e) {
+        throw new IllegalStateException("Refusing to start: " + e.getMessage(), e);
+      }
+    }
     List<String> problems = props.getBanner().problems();
     if (!problems.isEmpty()) throw new IllegalStateException("Invalid banner configuration: " + String.join("; ", problems));
     List<String> x509 = props.getX509().problems();

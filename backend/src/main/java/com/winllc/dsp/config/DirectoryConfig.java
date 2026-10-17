@@ -29,7 +29,8 @@ public class DirectoryConfig {
     EmbeddedDirectory demo = embedded.getIfAvailable();
     LdapDirectory.Settings settings = demo != null
         ? new LdapDirectory.Settings(demo.url(), EmbeddedDirectory.SERVICE_DN, EmbeddedDirectory.SERVICE_PASSWORD, false, true, l.getTimeoutMs(), l.getPoolSize())
-        : new LdapDirectory.Settings(l.getUrl(), l.getBindDn(), l.getBindPassword(), l.isStartTls(), l.isTlsRejectUnauthorized(), l.getTimeoutMs(), l.getPoolSize());
+        : new LdapDirectory.Settings(l.getUrl(), l.getBindDn(), l.resolvedBindPassword(), l.isStartTls(), l.isTlsRejectUnauthorized(), l.getTimeoutMs(),
+            l.getPoolSize());
     return new LdapDirectory(settings, meters.getIfAvailable());
   }
 }

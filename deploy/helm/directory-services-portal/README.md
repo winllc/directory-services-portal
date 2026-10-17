@@ -363,7 +363,7 @@ Existing claims (`existingClaim`) are never touched.
 | `ldap.timeoutMs` | `LDAP_TIMEOUT_MS` | `10000` |
 | `ldap.poolSize` | `LDAP_POOL_SIZE` | `10` |
 | `ldap.bindDn` | `LDAP_BIND_DN` | `cn=portal,ou=system,dc=example,dc=com` |
-| `ldap.bindPassword.value` / `.existingSecret` / `.existingSecretKey` | `LDAP_BIND_PASSWORD` | `""` / `""` / `ldap-bind-password` |
+| `ldap.bindPassword.value` / `.existingSecret` / `.existingSecretKey` | `LDAP_BIND_PASSWORD_FILE` (the Secret mounted at `/etc/dsp/ldap/bind-password`) | `""` / `""` / `ldap-bind-password` |
 | `ldap.baseDn` | `LDAP_BASE_DN` | `dc=example,dc=com` |
 | `ldap.userSearchBase` | `LDAP_USER_SEARCH_BASE` | `ou=people,dc=example,dc=com` |
 | `ldap.userFilter` | `LDAP_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{username}}))` |

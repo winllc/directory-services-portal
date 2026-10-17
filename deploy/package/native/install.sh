@@ -4,6 +4,8 @@
 #   /etc/directory-services-portal/portal.env settings (kept if it exists)
 #   /etc/directory-services-portal/proxy-secret  X.509 proxy secret (generated if missing), and
 #     nginx-proxy-secret.conf, the copy nginx includes
+#   /etc/directory-services-portal/ldap-bind-password  the LDAP service account's password (created
+#     empty if missing; LDAP_BIND_PASSWORD_FILE in portal.env)
 #   /var/lib/directory-services-portal        data (configuration, audit log, results)
 #   /var/lib/ens/directory-portal             ENS license, installation id (ENS_LICENSE_* in portal.env)
 #   systemd unit directory-services-portal    the API, on 127.0.0.1:3001
@@ -79,6 +81,14 @@ secret_re='^[[:alnum:]._~+/=-]{32,}$'
   "$ETC/proxy-secret" "$proxy_secret" > "$ETC/nginx-proxy-secret.conf")
 chown root:root "$ETC/nginx-proxy-secret.conf" && chmod 600 "$ETC/nginx-proxy-secret.conf"
 
+# The LDAP service account's password (LDAP_BIND_PASSWORD_FILE): root and dsp only, never
+# overwritten. An upgraded portal.env that still sets LDAP_BIND_PASSWORD keeps working.
+if [ ! -e "$ETC/ldap-bind-password" ]; then
+  (umask 077 && : > "$ETC/ldap-bind-password")
+  say "Created $ETC/ldap-bind-password (empty): write the LDAP service account's password into it"
+fi
+chown root:dsp "$ETC/ldap-bind-password" && chmod 640 "$ETC/ldap-bind-password"
+
 install -d /etc/systemd/system
 sed "s|@JAVA@|$JAVA|" directory-services-portal.service > /etc/systemd/system/directory-services-portal.service
 systemctl daemon-reload
@@ -105,7 +115,8 @@ fi
 
 echo
 say "Directory Services Portal $VERSION is installed."
-echo "    Edit $ETC/portal.env (LDAP connection, administrators), then:"
+echo "    Edit $ETC/portal.env (LDAP connection, administrators) and put the service account's password in"
+echo "    $ETC/ldap-bind-password (printf '%s' 'the-password' > $ETC/ldap-bind-password), then:"
 if [ ! -f "$LICENSE_DIR/license.lic" ]; then
   echo "    License: sign in as an administrator and upload your ENS license under Administration > License"
   echo "             (/admin/license), or: install -m 640 -o dsp -g dsp <your.lic> $LICENSE_DIR/license.lic"
