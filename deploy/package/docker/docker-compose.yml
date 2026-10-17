@@ -42,6 +42,13 @@ services:
       - api
     environment:
       API_URL: http://api:3001
+      # Sent to the API with every request; the API accepts client certificates only with it.
+      X509_PROXY_SECRET: ${X509_PROXY_SECRET:-}
+      # The header the API reads the client certificate from, removed from client requests
+      # unless a TLS proxy in front of this one verifies certificates and always sets it
+      # (X509_EDGE_TERMINATION=true; then make sure nothing else can reach the web service).
+      X509_HEADER: ${X509_HEADER:-X-SSL-Client-Cert}
+      X509_EDGE_TERMINATION: ${X509_EDGE_TERMINATION:-false}
     expose:
       - "8080"
     healthcheck:
