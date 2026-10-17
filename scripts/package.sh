@@ -225,6 +225,12 @@ package_native() {
     echo "# keeps this installation's id (shown on the license screen) and must stay writable by dsp."
     echo "ENS_LICENSE_STATE_DIR=/var/lib/ens/directory-portal"
     echo "ENS_LICENSE_FILE=/var/lib/ens/directory-portal/license.lic"
+    echo "# The license itself, as an alternative to an upload on the license"
+    echo "# screen: the token between the license file's BEGIN and END lines, or the whole file"
+    echo "# base64-encoded (base64 -w0 license.lic). It is installed at start if no license is installed"
+    echo "# yet, or if it is a newer revision of the installed one; otherwise the installed license is"
+    echo "# kept. Leave it empty to supply the license another way."
+    echo "ENS_LICENSE="
     echo
     sed -n '/^# --- Directory connection/,$p' "$TEMPLATES/docker/env.template" \
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \
