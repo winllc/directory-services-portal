@@ -429,7 +429,12 @@ Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `SERVER_FORWARD_HEADERS_STRAT
 | `x509.trustedProxies` | `X509_TRUSTED_PROXIES` | `10.0.0.0/8;172.16.0.0/12;192.168.0.0/16` (the pod network) |
 | `x509.proxySecret.existingSecret` / `.existingSecretKey` | `X509_PROXY_SECRET_FILE` (API and web) | `""` (generated, kept across upgrades) / `proxy-secret` |
 | `x509.trustedCa.value` / `.existingSecret` / `.existingSecretKey` | `X509_TRUSTED_CA_FILE` | empty: `tls`'s `ca.pem` when `tls.enabled`; required with `x509.enabled` |
-| `x509.checkRevocation` | `X509_CHECK_REVOCATION` | `false` |
+| `x509.revocation.mode` | `ENS_X509_REVOCATION` | `off` (`ocsp`, `crl`, `ocsp-then-crl`) |
+| `x509.revocation.ocspResponderUrl` / `.crlDir` | `ENS_X509_OCSP_RESPONDER_URL` / `ENS_X509_CRL_DIR` | `""` / `""` (mount CRL files with `api.extraVolumes`) |
+| `x509.revocation.fail` / `.cache` | `ENS_X509_REVOCATION_FAIL` / `ENS_X509_REVOCATION_CACHE` | `closed` / `10m` |
+| `x509.revocation.egress.ports` / `.cidrs` | | `[80, 443]` / `[0.0.0.0/0]`: NetworkPolicy egress for OCSP and CRL fetches (with a mode other than `off`) |
+| `x509.allowedIssuers` | `ENS_X509_ALLOWED_ISSUERS` | `[]` (list, or DNs separated by `;`) |
+| `x509.checkRevocation` | `X509_CHECK_REVOCATION` | `false` (deprecated: `true` means `ocsp-then-crl`, failing closed, while the mode is `off`) |
 | `x509.mapping` | `X509_MAPPING` | `filter` |
 | `x509.userFilter` | `X509_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{cn}}))` |
 | `x509.requireCertificateMatch` | `X509_REQUIRE_CERTIFICATE_MATCH` | `false` |

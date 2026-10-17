@@ -6,6 +6,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -17,6 +20,7 @@ import org.springframework.context.annotation.Import;
  * header mode (a proxy forwards the certificate) refuses to start unless the proxy is
  * authenticated by its secret and the API validates certificates against trusted CAs.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class StartupChecksTest {
   static final String SECRET = "8d0c6b2e4f1a3c5e7b9d0f2a4c6e8b1d3f5a7c9e0b2d4f6a8c1e3b5d7f9a0c2e";
   static Path caFile;
@@ -104,6 +108,37 @@ class StartupChecksTest {
         });
     runner.withPropertyValues("ENS_CONSENT_BANNER_ENABLED=true", "ENS_CONSENT_BANNER_FILE=" + secretFile).run(ctx -> assertThat(ctx).hasNotFailed());
     runner.withPropertyValues("ENS_CONSENT_BANNER_ENABLED=true").run(ctx -> assertThat(ctx).hasNotFailed());
+  }
+
+  @Test
+  void refusesInvalidRevocationSettings() {
+    runner.withPropertyValues("ENS_X509_REVOCATION=sometimes").run(ctx -> {
+      assertThat(ctx).hasFailed();
+      assertThat(ctx.getStartupFailure()).rootCause().hasMessageContaining("ENS_X509_REVOCATION must be one of off, ocsp, crl, ocsp-then-crl");
+    });
+    runner.withPropertyValues("ENS_X509_REVOCATION_FAIL=maybe", "ENS_X509_OCSP_RESPONDER_URL=ldap://x", "ENS_X509_CRL_DIR=/no/such/dir")
+        .run(ctx -> assertThat(ctx.getStartupFailure()).rootCause()
+            .hasMessageContaining("ENS_X509_REVOCATION_FAIL must be closed or open")
+            .hasMessageContaining("ENS_X509_OCSP_RESPONDER_URL must be an http:// or https:// URL")
+            .hasMessageContaining("ENS_X509_CRL_DIR /no/such/dir is not a directory"));
+    runner.withPropertyValues("ENS_X509_ALLOWED_ISSUERS=not a dn").run(ctx -> assertThat(ctx).hasFailed());
+  }
+
+  @Test
+  void needsTrustedCasToCheckRevocation() {
+    runner.withPropertyValues("X509_ENABLED=true", "ENS_X509_REVOCATION=ocsp").run(ctx -> {
+      assertThat(ctx).hasFailed();
+      assertThat(ctx.getStartupFailure()).rootCause().hasMessageContaining("needs X509_TRUSTED_CA_FILE");
+    });
+    runner.withPropertyValues("X509_ENABLED=true", "X509_CHECK_REVOCATION=true").run(ctx -> assertThat(ctx).hasFailed());
+    runner.withPropertyValues("X509_ENABLED=true", "ENS_X509_REVOCATION=ocsp-then-crl", "X509_TRUSTED_CA_FILE=" + caFile)
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+  }
+
+  @Test
+  void warnsWhenCertificateSignInChecksNoRevocation(CapturedOutput output) {
+    runner.withPropertyValues("X509_ENABLED=true").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("X.509 sign-in is enabled without revocation checking", "DISA STIG requires");
   }
 
   @Test

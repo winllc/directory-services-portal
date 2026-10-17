@@ -852,6 +852,59 @@
         },
         "allowUnrestrictedWebIngress": {
           "type": "boolean"
+        },
+        "revocation": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "off",
+                "ocsp",
+                "crl",
+                "ocsp-then-crl"
+              ]
+            },
+            "ocspResponderUrl": {
+              "type": "string"
+            },
+            "crlDir": {
+              "type": "string"
+            },
+            "fail": {
+              "type": "string",
+              "enum": [
+                "closed",
+                "open"
+              ]
+            },
+            "cache": {
+              "type": "string"
+            },
+            "egress": {
+              "type": "object",
+              "properties": {
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "cidrs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "allowedIssuers": {
+          "type": [
+            "array",
+            "string"
+          ]
         }
       }
     },

@@ -1,6 +1,7 @@
 package com.winllc.dsp.x509;
 
 import com.unboundid.ldap.sdk.Filter;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.PortalProperties;
@@ -32,7 +33,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class X509AuthService {
   private static final Logger log = LoggerFactory.getLogger(X509AuthService.class);
-  private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\{(\\w+)}}");
+  /** {{name}}, or {name} for the certificate placeholders (the form the other ENS applications use). */
+  private static final Pattern PLACEHOLDER =
+      Pattern.compile("\\{\\{(\\w+)}}|\\{(" + String.join("|", CertificateIdentity.NAMES) + ")}");
 
   private final PortalProperties props;
   private final ClientCertificateExtractor extractor;
@@ -113,7 +116,7 @@ public class X509AuthService {
       return user;
     } catch (CertificateRejectedException e) {
       log.warn("Certificate sign-in rejected for {} (issuer {}): {}", identity.subject(), identity.issuer(), e.getMessage());
-      event.anonymous(identity.cn() != null ? identity.cn() : identity.subject()).failed(e.getMessage());
+      event.anonymous(identity.cn() != null ? identity.cn() : identity.subject()).detail("reasonCode", e.reasonCode()).failed(e.auditReason());
       throw e;
     }
   }
@@ -153,18 +156,29 @@ public class X509AuthService {
       return found.get(0).dn();
     }
 
-    Map<String, String> values = identity.placeholders();
-    Matcher m = PLACEHOLDER.matcher(cfg.getUserFilter());
-    while (m.find()) {
-      if (!values.containsKey(m.group(1))) {
-        throw new CertificateRejectedException("The certificate has no " + m.group(1) + " value to identify the user");
-      }
-    }
-    Filter filter = AuthService.template(cfg.getUserFilter(), values);
+    Filter filter = userFilter(cfg.getUserFilter(), identity.placeholders());
     List<DirectoryEntry> found = directory.search(base, SearchScope.SUB, filter, 2, List.of("1.1")).entries();
     if (found.isEmpty()) throw new CertificateRejectedException("No directory account matches this certificate");
     if (found.size() > 1) throw new CertificateRejectedException("More than one directory account matches this certificate");
     return found.get(0).dn();
+  }
+
+  /** The mapping filter with each placeholder replaced by its filter-escaped value. */
+  static Filter userFilter(String template, Map<String, String> values) {
+    Matcher m = PLACEHOLDER.matcher(template);
+    StringBuilder out = new StringBuilder();
+    while (m.find()) {
+      String name = m.group(1) != null ? m.group(1) : m.group(2);
+      String value = values.get(name);
+      if (value == null) throw new CertificateRejectedException("The certificate has no " + name + " value to identify the user");
+      m.appendReplacement(out, Matcher.quoteReplacement(Filter.encodeValue(value)));
+    }
+    m.appendTail(out);
+    try {
+      return Filter.create(out.toString());
+    } catch (LDAPException e) {
+      throw new IllegalStateException("Invalid X509_USER_FILTER: " + template, e);
+    }
   }
 
   private void requireMatch(String dn, X509Certificate cert) {

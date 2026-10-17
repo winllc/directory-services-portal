@@ -3,6 +3,7 @@ package com.winllc.dsp;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
@@ -17,13 +18,21 @@ import org.bouncycastle.asn1.DERSequence;
 import org.bouncycastle.asn1.DERTaggedObject;
 import org.bouncycastle.asn1.DERUTF8String;
 import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.AccessDescription;
+import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
 import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.CRLDistPoint;
+import org.bouncycastle.asn1.x509.CRLReason;
+import org.bouncycastle.asn1.x509.DistributionPoint;
+import org.bouncycastle.asn1.x509.DistributionPointName;
 import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.KeyPurposeId;
 import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.cert.X509v2CRLBuilder;
+import org.bouncycastle.cert.jcajce.JcaX509CRLConverter;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
@@ -65,6 +74,9 @@ final class TestCertificates {
     String subject;
     String email;
     String upn;
+    String uri;
+    String ocsp;
+    String crl;
     KeyPurposeId eku = KeyPurposeId.id_kp_clientAuth;
     Instant notBefore = Instant.now().minus(Duration.ofDays(1));
     Instant notAfter = Instant.now().plus(Duration.ofDays(365));
@@ -80,6 +92,24 @@ final class TestCertificates {
 
     Client upn(String v) {
       upn = v;
+      return this;
+    }
+
+    /** A SAN uniformResourceIdentifier, e.g. urn:uuid:... */
+    Client uri(String v) {
+      uri = v;
+      return this;
+    }
+
+    /** The OCSP responder in the Authority Information Access extension. */
+    Client ocsp(String url) {
+      ocsp = url;
+      return this;
+    }
+
+    /** A CRL distribution point. */
+    Client crl(String url) {
+      crl = url;
       return this;
     }
 
@@ -108,7 +138,17 @@ final class TestCertificates {
           v.add(new DERTaggedObject(true, 0, new DERUTF8String(upn)));
           names.add(new GeneralName(GeneralName.otherName, new DERSequence(v)));
         }
+        if (uri != null) names.add(new GeneralName(GeneralName.uniformResourceIdentifier, uri));
         if (!names.isEmpty()) b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(names.toArray(GeneralName[]::new)));
+        if (ocsp != null) {
+          b.addExtension(Extension.authorityInfoAccess, false, new AuthorityInformationAccess(
+              new AccessDescription(AccessDescription.id_ad_ocsp, new GeneralName(GeneralName.uniformResourceIdentifier, ocsp))));
+        }
+        if (crl != null) {
+          GeneralNames dp = new GeneralNames(new GeneralName(GeneralName.uniformResourceIdentifier, crl));
+          b.addExtension(Extension.cRLDistributionPoints, false,
+              new CRLDistPoint(new DistributionPoint[] {new DistributionPoint(new DistributionPointName(dp), null, null)}));
+        }
         return sign(b, ca.keys());
       } catch (Exception e) {
         throw new IllegalStateException(e);
@@ -123,6 +163,20 @@ final class TestCertificates {
 
   static Client client(String subject) {
     return new Client(subject);
+  }
+
+  /** A CRL from the CA revoking the given certificates (valid for a day). */
+  static X509CRL crl(Ca ca, X509Certificate... revoked) {
+    try {
+      Instant now = Instant.now();
+      X509v2CRLBuilder b = new X509v2CRLBuilder(X500Name.getInstance(ca.cert().getSubjectX500Principal().getEncoded()),
+          Date.from(now.minus(Duration.ofMinutes(5))));
+      b.setNextUpdate(Date.from(now.plus(Duration.ofDays(1))));
+      for (X509Certificate c : revoked) b.addCRLEntry(c.getSerialNumber(), Date.from(now.minus(Duration.ofMinutes(1))), CRLReason.keyCompromise);
+      return new JcaX509CRLConverter().getCRL(b.build(new JcaContentSignerBuilder("SHA256withRSA").build(ca.keys().getPrivate())));
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   private static X509Certificate sign(JcaX509v3CertificateBuilder b, KeyPair signer) throws Exception {

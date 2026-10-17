@@ -141,7 +141,7 @@ public class EnsProperties {
   public static class X509 {
     public static final List<String> MODES = List.of("off", "ocsp", "crl", "ocsp-then-crl");
 
-    /** off, ocsp, crl or ocsp-then-crl. Empty: off, or ocsp-then-crl with the legacy X509_CHECK_REVOCATION=true. */
+    /** off, ocsp, crl or ocsp-then-crl. Empty means off; while off, the older X509_CHECK_REVOCATION=true means ocsp-then-crl. */
     private String revocation = "";
     /** Overrides the certificate's AIA OCSP responder (e.g. a local relay on an air-gapped network). */
     private String ocspResponderUrl = "";

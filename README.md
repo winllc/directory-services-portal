@@ -528,14 +528,38 @@ certificate comes from:
 Every certificate is checked before it is accepted:
 - It must be within its validity period.
 - It must be allowed for TLS client authentication (extended/key usage).
-- When `X509_TRUSTED_CA_FILE` is set, it must chain to one of those CAs. Revocation is also
-  checked (OCSP / CRL distribution points) when `X509_CHECK_REVOCATION=true`.
+- When `ENS_X509_ALLOWED_ISSUERS` is set, its issuer must be one of those DNs, even if another
+  trusted CA chains to it.
+- When `X509_TRUSTED_CA_FILE` is set, it must chain to one of those CAs, and it must not be
+  revoked (`ENS_X509_REVOCATION`).
+
+**Revocation checking** (CAC/PIV; DISA STIG requires it, so the API logs a warning at startup when
+certificate sign-in is on without it):
+
+| variable | default | meaning |
+|---|---|---|
+| `ENS_X509_REVOCATION` | `off` | `off`, `ocsp`, `crl` or `ocsp-then-crl` (CRLs when OCSP gives no answer). Needs `X509_TRUSTED_CA_FILE`: the API does not start without it. `X509_CHECK_REVOCATION=true`, the older setting, means `ocsp-then-crl` failing closed |
+| `ENS_X509_OCSP_RESPONDER_URL` | | ask this responder instead of the certificate's AIA one, e.g. a local OCSP relay on an air-gapped network |
+| `ENS_X509_CRL_DIR` | | a directory of CRL files (DER or PEM), read again when they change: the air-gapped option. With it set, CRL distribution points are **not** fetched |
+| `ENS_X509_REVOCATION_FAIL` | `closed` | `closed`: when the status can't be determined, refuse; `open`: allow and log a warning |
+| `ENS_X509_REVOCATION_CACHE` | `10m` | how long a good or revoked answer is kept, per issuer and serial |
+| `ENS_X509_ALLOWED_ISSUERS` | | issuer DNs separated by `;` (DNs contain commas); certificates from other issuers are refused |
+
+The checks are configured per sign-in (the JDK's PKIX validator with its own revocation checker;
+no global JDK security setting is changed). OCSP responses must be signed by the issuing CA or a
+responder it delegated to; CRLs by the issuing CA. The API fetches OCSP responses and CRLs itself:
+http or https only (and only https/http redirects, at most 3), 5 s to connect, 10 s to read, OCSP
+responses up to 1 MB and CRLs up to 32 MB, never to link-local, multicast or cloud-metadata
+addresses; LDAP distribution points are skipped. Fetched CRLs are reused until their next update
+(at most a day). A refusal is audited as an `auth.login` failure with the reason
+`certificate revoked` or `revocation unknown` (`details.reasonCode` `certificate_revoked` /
+`revocation_unknown`).
 
 It is then mapped to exactly one directory user:
 
 | `X509_MAPPING` | how the user is found |
 |---|---|
-| `filter` (default) | `X509_USER_FILTER` with placeholders `{{cn}}`, `{{uid}}`, `{{email}}` (rfc822 SAN, else the emailAddress attribute), `{{upn}}` (Microsoft UPN SAN, common on smart cards), `{{subject}}`, `{{serial}}`. Values are filter-escaped. Examples: `(uid={{cn}})`, `(mail={{email}})`, `(userPrincipalName={{upn}})` |
+| `filter` (default) | `X509_USER_FILTER` with placeholders `{{cn}}`, `{{uid}}`, `{{email}}` (rfc822 SAN, else the emailAddress attribute), `{{upn}}` (the SAN otherName UserPrincipalName, OID 1.3.6.1.4.1.311.20.2.3, on CAC/PIV cards), `{{edipi}}` (the DoD EDIPI: the digits of a UPN `1234567890@mil`, else the trailing `.1234567890` of a CN `LAST.FIRST.MI.1234567890`), `{{uuid}}` (from a SAN URI `urn:uuid:…`, the PIV FASC-N UUID, without the `urn:uuid:` prefix), `{{subject}}`, `{{serial}}`. The other ENS applications' form `{upn}` (single braces) works too. Values are filter-escaped; a filter matching no entry or more than one signs nobody in. Examples: `(uid={{cn}})`, `(mail={email})`, `(userPrincipalName={upn})`, `(employeeID={edipi})` |
 | `subject-dn` | the certificate subject DN is the user's entry DN (it must also match the user filter's shape) |
 
 Options:
@@ -678,7 +702,7 @@ browser only ever reaches the API through the same origin).
   rules in `shared/`).
 - Password attributes are never returned to the browser. Empty passwords are rejected before
   any bind, so anonymous binds can't be used to log in.
-- Certificate sign-in validates the certificate (dates, key usage, chain and optional
+- Certificate sign-in validates the certificate (dates, key usage, issuer allowlist, chain and
   revocation) before mapping it to exactly one directory user. Forwarded certificate headers are
   only honoured from trusted proxy addresses that also send the proxy secret
   (`X-DSP-Proxy-Secret`, compared in constant time); without the secret and a trusted CA file

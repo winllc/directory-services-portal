@@ -54,4 +54,21 @@ class X509ParsingTest {
     X509Certificate legacy = TestCertificates.client("EMAILADDRESS=old@example.org,CN=Legacy").issuedBy(CA);
     assertThat(CertificateIdentity.of(legacy).email()).isEqualTo("old@example.org");
   }
+
+  @Test
+  void extractsTheDodEdipiAndThePivUuid() {
+    // From the UPN 1234567890@mil.
+    CertificateIdentity id = CertificateIdentity.of(CERT);
+    assertThat(id.edipi()).isEqualTo("1234567890");
+    assertThat(id.placeholders()).containsKeys("edipi").doesNotContainKey("uuid");
+    // Else from a CN LAST.FIRST.MI.1234567890.
+    X509Certificate cac = TestCertificates.client("CN=DOE.JANE.Q.9876543210,OU=USN,OU=PKI,OU=DoD,O=U.S. Government,C=US")
+        .uri("urn:uuid:4FD0A1B2-3C4D-5E6F-8A9B-0C1D2E3F4A5B").issuedBy(CA);
+    CertificateIdentity piv = CertificateIdentity.of(cac);
+    assertThat(piv.edipi()).isEqualTo("9876543210");
+    assertThat(piv.uuid()).isEqualTo("4FD0A1B2-3C4D-5E6F-8A9B-0C1D2E3F4A5B");
+    // Neither.
+    assertThat(CertificateIdentity.of(TestCertificates.client("CN=Jane Doe").upn("jdoe@example.org").issuedBy(CA)).edipi()).isNull();
+    assertThat(CertificateIdentity.of(TestCertificates.client("CN=x").uri("https://example.org/x").issuedBy(CA)).uuid()).isNull();
+  }
 }

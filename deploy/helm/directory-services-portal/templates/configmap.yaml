@@ -90,6 +90,13 @@ data:
   X509_PROXY_SECRET_FILE: {{ ternary "/etc/dsp/x509-proxy/proxy-secret" "" (and $v.x509.enabled true) | quote }}
   X509_TRUSTED_CA_FILE: {{ ternary "/etc/dsp/x509/ca.pem" "" (eq (include "dsp.x509CaConfigured" .) "true") | quote }}
   X509_CHECK_REVOCATION: {{ $v.x509.checkRevocation | quote }}
+  {{- $rev := $v.x509.revocation }}
+  ENS_X509_REVOCATION: {{ toString $rev.mode | quote }}
+  ENS_X509_OCSP_RESPONDER_URL: {{ $rev.ocspResponderUrl | quote }}
+  ENS_X509_CRL_DIR: {{ $rev.crlDir | quote }}
+  ENS_X509_REVOCATION_FAIL: {{ $rev.fail | quote }}
+  ENS_X509_REVOCATION_CACHE: {{ $rev.cache | quote }}
+  ENS_X509_ALLOWED_ISSUERS: {{ include "dsp.joinSemi" $v.x509.allowedIssuers | quote }}
   X509_MAPPING: {{ $v.x509.mapping | quote }}
   X509_USER_FILTER: {{ $v.x509.userFilter | quote }}
   X509_REQUIRE_CERTIFICATE_MATCH: {{ $v.x509.requireCertificateMatch | quote }}

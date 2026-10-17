@@ -13,8 +13,12 @@ tls:
 x509:
   enabled: true
   mapping: filter
-  userFilter: (&(objectClass=inetOrgPerson)(userPrincipalName={{upn}}))
+  userFilter: (&(objectClass=inetOrgPerson)(employeeNumber={edipi}))
   autoLogin: true
+  revocation:
+    mode: ocsp-then-crl
+  allowedIssuers:
+    - CN=DOD ID CA-70,OU=PKI,OU=DoD,O=U.S. Government,C=US
 service:
   type: LoadBalancer
   port: 80

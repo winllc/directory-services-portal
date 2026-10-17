@@ -10,6 +10,8 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.naming.InvalidNameException;
 import javax.naming.ldap.LdapName;
 import javax.naming.ldap.Rdn;
@@ -17,14 +19,29 @@ import javax.security.auth.x500.X500Principal;
 
 /**
  * Identity values extracted from a client certificate, used as placeholders in the user
- * filter: {{subject}}, {{cn}}, {{uid}}, {{email}}, {{upn}}, {{serial}}.
+ * filter: {{subject}}, {{cn}}, {{uid}}, {{email}}, {{upn}}, {{edipi}}, {{uuid}}, {{serial}}.
+ *
+ * <ul>
+ *   <li>{@code upn}: the SAN otherName UserPrincipalName (CAC/PIV);
+ *   <li>{@code edipi}: the DoD EDIPI, the digits of a UPN of the form {@code 1234567890@mil}, else
+ *       the trailing ten digits of a CN {@code LAST.FIRST.MI.1234567890};
+ *   <li>{@code email}: the rfc822Name SAN, else the subject's emailAddress;
+ *   <li>{@code uuid}: the UUID of a SAN URI {@code urn:uuid:...} (the PIV FASC-N UUID), without
+ *       the {@code urn:uuid:} prefix.
+ * </ul>
  */
-public record CertificateIdentity(String subject, String issuer, String serial, String cn, String uid, String email, String upn) {
+public record CertificateIdentity(String subject, String issuer, String serial, String cn, String uid, String email, String upn,
+    String edipi, String uuid) {
 
   static final String OID_EMAIL_ADDRESS = "1.2.840.113549.1.9.1";
   static final String OID_UID = "0.9.2342.19200300.100.1.1";
   /** Microsoft User Principal Name (used by smart cards such as CAC/PIV). */
   static final String OID_UPN = "1.3.6.1.4.1.311.20.2.3";
+  /** The placeholder names, as {{name}} or {name}. */
+  public static final List<String> NAMES = List.of("subject", "cn", "uid", "email", "upn", "edipi", "uuid", "serial");
+  private static final Pattern EDIPI_UPN = Pattern.compile("^(\\d+)@mil$", Pattern.CASE_INSENSITIVE);
+  private static final Pattern EDIPI_CN = Pattern.compile("\\.(\\d{10})$");
+  private static final Pattern URN_UUID = Pattern.compile("^urn:uuid:([0-9a-fA-F-]{36})$", Pattern.CASE_INSENSITIVE);
 
   public static CertificateIdentity of(X509Certificate cert) {
     String subject = cert.getSubjectX500Principal().getName(X500Principal.RFC2253);
@@ -32,6 +49,7 @@ public record CertificateIdentity(String subject, String issuer, String serial, 
     Map<String, String> rdns = mostSpecificRdnValues(subject);
     String email = null;
     String upn = null;
+    String uuid = null;
     try {
       Collection<List<?>> sans = cert.getSubjectAlternativeNames();
       if (sans != null) {
@@ -39,14 +57,32 @@ public record CertificateIdentity(String subject, String issuer, String serial, 
           int type = (Integer) san.get(0);
           if (type == 1 && email == null) email = String.valueOf(san.get(1));
           if (type == 0 && upn == null && san.get(1) instanceof byte[] der) upn = otherName(der, OID_UPN);
+          if (type == 6 && uuid == null) {
+            Matcher m = URN_UUID.matcher(String.valueOf(san.get(1)).trim());
+            if (m.matches()) uuid = m.group(1);
+          }
         }
       }
     } catch (CertificateParsingException e) {
       // Malformed SAN extension: fall back to subject attributes.
     }
     if (email == null) email = rdns.get(OID_EMAIL_ADDRESS);
-    return new CertificateIdentity(subject, issuer, cert.getSerialNumber().toString(16), rdns.get("cn"),
-        rdns.get("uid") != null ? rdns.get("uid") : rdns.get(OID_UID), email, upn);
+    String cn = rdns.get("cn");
+    return new CertificateIdentity(subject, issuer, cert.getSerialNumber().toString(16), cn,
+        rdns.get("uid") != null ? rdns.get("uid") : rdns.get(OID_UID), email, upn, edipi(upn, cn), uuid);
+  }
+
+  /** The digits of a UPN {@code 1234567890@mil}, else the trailing {@code .1234567890} of the CN. */
+  static String edipi(String upn, String cn) {
+    if (upn != null) {
+      Matcher m = EDIPI_UPN.matcher(upn.trim());
+      if (m.matches()) return m.group(1);
+    }
+    if (cn != null) {
+      Matcher m = EDIPI_CN.matcher(cn.trim());
+      if (m.find()) return m.group(1);
+    }
+    return null;
   }
 
   /** Placeholder values (only those present). */
@@ -57,6 +93,8 @@ public record CertificateIdentity(String subject, String issuer, String serial, 
     put(m, "uid", uid);
     put(m, "email", email);
     put(m, "upn", upn);
+    put(m, "edipi", edipi);
+    put(m, "uuid", uuid);
     put(m, "serial", serial);
     return m;
   }
