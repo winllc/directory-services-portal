@@ -1,34 +1,29 @@
 package com.winllc.dsp.audit;
 
 import com.winllc.dsp.config.PortalProperties;
-import com.winllc.dsp.ldap.Dns;
+import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.SessionUser;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.net.InetAddress;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Predicate;
-import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -38,42 +33,98 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Records who changed what through the portal, and every sign-in.
+ * Records who did what through the portal, in the shared {@code ens-audit/1} format.
  *
  * <p>The directory's own logs only ever see the portal's service account, so this is the one
  * place that says which person made a change. Each event is:
  *
  * <ul>
- *   <li>appended, one JSON object per line, to {@code <audit dir>/audit-YYYY-MM.jsonl} and synced
- *       to disk before the call returns. Files are never rewritten or deleted by the portal;
- *   <li>written to the {@code audit} logger, so a log shipper can forward it to a SIEM;
- *   <li>kept in memory (the most recent {@code portal.audit.memory-events}) for the admin API.
+ *   <li>appended to the {@link AuditStore} (monthly JSONL files under {@code <data dir>/audit}) and
+ *       synced to disk, hash-chained, in the request that caused it. A security action whose event
+ *       can't be stored fails ({@link AuditUnavailableException}, 503); system events only log;
+ *   <li>then written as one raw JSON line to the {@code ens.audit} logger (stdout and the optional
+ *       rolling file, see {@link AuditOutputs});
+ *   <li>delivered in the background to Splunk HEC and syslog when configured ({@link AuditDelivery}).
  * </ul>
- *
- * <p>The audited change has already happened by the time it is recorded, so a failure to write
- * the file is logged as an error rather than failing the request.
  */
 @Component
 public class AuditLog {
   private static final Logger log = LoggerFactory.getLogger(AuditLog.class);
-  /** Separate logger name so deployments can route audit events on their own. */
-  private static final Logger auditLogger = LoggerFactory.getLogger("audit");
-  private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("yyyy-MM").withZone(ZoneOffset.UTC);
-  private static final int MAX_VALUE_LENGTH = 1000;
+  /** Dedicated logger (own appenders, additivity off) so log shippers can route audit events on their own. */
+  public static final String LOGGER = "ens.audit";
+  private static final Logger auditLogger = LoggerFactory.getLogger(LOGGER);
+  static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+  private static final String REQUEST_ID = AuditLog.class.getName() + ".requestId";
 
   private final JsonMapper mapper;
-  private final Path dir;
-  private final int capacity;
-  private final Deque<AuditEvent> recent = new ArrayDeque<>();
+  private final AuditStore store;
+  private final ObjectProvider<Licensing> licensing;
+  private final String version;
+  private final String host;
+  private volatile String installationId;
 
-  public AuditLog(JsonMapper mapper, PortalProperties props) {
+  public AuditLog(JsonMapper mapper, PortalProperties props, ObjectProvider<BuildProperties> build, ObjectProvider<Licensing> licensing) {
     this.mapper = mapper;
+    this.licensing = licensing;
+    BuildProperties b = build.getIfAvailable();
+    this.version = b != null && b.getVersion() != null ? b.getVersion() : "dev";
+    this.host = hostname();
     String configured = props.getAudit().getDir();
-    this.dir = (configured == null || configured.isBlank()
-        ? Path.of(props.getDataDir()).resolve("audit")
-        : Path.of(configured)).toAbsolutePath();
-    this.capacity = Math.max(props.getAudit().getMemoryEvents(), 100);
-    loadRecent();
+    Path dir = configured == null || configured.isBlank() ? Path.of(props.getDataDir()).resolve("audit") : Path.of(configured);
+    this.store = new AuditStore(dir);
+    new AuditMigration(mapper, this).run(store);
+    log.info("Audit store at {}; chain head seq {}", store.dir(), store.headSeq());
+  }
+
+  public AuditStore store() {
+    return store;
+  }
+
+  public String product() {
+    return Licensing.PRODUCT;
+  }
+
+  public String version() {
+    return version;
+  }
+
+  public String host() {
+    return host;
+  }
+
+  /** From the license manager; null until it can be read. */
+  public String installationId() {
+    String id = installationId;
+    if (id != null) return id;
+    try {
+      Licensing l = licensing.getIfAvailable();
+      if (l != null) installationId = id = l.manager().installationId();
+    } catch (RuntimeException e) {
+      // The state directory isn't usable yet; recorded as null.
+    }
+    return id;
+  }
+
+  private static String hostname() {
+    String env = System.getenv("HOSTNAME");
+    if (env != null && !env.isBlank()) return env;
+    try {
+      return InetAddress.getLocalHost().getHostName();
+    } catch (IOException | RuntimeException e) {
+      return "unknown";
+    }
+  }
+
+  static String now() {
+    return TIME.format(Instant.now());
+  }
+
+  /**
+   * Fails with {@link AuditUnavailableException} when events can't be stored now. Called before a
+   * security action that can't be undone, so it isn't performed unaudited.
+   */
+  public void requireWritable() {
+    if (!store.writable()) throw new AuditUnavailableException("The audit log at " + store.dir() + " is not writable");
   }
 
   // ---------------------------------------------------------------------------
@@ -87,12 +138,19 @@ public class AuditLog {
 
   public final class Draft {
     private final String action;
+    private String category;
+    private String severity;
     private SessionUser user;
+    private AuditEvent.Actor actor;
+    private String anonymousId;
     private AuditEvent.Target target;
-    private String definitionId;
-    private final List<AuditEvent.Change> changes = new ArrayList<>();
-    private final Map<String, String> details = new LinkedHashMap<>();
-    private AuditEvent finished;
+    private AuditEvent.Source source;
+    private boolean sourceSet;
+    private String time;
+    private String id;
+    private final Map<String, Object> details = new LinkedHashMap<>();
+    private AuditStore.Stored finished;
+    private boolean done;
 
     private Draft(String action) {
       this.action = action;
@@ -101,51 +159,135 @@ public class AuditLog {
     /** The acting user. Defaults to the user signed in on the current request. */
     public Draft by(SessionUser user) {
       this.user = user;
+      this.actor = null;
+      return this;
+    }
+
+    /** An explicit actor (a service, the system). */
+    public Draft actor(AuditEvent.Actor actor) {
+      this.actor = actor;
+      return this;
+    }
+
+    /** Not signed in; {@code attemptedId} is the user name tried (a failed sign-in), if any. */
+    public Draft anonymous(String attemptedId) {
+      this.anonymousId = attemptedId == null ? null : AuditDetails.truncate(attemptedId.length() > 128 ? attemptedId.substring(0, 128) : attemptedId);
+      this.actor = new AuditEvent.Actor("anonymous", this.anonymousId, null, List.of());
+      return this;
+    }
+
+    public Draft system() {
+      this.actor = AuditEvent.Actor.SYSTEM;
       return this;
     }
 
     public Draft target(String type, String id, String name) {
-      this.target = new AuditEvent.Target(type, id, name);
+      this.target = new AuditEvent.Target(type, AuditDetails.truncate(id), AuditDetails.truncate(name));
+      return this;
+    }
+
+    public Draft source(String ip, String userAgent) {
+      this.source = ip == null && userAgent == null ? null : new AuditEvent.Source(ip, AuditDetails.truncate(userAgent));
+      this.sourceSet = true;
+      return this;
+    }
+
+    public Draft category(String category) {
+      this.category = category;
+      return this;
+    }
+
+    public Draft severity(String severity) {
+      this.severity = severity;
+      return this;
+    }
+
+    /** Keeps an original time and id (history migration). */
+    Draft at(String time, String id) {
+      this.time = time;
+      this.id = id;
       return this;
     }
 
     public Draft definition(String definitionId) {
-      this.definitionId = definitionId;
-      return this;
+      return detail("definitionId", definitionId);
     }
 
     public Draft changes(Collection<AuditEvent.Change> changes) {
-      this.changes.addAll(changes);
+      changes.forEach(c -> AuditDetails.putChange(details, c));
       return this;
     }
 
     public Draft detail(String key, Object value) {
-      if (value != null) details.put(key, String.valueOf(value));
+      if (value != null) AuditDetails.put(details, key, value);
       return this;
     }
 
-    public AuditEvent success() {
+    public AuditStore.Stored success() {
       return finish(AuditEvent.SUCCESS, null);
     }
 
-    public AuditEvent denied(String message) {
-      return finish(AuditEvent.DENIED, message);
+    public AuditStore.Stored denied(String reason) {
+      return finish(AuditEvent.DENIED, reason);
     }
 
-    public AuditEvent failed(String message) {
-      return finish(AuditEvent.FAILED, message);
+    public AuditStore.Stored failed(String reason) {
+      return finish(AuditEvent.FAILURE, reason);
     }
 
     /** An event is recorded once; a later outcome for the same draft is ignored. */
-    private AuditEvent finish(String outcome, String message) {
-      if (finished != null) return finished;
-      SessionUser who = user != null ? user : currentUser();
-      AuditEvent.Actor actor = who == null ? null : new AuditEvent.Actor(who.username(), who.dn(), who.authMethod());
-      AuditEvent event = new AuditEvent("audit-" + UUID.randomUUID(), Instant.now().toString(), action, outcome, actor,
-          sourceAddress(), target, definitionId, message, List.copyOf(changes), Map.copyOf(details));
-      record(event);
-      finished = event;
-      return event;
+    private AuditStore.Stored finish(String outcome, String reason) {
+      if (done) return finished;
+      done = true;
+      finished = record(build(outcome, reason));
+      return finished;
+    }
+
+    AuditEvent build(String outcome, String reason) {
+      String cat = category != null ? category : AuditCatalog.category(action);
+      String sev = severity != null ? severity : AuditCatalog.severity(cat, action, outcome);
+      HttpServletRequest request = currentRequest();
+      AuditEvent.Actor who = actor;
+      Map<String, Object> d = new LinkedHashMap<>();
+      if (who == null) {
+        SessionUser u = user != null ? user : currentUser();
+        if (u != null) {
+          who = new AuditEvent.Actor("user", u.username(), u.displayName(), u.isAdmin() ? List.of("ADMIN", "USER") : List.of("USER"));
+          d.put("actorDn", AuditDetails.truncate(u.dn()));
+          d.put("authMethod", u.authMethod());
+        } else {
+          who = request != null ? new AuditEvent.Actor("anonymous", null, null, List.of()) : AuditEvent.Actor.SYSTEM;
+        }
+      }
+      d.putAll(details);
+      AuditEvent.Source src = sourceSet ? source : request == null ? null
+          : new AuditEvent.Source(request.getRemoteAddr(), AuditDetails.truncate(request.getHeader("User-Agent")));
+      return new AuditEvent(id != null ? id : UUID.randomUUID().toString(), 0, time != null ? time : now(), product(), version, host,
+          installationId(), cat, action, outcome, sev, who, src, target, AuditDetails.truncate(reason), d,
+          request == null ? null : requestId(request), request == null ? null : sessionHash(request), null, null);
+    }
+  }
+
+  /**
+   * Stores one event and writes it to the outputs. Returns null when it could not be stored and
+   * the action may go on regardless (system events, denials); otherwise throws.
+   */
+  AuditStore.Stored record(AuditEvent event) {
+    boolean required = AuditCatalog.mustBeRecorded(event.category(), event.action());
+    try {
+      return store.append(event, s -> emit(s.line()));
+    } catch (IOException e) {
+      log.error("Could not store audit event {} ({}) in {}: {}", event.id(), event.action(), store.dir(), e.getMessage());
+      if (required) throw new AuditUnavailableException("The audit log could not be written: " + e.getMessage());
+      return null;
+    }
+  }
+
+  private static void emit(String line) {
+    try {
+      auditLogger.info(line);
+    } catch (RuntimeException e) {
+      log.error("Could not write an audit event to the {} logger: {}", LOGGER, e.getMessage());
     }
   }
 
@@ -154,158 +296,29 @@ public class AuditLog {
     return auth != null && auth.getPrincipal() instanceof SessionUser u ? u : null;
   }
 
-  private static String sourceAddress() {
+  static HttpServletRequest currentRequest() {
     RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
-    if (!(attrs instanceof ServletRequestAttributes sra)) return null;
-    HttpServletRequest request = sra.getRequest();
-    return request.getRemoteAddr();
+    return attrs instanceof ServletRequestAttributes sra ? sra.getRequest() : null;
   }
 
-  synchronized void record(AuditEvent event) {
-    String line = mapper.writeValueAsString(event);
-    auditLogger.info(line);
+  /** One id per request, shared by every event it records. */
+  static String requestId(HttpServletRequest request) {
+    Object id = request.getAttribute(REQUEST_ID);
+    if (id == null) {
+      id = UUID.randomUUID().toString();
+      request.setAttribute(REQUEST_ID, id);
+    }
+    return id.toString();
+  }
+
+  /** The first 16 hex digits of sha256(session id): correlates events without revealing the session. */
+  static String sessionHash(HttpServletRequest request) {
     try {
-      Files.createDirectories(dir);
-      Files.writeString(fileFor(event.at()), line + "\n", StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
-    } catch (IOException | RuntimeException e) {
-      log.error("Could not write audit event {} to {}: {}", event.id(), dir, e.getMessage());
+      HttpSession session = request.getSession(false);
+      return session == null ? null : AuditJson.sha256Hex(session.getId()).substring(0, 16);
+    } catch (IllegalStateException e) {
+      return null;
     }
-    recent.addFirst(event);
-    while (recent.size() > capacity) recent.removeLast();
-  }
-
-  private Path fileFor(String at) {
-    return dir.resolve("audit-" + MONTH.format(Instant.parse(at)) + ".jsonl");
-  }
-
-  /** Load the newest events from the monthly files, so the admin page survives a restart. */
-  private void loadRecent() {
-    if (!Files.isDirectory(dir)) return;
-    List<Path> files;
-    try (Stream<Path> s = Files.list(dir)) {
-      files = s.filter(p -> p.getFileName().toString().matches("audit-\\d{4}-\\d{2}\\.jsonl"))
-          .sorted(Comparator.reverseOrder())
-          .toList();
-    } catch (IOException e) {
-      log.warn("Could not list audit directory {}: {}", dir, e.getMessage());
-      return;
-    }
-    int skipped = 0;
-    for (Path file : files) {
-      List<String> lines;
-      try {
-        lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-      } catch (IOException e) {
-        log.warn("Could not read audit file {}: {}", file, e.getMessage());
-        continue;
-      }
-      for (int i = lines.size() - 1; i >= 0 && recent.size() < capacity; i--) {
-        String line = lines.get(i).trim();
-        if (line.isEmpty()) continue;
-        try {
-          recent.addLast(mapper.readValue(line, AuditEvent.class));
-        } catch (RuntimeException e) {
-          skipped++;
-        }
-      }
-      if (recent.size() >= capacity) break;
-    }
-    if (skipped > 0) log.warn("Skipped {} unreadable audit line(s) in {}", skipped, dir);
-    log.info("Audit log at {}; loaded {} recent event(s)", dir, recent.size());
-  }
-
-  // ---------------------------------------------------------------------------
-  // Querying
-  // ---------------------------------------------------------------------------
-
-  /**
-   * {@code action} matches exactly or as a category prefix ("entry" matches "entry.update");
-   * {@code target} and {@code actor} match a DN by DN equality, otherwise as case-insensitive
-   * text; {@code q} searches every text field.
-   */
-  public record Query(String q, String action, String outcome, String actor, String target, String definitionId,
-      Instant from, Instant to, int page, int pageSize) {}
-
-  public record Page(List<AuditEvent> events, int total, int page, int pageSize, int retained, int capacity, String oldest) {}
-
-  public synchronized Page query(Query query) {
-    Predicate<AuditEvent> match = e -> true;
-    if (notBlank(query.action())) {
-      String a = query.action().trim();
-      match = match.and(e -> e.action().equals(a) || e.action().startsWith(a + "."));
-    }
-    if (notBlank(query.outcome())) match = match.and(e -> e.outcome().equals(query.outcome().trim()));
-    if (notBlank(query.definitionId())) match = match.and(e -> query.definitionId().equals(e.definitionId()));
-    if (notBlank(query.actor())) {
-      String a = query.actor().trim();
-      match = match.and(e -> e.actor() != null && (identifies(a, e.actor().dn()) || equalsIgnoreCase(a, e.actor().username())));
-    }
-    if (notBlank(query.target())) {
-      List<String> names = namesOf(query.target().trim());
-      match = match.and(e -> e.target() != null && names.stream().anyMatch(n -> identifies(n, e.target().id())));
-    }
-    if (query.from() != null) match = match.and(e -> !Instant.parse(e.at()).isBefore(query.from()));
-    if (query.to() != null) match = match.and(e -> Instant.parse(e.at()).isBefore(query.to()));
-    if (notBlank(query.q())) {
-      String needle = query.q().trim().toLowerCase(Locale.ROOT);
-      match = match.and(e -> text(e).contains(needle));
-    }
-    List<AuditEvent> all = recent.stream().filter(match).toList();
-    int pageSize = Math.min(Math.max(query.pageSize(), 1), 200);
-    int page = Math.max(query.page(), 1);
-    int from = Math.min((page - 1) * pageSize, all.size());
-    int to = Math.min(from + pageSize, all.size());
-    String oldest = recent.isEmpty() ? null : recent.peekLast().at();
-    return new Page(all.subList(from, to), all.size(), page, pageSize, recent.size(), capacity, oldest);
-  }
-
-  /**
-   * Every DN a target has had, following recorded renames both ways, so an entry's history
-   * includes what happened to it under earlier and later names.
-   */
-  private List<String> namesOf(String target) {
-    List<String> names = new ArrayList<>(List.of(target));
-    boolean grew = true;
-    while (grew) {
-      grew = false;
-      for (AuditEvent e : recent) {
-        String from = e.details().get("previousDn");
-        if (from == null || e.target() == null || e.target().id() == null) continue;
-        boolean knowsFrom = names.stream().anyMatch(n -> identifies(n, from));
-        boolean knowsTo = names.stream().anyMatch(n -> identifies(n, e.target().id()));
-        if (knowsFrom != knowsTo) {
-          names.add(knowsFrom ? e.target().id() : from);
-          grew = true;
-        }
-      }
-    }
-    return names;
-  }
-
-  /** A DN query matches by DN equality; anything else by case-insensitive equality. */
-  private static boolean identifies(String query, String value) {
-    if (value == null) return false;
-    if (Dns.isValid(query) && Dns.isValid(value) && query.contains("=")) return Dns.equal(query, value);
-    return equalsIgnoreCase(query, value);
-  }
-
-  private static boolean equalsIgnoreCase(String a, String b) {
-    return b != null && a.equalsIgnoreCase(b);
-  }
-
-  private static String text(AuditEvent e) {
-    StringBuilder sb = new StringBuilder(e.action()).append(' ').append(e.outcome());
-    if (e.actor() != null) sb.append(' ').append(e.actor().username()).append(' ').append(e.actor().dn());
-    if (e.target() != null) sb.append(' ').append(e.target().id()).append(' ').append(e.target().name());
-    Stream.of(e.sourceAddress(), e.message()).filter(Objects::nonNull).forEach(s -> sb.append(' ').append(s));
-    e.details().values().forEach(v -> sb.append(' ').append(v));
-    e.changes().forEach(c -> sb.append(' ').append(c.attribute()));
-    return sb.toString().toLowerCase(Locale.ROOT);
-  }
-
-  private static boolean notBlank(String s) {
-    return s != null && !s.isBlank();
   }
 
   // ---------------------------------------------------------------------------
@@ -340,6 +353,6 @@ public class AuditLog {
     String s = value instanceof String || value instanceof Number || value instanceof Boolean
         ? String.valueOf(value)
         : mapper.writeValueAsString(value);
-    return List.of(s.length() > MAX_VALUE_LENGTH ? s.substring(0, MAX_VALUE_LENGTH) + "…" : s);
+    return List.of(AuditDetails.truncate(s));
   }
 }

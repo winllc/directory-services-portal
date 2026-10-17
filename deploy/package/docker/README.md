@@ -98,7 +98,7 @@ certificates (`certs/alice.p12`, password `password`).
 
 ```bash
 ./portal.sh status                # containers, health, URL
-./portal.sh logs api              # follow the API log (the audit trail is on the "audit" logger too)
+./portal.sh logs api              # follow the API log (audit events are raw JSON lines on it, logger ens.audit)
 ./portal.sh backup                # portal-backup-<date>.tar.gz: configuration, audit log, analysis results
 ./portal.sh restore <file>
 ./portal.sh license <file.lic>    # install or replace the ENS license (or upload it on the license screen)
@@ -107,7 +107,9 @@ certificates (`certs/alice.p12`, password `password`).
 
 The portal's data (forms, directory definitions, permissions, dashboards, analyses, the audit
 log) is in the Docker volume `directory-services-portal_portal-data`. The directory data stays
-in your LDAP server.
+in your LDAP server. With `ENS_AUDIT_FILE` set in `.env`, the rolling audit file is in the
+`ens-audit` volume (`/var/log/ens` in the container) for a log forwarder to read; Splunk HEC and
+syslog delivery are configured in `.env` too (see the main README, Audit logging).
 
 ## Upgrade
 

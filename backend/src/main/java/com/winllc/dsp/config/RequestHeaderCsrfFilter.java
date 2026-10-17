@@ -1,5 +1,6 @@
 package com.winllc.dsp.config;
 
+import com.winllc.dsp.audit.AccessDenials;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,6 +18,12 @@ public class RequestHeaderCsrfFilter extends OncePerRequestFilter {
   public static final String HEADER = "X-DSP-Request";
   private static final Set<String> SAFE = Set.of("GET", "HEAD", "OPTIONS", "TRACE");
 
+  private final AccessDenials denials;
+
+  public RequestHeaderCsrfFilter(AccessDenials denials) {
+    this.denials = denials;
+  }
+
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
     return !request.getRequestURI().startsWith("/api/") || SAFE.contains(request.getMethod());
@@ -26,6 +33,7 @@ public class RequestHeaderCsrfFilter extends OncePerRequestFilter {
   protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
       throws ServletException, IOException {
     if (!"1".equals(request.getHeader(HEADER))) {
+      if (denials != null) denials.denied(request, "csrf", "Missing request verification header");
       JsonErrors.write(response, HttpServletResponse.SC_FORBIDDEN, "Missing request verification header");
       return;
     }

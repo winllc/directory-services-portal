@@ -88,10 +88,14 @@ public class AdminSchemaController {
   @RequiresFeature(LicensedFeature.SCHEMA_TRANSFER)
   @GetMapping("/export")
   public ResponseEntity<String> export() {
+    String text = schema.exportCustom();
+    audit.event("data.exported").target("schema", "custom", "Custom schema").detail("format", "schema")
+        .detail("attributeTypes", schema.custom().attributeTypes().size()).detail("objectClasses", schema.custom().objectClasses().size())
+        .success();
     return ResponseEntity.ok()
         .contentType(MediaType.TEXT_PLAIN)
         .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"custom.schema\"")
-        .body(schema.exportCustom());
+        .body(text);
   }
 
   @PutMapping("/attribute-types")

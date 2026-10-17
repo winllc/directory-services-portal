@@ -16,7 +16,11 @@ import type {
   MetricSource,
   MetricWidget,
   OverviewResponse,
+  AuditActions,
   AuditPage,
+  AuditStatus,
+  AuditToken,
+  AuditVerification,
   CustomSchema,
   DefinitionSummary,
   DirectoryDefinition,
@@ -57,6 +61,9 @@ export const keys = {
   subjects: (q: string, type?: string) => ['admin', 'subjects', q, type] as const,
   browse: (base: string) => ['admin', 'browse', base] as const,
   audit: (params: object) => ['admin', 'audit', params] as const,
+  auditActions: ['admin', 'audit-actions'] as const,
+  auditStatus: ['admin', 'audit-status'] as const,
+  auditTokens: ['admin', 'audit-tokens'] as const,
   metricSources: ['metrics', 'sources'] as const,
   metricSummary: ['metrics', 'summary'] as const,
   overview: (id: string) => ['metrics', 'overview', id] as const,
@@ -347,14 +354,21 @@ export const useBrowse = (base: string, enabled: boolean) =>
 export const previewSearch = (input: { baseDn: string; scope: 'base' | 'one' | 'sub'; filter: string; attributes?: string[] }) =>
   api.post<{ entries: DirectoryEntry[]; truncated: boolean }>('/api/admin/preview', input);
 
-export interface AuditQuery {
+/** Audit log filters (all optional). `from`/`to` are ISO instants or YYYY-MM-DD. */
+export interface AuditFilters {
   q?: string;
+  category?: string;
   action?: string;
   outcome?: string;
+  severity?: string;
   actor?: string;
   target?: string;
+  ip?: string;
   from?: string;
   to?: string;
+}
+
+export interface AuditQuery extends AuditFilters {
   page?: number;
   pageSize?: number;
 }
@@ -365,6 +379,54 @@ export const useAudit = (params: AuditQuery) =>
     queryFn: () => api.get<AuditPage>(`/api/admin/audit${qs({ ...params })}`),
     placeholderData: (prev) => prev,
   });
+
+export const useAuditActions = () =>
+  useQuery({ queryKey: keys.auditActions, queryFn: () => api.get<AuditActions>('/api/admin/audit/actions'), staleTime: Infinity });
+
+export const useAuditStatus = () =>
+  useQuery({ queryKey: keys.auditStatus, queryFn: () => api.get<AuditStatus>('/api/admin/audit/status'), refetchInterval: 30_000 });
+
+export const useAuditTokens = () => useQuery({ queryKey: keys.auditTokens, queryFn: () => api.get<AuditToken[]>('/api/admin/audit/tokens') });
+
+export function useVerifyAudit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<AuditVerification>('/api/admin/audit/verify'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'audit'] }),
+  });
+}
+
+export function useCreateAuditToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.post<{ token: AuditToken; secret: string }>('/api/admin/audit/tokens', { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.auditTokens }),
+  });
+}
+
+export function useRevokeAuditToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del<AuditToken>(`/api/admin/audit/tokens/${encodeURIComponent(id)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.auditTokens }),
+  });
+}
+
+/** Download the events matching the filters (up to 100,000) as CSV or NDJSON. The server records the export. */
+export async function downloadAuditExport(format: 'csv' | 'ndjson', filters: AuditFilters) {
+  const res = await fetch(`/api/admin/audit/export${qs({ ...filters, format })}`, { credentials: 'same-origin' });
+  if (!res.ok) {
+    let message = `Export failed (${res.status})`;
+    try {
+      message = ((await res.json()) as { error?: string }).error ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message);
+  }
+  saveBlob(await res.blob(), `audit-${new Date().toISOString().slice(0, 10)}.${format}`);
+  return Number(res.headers.get('X-Audit-Count') ?? 0);
+}
 
 // ---------------------------------------------------------------------------
 // Background jobs

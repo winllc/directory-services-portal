@@ -40,6 +40,9 @@ RUN mkdir -p /app /data && chown 185:0 /data && chmod 0770 /data
 ENV ENS_LICENSE_STATE_DIR=/var/lib/ens/directory-portal \
     ENS_LICENSE_FILE=/var/lib/ens/directory-portal/license.lic
 RUN mkdir -p /var/lib/ens/directory-portal && chown -R 185:0 /var/lib/ens && chmod -R 0770 /var/lib/ens
+# Audit file output (ENS_AUDIT_FILE, off unless set; e.g. /var/log/ens/directory-portal/audit.jsonl):
+# mount the ens-audit volume here. The audit store itself is under /data/audit.
+RUN mkdir -p /var/log/ens/directory-portal && chown -R 185:0 /var/log/ens && chmod -R 0770 /var/log/ens
 COPY --from=build /src/target/directory-services-portal.jar /app/app.jar
 WORKDIR /app
 ENV DATA_DIR=/data PORT=3001 JAVA_OPTS="-XX:MaxRAMPercentage=75.0"

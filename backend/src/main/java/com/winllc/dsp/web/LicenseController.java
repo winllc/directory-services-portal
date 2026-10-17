@@ -5,6 +5,7 @@ import com.enssolutions.license.LicenseCheck;
 import com.enssolutions.license.LicenseException;
 import com.enssolutions.license.LicenseManager;
 import com.enssolutions.license.LicenseState;
+import com.winllc.dsp.audit.AuditLifecycle;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.Licensing;
@@ -37,10 +38,12 @@ public class LicenseController {
 
   private final Licensing licensing;
   private final AuditLog audit;
+  private final AuditLifecycle lifecycle;
 
-  public LicenseController(Licensing licensing, AuditLog audit) {
+  public LicenseController(Licensing licensing, AuditLog audit, AuditLifecycle lifecycle) {
     this.licensing = licensing;
     this.audit = audit;
+    this.lifecycle = lifecycle;
   }
 
   @GetMapping("/api/license")
@@ -61,37 +64,59 @@ public class LicenseController {
     return install(file.getBytes());
   }
 
+  /**
+   * Audited as {@code license.installed} or {@code license.rejected} (with the reason); never the
+   * license text. Refused up front when the audit log can't be written.
+   */
   private ResponseEntity<Map<String, Object>> install(byte[] bytes) {
-    if (bytes == null || bytes.length == 0) return refused("The license file is empty.", null);
-    if (bytes.length > MAX_LICENSE_BYTES) return refused("That file is too large to be a license.", null);
-    AuditLog.Draft event = audit.event("license.install").target("license", Licensing.PRODUCT, "License");
+    if (bytes == null || bytes.length == 0) {
+      rejected("empty", "The license file is empty.");
+      return refused("The license file is empty.", null);
+    }
+    if (bytes.length > MAX_LICENSE_BYTES) {
+      rejected("too_large", "That file is too large to be a license.");
+      return refused("That file is too large to be a license.", null);
+    }
+    audit.requireWritable();
+    String previousMode = licensing.current().mode().name();
     LicenseCheck check;
     try {
       check = licensing.manager().install(new String(bytes, StandardCharsets.UTF_8));
     } catch (LicenseException e) {
       String why = "That isn't a valid ENS license: " + e.getMessage() + ".";
-      event.detail("reason", e.reason()).denied(why);
+      rejected(String.valueOf(e.reason()), why);
       return refused(why, null);
     } catch (IOException e) {
       String why = "The license could not be saved to " + licensing.manager().licenseFile() + ": " + e.getMessage();
-      event.failed(why);
+      audit.event("license.installed").target("license", Licensing.PRODUCT, "License").failed(why);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", why));
     }
-    check.license().ifPresent(l -> event.detail("licenseId", l.id()).detail("revision", l.revision()).detail("edition", l.edition()));
-    event.detail("state", check.state());
     switch (check.state()) {
       case WRONG_PRODUCT, WRONG_INSTALLATION, SUPERSEDED -> {
         // Not installed: the library refuses these and keeps the current file.
+        AuditLog.Draft event = audit.event("license.rejected").target("license", Licensing.PRODUCT, "License")
+            .detail("reasonCode", check.state().name());
+        check.license().ifPresent(l -> event.detail("licenseId", l.id()).detail("revision", l.revision()));
         event.denied(check.message());
         return refused(check.message(), check.state());
       }
-      default -> event.success();
+      default -> {
+        AuditLog.Draft event = audit.event("license.installed").target("license", Licensing.PRODUCT, "License");
+        check.license().ifPresent(l -> event.detail("licenseId", l.id()).detail("revision", l.revision()).detail("edition", l.edition())
+            .detail("licensee", l.licensee()).detail("expiresAt", l.expiresAt().map(Object::toString).orElse(null)));
+        event.detail("state", check.state()).detail("mode.old", previousMode).detail("mode.new", check.mode().name()).success();
+      }
     }
+    lifecycle.checkLicenseMode();
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("installed", true);
     body.put("message", check.message());
     body.put("license", status(check, true));
     return ResponseEntity.ok(body);
+  }
+
+  private void rejected(String reasonCode, String why) {
+    audit.event("license.rejected").target("license", Licensing.PRODUCT, "License").detail("reasonCode", reasonCode).denied(why);
   }
 
   private static ResponseEntity<Map<String, Object>> refused(String message, LicenseState state) {

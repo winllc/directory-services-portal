@@ -87,11 +87,17 @@ public class X509AuthService {
   public SessionUser authenticate(HttpServletRequest request) {
     if (!enabled()) throw new CertificateRejectedException("Certificate sign-in is not enabled");
     if (!licensed()) {
-      throw new CertificateRejectedException(
-          "Smart-card (certificate) sign-in is not included in this portal's license. Sign in with your user name and password.");
+      String why = "Smart-card (certificate) sign-in is not included in this portal's license. Sign in with your user name and password.";
+      audit.event("auth.login").anonymous(null).detail("method", "x509").detail("reasonCode", "feature_not_licensed").denied(why);
+      throw new CertificateRejectedException(why);
     }
-    X509Certificate[] chain = extractor.extract(request)
-        .orElseThrow(() -> new CertificateRejectedException("No client certificate was presented"));
+    X509Certificate[] chain;
+    try {
+      chain = extractor.extract(request).orElseThrow(() -> new CertificateRejectedException("No client certificate was presented"));
+    } catch (CertificateRejectedException e) {
+      audit.event("auth.login").anonymous(null).detail("method", "x509").failed(e.getMessage());
+      throw e;
+    }
     CertificateIdentity identity = CertificateIdentity.of(chain[0]);
     AuditLog.Draft event = audit.event("auth.login").target("certificate", identity.subject(), identity.cn())
         .detail("method", "x509").detail("certificateSerial", identity.serial()).detail("certificateIssuer", identity.issuer());
@@ -106,7 +112,7 @@ public class X509AuthService {
       return user;
     } catch (CertificateRejectedException e) {
       log.warn("Certificate sign-in rejected for {} (issuer {}): {}", identity.subject(), identity.issuer(), e.getMessage());
-      event.failed(e.getMessage());
+      event.anonymous(identity.cn() != null ? identity.cn() : identity.subject()).failed(e.getMessage());
       throw e;
     }
   }

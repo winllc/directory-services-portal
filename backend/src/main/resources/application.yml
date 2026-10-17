@@ -43,6 +43,8 @@ portal:
   seed-demo-config: ${SEED_DEMO_CONFIG:}
   password-login-enabled: ${PASSWORD_LOGIN_ENABLED:true}
   login-hint: ${LOGIN_HINT:}
+  # The audit store: monthly ens-audit/1 JSONL files (default $DATA_DIR/audit). AUDIT_MEMORY_EVENTS
+  # is accepted for compatibility but no longer used: searches read all retained history.
   audit:
     dir: ${AUDIT_DIR:}
     memory-events: ${AUDIT_MEMORY_EVENTS:10000}
@@ -75,6 +77,27 @@ portal:
     user-filter: ${X509_USER_FILTER:(&(objectClass=inetOrgPerson)(uid={{cn}}))}
     require-certificate-match: ${X509_REQUIRE_CERTIFICATE_MATCH:false}
     auto-login: ${X509_AUTO_LOGIN:false}
+
+# Audit outputs and retention: the shared ENS_AUDIT_* variables (see README, Audit logging).
+ens:
+  audit:
+    stdout: ${ENS_AUDIT_STDOUT:true}
+    file: ${ENS_AUDIT_FILE:}
+    file-keep: ${ENS_AUDIT_FILE_KEEP:30}
+    retention-days: ${ENS_AUDIT_RETENTION_DAYS:0}
+    query-max-scan: ${ENS_AUDIT_QUERY_MAX_SCAN:2000000}
+    splunk:
+      url: ${ENS_AUDIT_SPLUNK_URL:}
+      token: ${ENS_AUDIT_SPLUNK_TOKEN:}
+      token-file: ${ENS_AUDIT_SPLUNK_TOKEN_FILE:}
+      index: ${ENS_AUDIT_SPLUNK_INDEX:}
+      sourcetype: ${ENS_AUDIT_SPLUNK_SOURCETYPE:ens:audit}
+      insecure: ${ENS_AUDIT_SPLUNK_INSECURE:false}
+    syslog:
+      host: ${ENS_AUDIT_SYSLOG_HOST:}
+      port: ${ENS_AUDIT_SYSLOG_PORT:}
+      protocol: ${ENS_AUDIT_SYSLOG_PROTOCOL:tcp}
+      facility: ${ENS_AUDIT_SYSLOG_FACILITY:local0}
 
 # The ENS license is not a Spring property: ENS_LICENSE_FILE and ENS_LICENSE_STATE_DIR (environment
 # only; see README, Licensing). Without a license only sign-in and the license screen work.

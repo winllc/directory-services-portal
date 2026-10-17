@@ -3,6 +3,7 @@ package com.winllc.dsp.service;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.winllc.dsp.audit.AuditEvent;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.Dns;
@@ -65,24 +66,34 @@ public class AuthService {
     return found.size() == 1 ? found.get(0).dn() : null;
   }
 
+  /**
+   * Audited as {@code auth.login} (method password): a failure names the attempted user as an
+   * anonymous actor, and the failure that reaches the limit also records {@code auth.lockout}. The
+   * success is recorded before the session exists, so a sign-in that can't be audited fails.
+   */
   public SessionUser login(String username, String password, String clientKey) {
     // The attempted name is recorded as typed (truncated): it is what an investigation searches for.
-    AuditLog.Draft event = audit.event("auth.login").target("user", username.length() > 128 ? username.substring(0, 128) : username, null)
-        .detail("method", "password");
+    String attempted = username.length() > 128 ? username.substring(0, 128) : username;
+    AuditLog.Draft event = audit.event("auth.login").target("user", attempted, null).detail("method", "password");
     if (!props.isPasswordLoginEnabled()) {
-      event.denied("Password sign-in is disabled");
+      event.anonymous(attempted).denied("Password sign-in is disabled");
       throw ApiException.forbidden("Password sign-in is disabled");
     }
     String throttleKey = clientKey + "|" + username.toLowerCase();
     Failures f = failures.get(throttleKey);
     if (f != null && System.currentTimeMillis() - f.first() < FAILURE_WINDOW_MS && f.count() >= MAX_FAILURES) {
-      event.denied("Too many failed attempts");
+      event.anonymous(attempted).denied("Too many failed attempts");
       throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed login attempts. Try again later.");
     }
     String dn = USERNAME.matcher(username).matches() && !password.isEmpty() ? findUserDn(username) : null;
     if (dn == null || !directory.authenticate(dn, password)) {
-      recordFailure(throttleKey);
-      event.failed(dn == null ? "Unknown user" : "Wrong password");
+      int count = recordFailure(throttleKey);
+      event.anonymous(attempted).failed(dn == null ? "Unknown user" : "Wrong password");
+      if (count == MAX_FAILURES) {
+        audit.event("auth.lockout").anonymous(attempted).target("user", attempted, null).severity(AuditEvent.ALERT)
+            .detail("method", "password").detail("failures", count).detail("windowMinutes", FAILURE_WINDOW_MS / 60_000)
+            .denied("Too many failed sign-in attempts: further attempts from this address are refused for 15 minutes");
+      }
       throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
     }
     failures.remove(throttleKey);
@@ -91,9 +102,10 @@ public class AuthService {
     return user;
   }
 
-  private void recordFailure(String key) {
+  private int recordFailure(String key) {
     long now = System.currentTimeMillis();
-    failures.compute(key, (k, f) -> f == null || now - f.first() > FAILURE_WINDOW_MS ? new Failures(1, now) : new Failures(f.count() + 1, f.first()));
+    return failures.compute(key, (k, f) -> f == null || now - f.first() > FAILURE_WINDOW_MS ? new Failures(1, now) : new Failures(f.count() + 1, f.first()))
+        .count();
   }
 
   @Scheduled(fixedDelay = 60_000)

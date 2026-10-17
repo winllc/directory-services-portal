@@ -1,5 +1,7 @@
 package com.winllc.dsp.web;
 
+import com.winllc.dsp.audit.AccessDenials;
+import com.winllc.dsp.audit.AuditUnavailableException;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.license.LicenseRequiredException;
 import com.winllc.dsp.x509.CertificateRejectedException;
@@ -25,6 +27,12 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 public class ApiErrorHandler {
   private static final Logger log = LoggerFactory.getLogger(ApiErrorHandler.class);
 
+  private final AccessDenials denials;
+
+  public ApiErrorHandler(AccessDenials denials) {
+    this.denials = denials;
+  }
+
   private static ResponseEntity<Map<String, Object>> body(HttpStatus status, String message, Map<String, ?> details) {
     Map<String, Object> b = new LinkedHashMap<>();
     b.put("error", message);
@@ -33,8 +41,17 @@ public class ApiErrorHandler {
   }
 
   @ExceptionHandler(ApiException.class)
-  ResponseEntity<Map<String, Object>> api(ApiException e) {
+  ResponseEntity<Map<String, Object>> api(ApiException e, HttpServletRequest request) {
+    if (e.status() == HttpStatus.FORBIDDEN) denials.denied(request, "forbidden", e.getMessage());
     return body(e.status(), e.getMessage(), e.details());
+  }
+
+  /** A security action that could not be audited was not performed. */
+  @ExceptionHandler(AuditUnavailableException.class)
+  ResponseEntity<Map<String, Object>> auditUnavailable(AuditUnavailableException e) {
+    log.error("Refused an action that could not be audited: {}", e.getMessage());
+    return body(HttpStatus.SERVICE_UNAVAILABLE, "The audit log can't be written, so this action was not performed. "
+        + "Ask an administrator to check the portal's audit directory.", null);
   }
 
   @ExceptionHandler(CertificateRejectedException.class)
@@ -43,7 +60,8 @@ public class ApiErrorHandler {
   }
 
   @ExceptionHandler(DirectoryException.class)
-  ResponseEntity<Map<String, Object>> directory(DirectoryException e) {
+  ResponseEntity<Map<String, Object>> directory(DirectoryException e, HttpServletRequest request) {
+    if (e.status() == HttpStatus.FORBIDDEN) denials.denied(request, "directory_insufficient_access", e.getMessage());
     ResponseEntity<Map<String, Object>> r = body(e.status(), e.getMessage(), null);
     r.getBody().put("code", e.code().name());
     return r;
@@ -51,7 +69,8 @@ public class ApiErrorHandler {
 
   /** {"error": message, "code": "license_required" | "license_read_only" | "feature_not_licensed", "state", "feature"?}. */
   @ExceptionHandler(LicenseRequiredException.class)
-  ResponseEntity<Map<String, Object>> license(LicenseRequiredException e) {
+  ResponseEntity<Map<String, Object>> license(LicenseRequiredException e, HttpServletRequest request) {
+    denials.denied(request, e.code(), e.getMessage());
     ResponseEntity<Map<String, Object>> r = body(HttpStatus.FORBIDDEN, e.getMessage(), null);
     r.getBody().put("code", e.code());
     r.getBody().put("state", e.state());

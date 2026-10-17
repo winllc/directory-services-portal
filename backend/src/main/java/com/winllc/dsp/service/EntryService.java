@@ -6,6 +6,7 @@ import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
 import com.unboundid.ldap.sdk.RDN;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.winllc.dsp.audit.AuditDetails;
 import com.winllc.dsp.audit.AuditEvent;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.ldap.DirectoryException;
@@ -55,7 +56,7 @@ public class EntryService {
   /** Attributes that are never returned to clients. */
   private static final Set<String> HIDDEN = Set.of("userpassword", "unicodepwd", "sambantpassword", "sambalmpassword", "krbprincipalkey");
   private static final int LIST_LIMIT = 1000;
-  private static final String REDACTED = "(redacted)";
+  private static final String REDACTED = AuditDetails.REDACTED;
 
   private final LdapDirectory directory;
   private final ConfigStore store;
@@ -411,7 +412,14 @@ public class EntryService {
     // A save that changed nothing is not worth a line in the audit log.
     if (!recorded.isEmpty()) {
       List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
-      event.target("entry", targetDn, titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0)).success();
+      String name = titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0);
+      event.target("entry", targetDn, name).success();
+      // A password set through a form: the user's own change, or an administrator's reset.
+      List<String> secrets = recorded.stream().map(AuditEvent.Change::attribute).filter(a -> HIDDEN.contains(a.toLowerCase())).toList();
+      if (!secrets.isEmpty()) {
+        audit.event(self ? "auth.password-changed" : "auth.password-reset").by(user).definition(def.id()).target("user", targetDn, name)
+            .detail("attributes", String.join(",", secrets)).success();
+      }
     }
     return loadEntry(def, form, targetDn);
   }

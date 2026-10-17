@@ -18,7 +18,11 @@ RestartSec=5
 Environment=ENS_LICENSE_STATE_DIR=/var/lib/ens/directory-portal
 Environment=ENS_LICENSE_FILE=/var/lib/ens/directory-portal/license.lic
 
-# Hardening: the API only needs to write its data and license directories.
+# The optional audit file output (ENS_AUDIT_FILE=/var/log/ens/directory-portal/audit.jsonl in
+# portal.env): systemd creates this directory, owned by the service user, and makes it writable.
+LogsDirectory=ens/directory-portal
+
+# Hardening: the API only needs to write its data, license and audit log directories.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

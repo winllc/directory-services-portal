@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
-import { featureEnabled, LICENSE_PATH, LicenseNotices, licenseSummary } from '../lib/license';
+import { AUDIT_PATH, featureEnabled, LICENSE_PATH, LicenseNotices, licenseSummary } from '../lib/license';
 import { Badge, Button, cx } from './ui';
 import { JobsMenu } from './jobs/JobsMenu';
 
@@ -227,6 +227,16 @@ export function UnlicensedLayout({ children }: { children: ReactNode }) {
           </div>
           <div className="brand-name">Directory Portal</div>
         </div>
+        {user.isAdmin && (
+          <nav className="bare-nav" aria-label="Administration">
+            <NavLink to={LICENSE_PATH} className={({ isActive }) => cx('bare-nav-link', isActive && 'active')}>
+              <KeyRound size={16} /> License
+            </NavLink>
+            <NavLink to={AUDIT_PATH} className={({ isActive }) => cx('bare-nav-link', isActive && 'active')}>
+              <History size={16} /> Audit log
+            </NavLink>
+          </nav>
+        )}
         <div className="topbar-spacer" />
         <div className="user-menu">
           <div className="user-meta">

@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { Layout, UnlicensedLayout } from './components/Layout';
 import { RequireAdmin, RequireAuth } from './lib/auth';
-import { LicenseGate, RequireLicense } from './lib/license';
+import { AUDIT_PATH, LicenseGate, RequireLicense } from './lib/license';
 import type { LicensedFeatureId } from '@dsp/shared';
 import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
@@ -36,10 +36,17 @@ const metrics = licensed('metrics');
 const forms = (el: React.ReactNode) => admin(licensed('form-builder')(el));
 const analysis = (el: React.ReactNode) => admin(licensed('data-analysis')(el));
 
-/** Signed in, before the license: the full app, or (no license in effect) only the license screen. */
+/**
+ * Signed in, before the license: the full app, or (no license in effect) only the license screen
+ * and the audit log (administrators) or the "not licensed" page (everyone else).
+ */
+const unlicensedPage = (isAdmin: boolean, path: string) => (
+  <UnlicensedLayout>{!isAdmin ? <NotLicensedPage /> : path === AUDIT_PATH ? <AuditPage /> : <LicensePage />}</UnlicensedLayout>
+);
+
 const shell = (
   <RequireAuth>
-    <LicenseGate unlicensed={(isAdmin) => <UnlicensedLayout>{isAdmin ? <LicensePage /> : <NotLicensedPage />}</UnlicensedLayout>}>
+    <LicenseGate unlicensed={unlicensedPage}>
       <Layout />
     </LicenseGate>
   </RequireAuth>

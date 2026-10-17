@@ -147,8 +147,8 @@ evaluation license from your account on the ENS portal.
 
 | Mode | When | What works |
 |---|---|---|
-| unlicensed | no license, or one that is invalid, for another product, bound to another installation, superseded by a newer revision or not yet valid | sign-in/out, `/api/info`, `/api/health` and the license endpoints. Every other API call answers `403 {"error": "<why>", "code": "license_required", "state": "MISSING"}`; the web client takes administrators to the license screen and shows everyone else a "not licensed, ask your administrator" page |
-| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics, exports); anything else answers `403` with `"code": "license_read_only"`, except sign-in/out and the license upload. A banner says so |
+| unlicensed | no license, or one that is invalid, for another product, bound to another installation, superseded by a newer revision or not yet valid | sign-in/out, `/api/info`, `/api/health`, the license endpoints and the [audit log](#audit-logging) (`/api/admin/audit/**`, `/admin/audit`, `/api/audit/events`). Every other API call answers `403 {"error": "<why>", "code": "license_required", "state": "MISSING"}`; the web client takes administrators to the license screen and shows everyone else a "not licensed, ask your administrator" page |
+| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics, exports); anything else answers `403` with `"code": "license_read_only"`, except sign-in/out, the license upload and the audit log (verify, export, API tokens). A banner says so |
 | full | valid, or expired within its grace period (administrators get a renewal reminder) | the features the license lists |
 
 Evaluation licenses show a banner on every page. **Memory/demo mode** (`DIRECTORY_MODE=memory`,
@@ -228,7 +228,7 @@ and set `DIRECTORY_MODE=ldap`:
 | `LDAP_GROUP_SEARCH_BASE`, `LDAP_GROUP_FILTER` | group lookup (`{{dn}}`, `{{username}}`); `memberOf` is also used |
 | `ADMIN_USERS`, `ADMIN_GROUPS` | portal administrators, separated by `;` |
 | `DATA_DIR` | where `portal-config.json` (forms, definitions, grants, custom schema) and the audit log are stored |
-| `AUDIT_DIR`, `AUDIT_MEMORY_EVENTS` | where the audit files go (default `$DATA_DIR/audit`), and how many recent events the audit page searches (default 10,000) |
+| `AUDIT_DIR` | where the audit store goes (default `$DATA_DIR/audit`). `AUDIT_MEMORY_EVENTS` is still accepted but no longer used. Outputs and retention: `ENS_AUDIT_*`, see [Audit logging](#audit-logging) |
 | `PORT`, `SESSION_TTL_MINUTES`, `COOKIE_SECURE`, `FORWARD_HEADERS_STRATEGY` | HTTP settings |
 
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
@@ -453,36 +453,103 @@ Analyses, and metrics that take a while, run on the server independently of the 
 - Tasks live in the API's memory: a restart cancels running ones (saved analysis results on disk
   are kept). Run a single API instance.
 
-### Audit log
-*Admin → Audit log*
+### Audit logging
+*Administration → Audit log* (`/admin/audit`, administrators only: `ROLE_ADMIN`)
 
 Every write goes to the directory as the portal's service account, so the directory's own logs
-can't say who made a change. The portal records it instead:
+can't say who made a change. The portal keeps a complete, tamper-evident audit trail in the
+format shared by all ENS products, **`ens-audit/1`** (one JSON object per event; field reference
+and SIEM setup on the docs site page [Audit logging](https://github.com/winllc/ens-apps-documentation/blob/master/docs/audit-logging.md)), and can deliver it to
+Splunk or any SIEM.
 
-| Recorded | Includes |
+**What is recorded** (action ids are stable; the portal's original ids are kept):
+
+| Category | Actions |
 |---|---|
-| Entry created, updated, renamed or deleted, through a directory or **My profile** | each changed attribute's values before and after. A delete keeps everything the entry held, so it can be put back by hand |
-| Sign-ins and sign-outs, by password or certificate | for a failed attempt: the name that was tried or the certificate's subject, serial and issuer, and why it failed |
-| Grants, directory definitions, forms, custom schema, dashboards and analyses created, changed or deleted | the settings that changed, before and after |
+| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (8 failures in 15 minutes, severity alert), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
+| authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
+| account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
+| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps everything the entry held; a rename records `previousDn`), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
+| configuration | `dashboard.*`, `analysis.create` / `update` / `delete` |
+| license | `license.installed`, `license.rejected` (with the reason), `license.mode-changed` (old and new mode; checked at startup, every minute and after an upload). Older history keeps the original `license.install` |
+| system | `system.started` (version), `system.stopped`, `job.completed` / `job.failed` (the retention job) |
+| audit | `audit.exported`, `audit.verified`, `audit.token-created`, `audit.token-revoked`, `audit.pruned`, `audit.delivery-failed`, `audit.delivery-recovered` |
 
-Every event carries who did it (with their DN and how they signed in), the client address, and an
-outcome: **success**, **denied** (the portal's permission checks refused it) or **failed** (the
-directory or the credentials said no). Requests that fail validation are not recorded, because
-nothing was attempted. A save that changes nothing is not recorded either.
+Each event says who (`actor`: user name, display name, roles; `details.actorDn` and
+`authMethod`; `anonymous` with the attempted name for a failed sign-in), from where
+(`source.ip` as the API sees it, honouring `FORWARD_HEADERS_STRATEGY`, and the user agent), what
+(`target`), the outcome (`success`, `failure`, `denied`) and a severity (`info`, `notice` for
+permission, configuration, form/definition/schema and license changes, `warning` for failures
+and denials, `alert` for lockouts, a broken chain and failing delivery), plus a request id and a
+hash of the session id. Requests that fail validation are not recorded (nothing was attempted),
+nor is a save that changes nothing.
 
-- Values of password attributes (`userPassword`, `unicodePwd`, and the others the portal never
-  returns to browsers) are recorded as `(redacted)`.
-- The audit page filters by activity, outcome, date range, person and target. An entry's
-  **History** button opens it filtered to that entry, including events from before a rename.
-- Events are appended to `audit-YYYY-MM.jsonl` (one JSON object per line) and synced to disk
-  before the request returns. The portal never rewrites or deletes these files; retention and
-  archiving are up to you. In Docker Compose they are on the `portal-data` volume.
-- Each event is also logged on the `audit` logger, so a log shipper can forward it to a SIEM.
-- The page searches the newest `AUDIT_MEMORY_EVENTS` events, reloaded from the files at startup.
-  Use the files for anything older.
-- The change has already been made by the time it is recorded. If the audit file can't be
-  written, the portal logs an error and the event still reaches the `audit` logger. The
-  request is not failed.
+- **Secrets are never recorded**: password attributes (`userPassword`, `unicodePwd`, …), tokens,
+  keys, license text, session ids, one-time codes and PINs are written as `[redacted]`.
+- **The store** is the monthly files `audit-YYYY-MM.jsonl` in `AUDIT_DIR` (default
+  `$DATA_DIR/audit`; the `portal-data` volume in Docker), one hash-chained line per event,
+  appended and synced in the request that caused it. Writers are serialized by a single
+  synchronized writer in the API process, so **run one API instance per data directory**: two
+  instances writing the same files would fork the chain (the same applies to sessions and
+  background tasks). If an event can't be stored, sign-ins and permission, configuration,
+  license and token changes are refused (503); other events log an error.
+- **Upgrading** from the portal's earlier audit format: at the first start the original
+  `audit-YYYY-MM.jsonl` files are moved unchanged to `audit/legacy/` (still readable as they
+  were) and their events are appended to the new store in time order, keeping time and id, with
+  new seq numbers and hashes and `details.migrated=true`; `audit/legacy/MIGRATED` records it.
+- **The page** searches all retained history, newest first and paged, by time range, category,
+  action, outcome, severity, actor, target, source IP and free text (over the JSON); a search
+  reads at most `ENS_AUDIT_QUERY_MAX_SCAN` events (default 2,000,000) and says when it stopped.
+  A row opens every field, the JSON, seq and hash. An entry's **History** button opens the page
+  filtered to that entry, including events from before a rename. **Export** writes the current
+  filter (up to 100,000 events) as CSV or NDJSON (`audit.exported`). **Verify integrity**
+  recomputes the chain: intact, or the first broken seq; after pruning, the first retained
+  event is the anchor and its `prevHash` is accepted as given. **Delivery** shows each output's
+  state, and **API tokens** manages the pull API's tokens. The page and its API work whatever
+  the license says.
+
+**Settings** (environment; `ens.audit.*` Spring properties):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ENS_AUDIT_STDOUT` | `true` | each event as one raw JSON line on stdout (logger `ens.audit`, its own appender, no log prefix) |
+| `ENS_AUDIT_FILE` | empty (off) | also a rolling file, e.g. `/var/log/ens/directory-portal/audit.jsonl` (rolled daily and at 100 MB) |
+| `ENS_AUDIT_FILE_KEEP` | `30` | days of rolled files kept |
+| `ENS_AUDIT_RETENTION_DAYS` | `0` (keep forever) | a daily job deletes older events that every enabled output has delivered, never the newest, and records `audit.pruned` |
+| `ENS_AUDIT_SPLUNK_URL` | empty (off) | Splunk HTTP Event Collector, e.g. `https://splunk.example:8088` |
+| `ENS_AUDIT_SPLUNK_TOKEN` / `ENS_AUDIT_SPLUNK_TOKEN_FILE` | | the HEC token, or a file holding it (never logged) |
+| `ENS_AUDIT_SPLUNK_INDEX` | empty | optional index |
+| `ENS_AUDIT_SPLUNK_SOURCETYPE` | `ens:audit` | |
+| `ENS_AUDIT_SPLUNK_INSECURE` | `false` | skip the HEC certificate check (test setups only; warned at startup). Otherwise the JVM trust store applies |
+| `ENS_AUDIT_SYSLOG_HOST` | empty (off) | syslog receiver |
+| `ENS_AUDIT_SYSLOG_PORT` | `514` (udp, tcp), `6514` (tls) | |
+| `ENS_AUDIT_SYSLOG_PROTOCOL` | `tcp` | `udp`, `tcp` or `tls` (octet-counting framing on tcp and tls) |
+| `ENS_AUDIT_SYSLOG_FACILITY` | `local0` | RFC 5424 messages: APP-NAME `directory-portal`, MSGID the action, severity from the event, the JSON line as the message |
+| `ENS_AUDIT_QUERY_MAX_SCAN` | `2000000` | most events one search or export reads |
+
+Splunk HEC and syslog are delivered in the background from the store, by a cursor kept in
+`audit-state.json` next to it: at least once (Splunk can de-duplicate on `id`), retried with
+backoff up to 5 minutes, never slowing requests. An output failing for over 15 minutes records
+`audit.delivery-failed` (alert), then `audit.delivery-recovered`. The API logs one line per
+output at startup. The rename of the log category from `audit` to `ens.audit` keeps routing
+working: the lines go to stdout (and the file) as before, now without the log prefix; set
+`LOGGING_LEVEL_ENS_AUDIT=OFF` (instead of `LOGGING_LEVEL_AUDIT`) to silence them.
+
+**Getting it into Splunk** (any one of):
+
+1. **HEC**: create an HEC token (sourcetype `ens:audit`) and set `ENS_AUDIT_SPLUNK_URL` and
+   `ENS_AUDIT_SPLUNK_TOKEN` (and `ENS_AUDIT_SPLUNK_INDEX`).
+2. **Universal Forwarder**: tail the file (`ENS_AUDIT_FILE`; the compose files mount the
+   `ens-audit` volume at `/var/log/ens`) or the container's Docker logs, with
+   `sourcetype=ens:audit` and JSON extraction, e.g. `[monitor:///var/log/ens/directory-portal/audit*.jsonl]`
+   with `sourcetype = ens:audit`.
+3. **Pull API**: create a token under *Audit log → API tokens* (shown once; stored only as
+   SHA-256), then poll
+   `curl -H "Authorization: Bearer ensat_…" "https://portal.example/api/audit/events?after=<last seq>&limit=500"`.
+   It returns NDJSON in seq order (or `{"events": […], "next": <seq>}` with
+   `Accept: application/json`); pass the last seq back as `after`. Tokens only read the audit
+   trail, need no session or CSRF header, work while the portal is unlicensed or read-only, and
+   record their last use instead of auditing each pull.
 
 ### X.509 client-certificate sign-in
 Users can sign in with a client certificate (smart cards such as CAC/PIV, or any PKI-issued user
@@ -582,8 +649,9 @@ name. Any other value stops the API at startup with an error naming the setting.
   Redis or JDBC) before scaling out.
 - Metrics and analyses read through the same permission checks as browsing (see
   [Metrics](#metrics)); comparisons and quality checks are for administrators only.
-- Changes and sign-ins are recorded in the [audit log](#audit-log). Treat the audit files as
-  sensitive: they hold the values that were changed and the names people tried to sign in with.
+- Changes, sign-ins and denials are recorded in the [audit log](#audit-logging). Treat the audit
+  files, exports and API tokens as sensitive: they hold the values that were changed and the
+  names people tried to sign in with.
 
 ## Development
 

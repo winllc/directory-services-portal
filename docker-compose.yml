@@ -92,11 +92,29 @@ services:
       # client address (used for login throttling) and scheme. The api service is not published,
       # so only the proxy can reach it.
       FORWARD_HEADERS_STRATEGY: framework
+      # Audit logging (README, Audit logging): passed through from your shell or a .env file.
+      ENS_AUDIT_STDOUT: ${ENS_AUDIT_STDOUT:-true}
+      ENS_AUDIT_FILE: ${ENS_AUDIT_FILE:-}
+      ENS_AUDIT_FILE_KEEP: ${ENS_AUDIT_FILE_KEEP:-30}
+      ENS_AUDIT_RETENTION_DAYS: ${ENS_AUDIT_RETENTION_DAYS:-0}
+      ENS_AUDIT_SPLUNK_URL: ${ENS_AUDIT_SPLUNK_URL:-}
+      ENS_AUDIT_SPLUNK_TOKEN: ${ENS_AUDIT_SPLUNK_TOKEN:-}
+      ENS_AUDIT_SPLUNK_TOKEN_FILE: ${ENS_AUDIT_SPLUNK_TOKEN_FILE:-}
+      ENS_AUDIT_SPLUNK_INDEX: ${ENS_AUDIT_SPLUNK_INDEX:-}
+      ENS_AUDIT_SPLUNK_SOURCETYPE: ${ENS_AUDIT_SPLUNK_SOURCETYPE:-ens:audit}
+      ENS_AUDIT_SPLUNK_INSECURE: ${ENS_AUDIT_SPLUNK_INSECURE:-false}
+      ENS_AUDIT_SYSLOG_HOST: ${ENS_AUDIT_SYSLOG_HOST:-}
+      ENS_AUDIT_SYSLOG_PORT: ${ENS_AUDIT_SYSLOG_PORT:-}
+      ENS_AUDIT_SYSLOG_PROTOCOL: ${ENS_AUDIT_SYSLOG_PROTOCOL:-tcp}
+      ENS_AUDIT_SYSLOG_FACILITY: ${ENS_AUDIT_SYSLOG_FACILITY:-local0}
     volumes:
       - portal-data:/data
       # ENS license (ENS_LICENSE_FILE / ENS_LICENSE_STATE_DIR, set by the image): the uploaded
       # license, the installation id and the license revisions seen. Writable; keep it.
       - ens-license:/var/lib/ens/directory-portal
+      # The ENS_AUDIT_FILE output (e.g. /var/log/ens/directory-portal/audit.jsonl), for a log
+      # forwarder to tail. The audit store itself is in portal-data (/data/audit).
+      - ens-audit:/var/log/ens
     # To call the API directly from your machine, uncomment:
     # ports:
     #   - "3001:3001"
@@ -120,3 +138,4 @@ volumes:
   portal-data:
   ldap-data:
   ens-license:
+  ens-audit:
