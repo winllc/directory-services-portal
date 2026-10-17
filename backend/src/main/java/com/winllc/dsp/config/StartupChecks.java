@@ -28,6 +28,10 @@ public class StartupChecks {
       } catch (UncheckedIOException e) {
         throw new IllegalStateException("Refusing to start: " + e.getMessage(), e);
       }
+      if (!props.getLdap().isTlsRejectUnauthorized()) {
+        log.warn("LDAP_TLS_REJECT_UNAUTHORIZED is false: the directory server's certificate is NOT verified (trust-all). This is"
+            + " not FIPS 140-3 or DISA STIG appropriate; use it only in test setups and give the API a trust store instead.");
+      }
     }
     List<String> problems = props.getBanner().problems();
     if (!problems.isEmpty()) throw new IllegalStateException("Invalid banner configuration: " + String.join("; ", problems));

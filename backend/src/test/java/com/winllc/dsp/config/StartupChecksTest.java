@@ -162,6 +162,12 @@ class StartupChecksTest {
   }
 
   @Test
+  void warnsAboutTrustingAnyLdapCertificate(CapturedOutput output) {
+    runner.withPropertyValues("DIRECTORY_MODE=ldap", "LDAP_TLS_REJECT_UNAUTHORIZED=false").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("LDAP_TLS_REJECT_UNAUTHORIZED is false", "not FIPS 140-3 or DISA STIG appropriate");
+  }
+
+  @Test
   void leavesOtherModesAlone() {
     // Certificate sign-in off, or the API terminating mutual TLS itself (Tomcat checks the chain).
     runner.withPropertyValues("X509_ENABLED=false", "X509_SOURCE=header").run(ctx -> assertThat(ctx).hasNotFailed());

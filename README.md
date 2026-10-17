@@ -693,6 +693,30 @@ responses for anyone who reaches it directly:
 The session cookie is `HttpOnly` and `SameSite=Strict` (stricter than the baseline's `Lax`; the
 browser only ever reaches the API through the same origin).
 
+## FIPS 140-3
+
+The portal brings no cryptography of its own: the API uses the platform JDK's providers (JCA/JSSE)
+and the web tier the system's OpenSSL. On a FIPS-enabled RHEL 9 host (`fips=1`), the UBI 9 images
+(`openjdk-21-runtime`, `nginx-126`) follow the host into FIPS mode, so these use the RHEL FIPS
+140-3 validated modules: TLS to the directory (LDAPS, StartTLS), to Splunk HEC and syslog (TLS),
+HTTPS and client-certificate verification in nginx or in the API (`mtls` profile), certificate
+path validation and OCSP/CRL signature checks, and the audit chain's SHA-256. The native package
+uses the host's Java 21: install RHEL's `java-21-openjdk-headless` on a FIPS-enabled host. (OCSP
+requests identify the certificate by a SHA-1 hash of its issuer, as RFC 6960 responders expect;
+that is an identifier, not a signature. BouncyCastle is used by the tests only.)
+
+Not FIPS (or STIG) appropriate, for test setups only; the API logs a warning at startup when one
+is on:
+
+- `LDAP_TLS_REJECT_UNAUTHORIZED=false`: trusts any directory server certificate. Give the API a
+  trust store with the directory's CA instead.
+- `ENS_AUDIT_SPLUNK_INSECURE=true`: trusts any Splunk HEC certificate.
+
+### License verification under FIPS
+
+Pending: the ENS license library verifies license signatures with the JDK's Ed25519; its results
+on a FIPS-enabled host will be recorded here.
+
 ## Security notes
 - LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
   Admin-configured filter templates get their values escaped with `Filter.encodeValue`. DNs are

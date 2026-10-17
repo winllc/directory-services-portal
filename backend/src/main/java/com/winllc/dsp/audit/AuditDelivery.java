@@ -63,7 +63,8 @@ public class AuditDelivery implements AuditForwarder.Listener {
       log.info("Audit output splunk: enabled, {} (sourcetype {}{}){}", splunk.destination(), props.getSplunk().getSourcetype(),
           props.getSplunk().getIndex().isBlank() ? "" : ", index " + props.getSplunk().getIndex(), splunk.hasToken() ? "" : "; NO TOKEN configured");
       if (props.getSplunk().isInsecure()) {
-        log.warn("ENS_AUDIT_SPLUNK_INSECURE is true: the HEC server's certificate is NOT verified. Use only in test setups.");
+        log.warn("ENS_AUDIT_SPLUNK_INSECURE is true: the HEC server's certificate is NOT verified (trust-all). This is not FIPS 140-3"
+            + " or DISA STIG appropriate; use it only in test setups.");
       }
     }
     AuditForwarder syslog = forwarders.stream().filter(f -> f instanceof SyslogForwarder).findFirst().orElse(null);
