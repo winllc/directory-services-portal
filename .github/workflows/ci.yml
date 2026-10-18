@@ -121,6 +121,13 @@ jobs:
             | grep -A1 'name: X509_PROXY_SECRET_FILE' | grep -q '/etc/dsp/x509-proxy/proxy-secret'
           helm template dsp "$CHART" -f "$edge" --show-only templates/web-deployment.yaml \
             | grep -A1 'name: X509_EDGE_TERMINATION' | grep -q '"true"'
+          # Revocation is left to the API's default (ocsp-then-crl, soft-fail), whose OCSP and CRL
+          # fetches the NetworkPolicy lets out; "off" still turns both off.
+          cm="$(helm template dsp "$CHART" -f "$edge" --show-only templates/configmap.yaml)"
+          grep -qx '  ENS_X509_REVOCATION: ""' <<<"$cm"
+          grep -qx '  ENS_X509_REVOCATION_FAIL: ""' <<<"$cm"
+          egress() { helm template dsp "$CHART" -f "$edge" "$@" --show-only templates/networkpolicy.yaml | grep -c 'cidr: 0.0.0.0/0' || true; }
+          [ "$(egress)" -gt "$(egress --set x509.revocation.mode=off)" ] || { echo "no revocation egress by default"; exit 1; }
 
   image:
     # Builds both images on every push, checks the pair starts and answers through the web

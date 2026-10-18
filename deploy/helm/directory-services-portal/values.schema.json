@@ -857,8 +857,10 @@
           "type": "object",
           "properties": {
             "mode": {
+              "description": "ENS_X509_REVOCATION. Empty: ocsp-then-crl, soft-fail.",
               "type": "string",
               "enum": [
+                "",
                 "off",
                 "ocsp",
                 "crl",
@@ -872,8 +874,10 @@
               "type": "string"
             },
             "fail": {
+              "description": "ENS_X509_REVOCATION_FAIL. Empty: open while mode is empty, closed once mode is set.",
               "type": "string",
               "enum": [
+                "",
                 "closed",
                 "open"
               ]

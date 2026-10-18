@@ -428,17 +428,21 @@ x509:
     existingSecretKey: ca.pem
   # Revocation checking (ENS_X509_*; DISA STIG requires it, the API warns while it is off).
   revocation:
-    # off, ocsp, crl or ocsp-then-crl.
-    mode: "off"
+    # off, ocsp, crl or ocsp-then-crl. Empty: the application default, ocsp-then-crl, soft-fail -
+    # a certificate found revoked is refused, and one no OCSP responder or CRL answers for signs
+    # in with a warning in the API log. "off" turns the check off.
+    mode: ""
     # Ask this OCSP responder instead of the one in each certificate (e.g. a local relay).
     ocspResponderUrl: ""
     # A directory of CRL files (DER or PEM) inside the API pod, e.g. mounted with api.extraVolumes;
     # with it set, CRL distribution points are not fetched (air-gapped networks).
     crlDir: ""
-    # closed: refuse when the status can't be determined; open: allow, with a warning.
-    fail: closed
+    # closed: refuse when the status can't be determined (as DISA STIG expects); open: allow, with
+    # a warning. Empty: open while mode is empty, closed once mode is set.
+    fail: ""
     cache: 10m
-    # Egress for OCSP and CRL fetches, with networkPolicy.enabled and a mode other than off.
+    # Egress for OCSP and CRL fetches, with networkPolicy.enabled and a mode other than off (empty
+    # included).
     egress:
       ports: [80, 443]
       cidrs: [0.0.0.0/0]

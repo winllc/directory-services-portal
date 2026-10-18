@@ -266,6 +266,15 @@ edge-terminated setup (without `tls.enabled`) then also needs `x509.trustedCa`,
 `license.*` is copied only into an empty license volume, so a newer license uploaded on the
 license screen is never overwritten. Back up the data PVC before upgrading.
 
+From the release that checks revocation by default, `x509.revocation.mode` and `.fail` default to
+empty instead of `off` and `closed`: with `x509.enabled` and neither set in your values, client
+certificates are checked live at sign-in (OCSP, then the CRL), a revoked one is refused, and one
+no responder or CRL answers for signs in with a warning in the API log. With
+`networkPolicy.enabled`, the API pods get the `x509.revocation.egress` rule for the fetches. Set
+`x509.revocation.fail: closed` to refuse those as DISA STIG expects (with `crlDir` or an
+`ocspResponderUrl` relay on a closed network), or `mode: "off"` to keep the check off. A mode you
+set yourself keeps `closed` as before. `helm upgrade --reuse-values` keeps the old `off`.
+
 From the release with the platform baseline, the API's probes moved from `/api/health` to
 Spring Boot's liveness and readiness groups on the metrics port (`metrics.enabled`, default on):
 a pod is not Ready while the directory is unreachable or the audit log can't be written. API
@@ -429,10 +438,10 @@ Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `SERVER_FORWARD_HEADERS_STRAT
 | `x509.trustedProxies` | `X509_TRUSTED_PROXIES` | `10.0.0.0/8;172.16.0.0/12;192.168.0.0/16` (the pod network) |
 | `x509.proxySecret.existingSecret` / `.existingSecretKey` | `X509_PROXY_SECRET_FILE` (API and web) | `""` (generated, kept across upgrades) / `proxy-secret` |
 | `x509.trustedCa.value` / `.existingSecret` / `.existingSecretKey` | `X509_TRUSTED_CA_FILE` | empty: `tls`'s `ca.pem` when `tls.enabled`; required with `x509.enabled` |
-| `x509.revocation.mode` | `ENS_X509_REVOCATION` | `off` (`ocsp`, `crl`, `ocsp-then-crl`) |
+| `x509.revocation.mode` | `ENS_X509_REVOCATION` | `""`: `ocsp-then-crl`, soft-fail (or `off`, `ocsp`, `crl`, `ocsp-then-crl`) |
 | `x509.revocation.ocspResponderUrl` / `.crlDir` | `ENS_X509_OCSP_RESPONDER_URL` / `ENS_X509_CRL_DIR` | `""` / `""` (mount CRL files with `api.extraVolumes`) |
-| `x509.revocation.fail` / `.cache` | `ENS_X509_REVOCATION_FAIL` / `ENS_X509_REVOCATION_CACHE` | `closed` / `10m` |
-| `x509.revocation.egress.ports` / `.cidrs` | | `[80, 443]` / `[0.0.0.0/0]`: NetworkPolicy egress for OCSP and CRL fetches (with a mode other than `off`) |
+| `x509.revocation.fail` / `.cache` | `ENS_X509_REVOCATION_FAIL` / `ENS_X509_REVOCATION_CACHE` | `""` (`open` while `mode` is empty, `closed` once it is set) / `10m` |
+| `x509.revocation.egress.ports` / `.cidrs` | | `[80, 443]` / `[0.0.0.0/0]`: NetworkPolicy egress for OCSP and CRL fetches (with a mode other than `off`, the empty default included) |
 | `x509.allowedIssuers` | `ENS_X509_ALLOWED_ISSUERS` | `[]` (list, or DNs separated by `;`) |
 | `x509.checkRevocation` | `X509_CHECK_REVOCATION` | `false` (deprecated: `true` means `ocsp-then-crl`, failing closed, while the mode is `off`) |
 | `x509.mapping` | `X509_MAPPING` | `filter` |
