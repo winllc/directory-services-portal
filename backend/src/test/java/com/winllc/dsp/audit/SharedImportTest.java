@@ -53,6 +53,15 @@ class SharedImportTest {
       ConfigStore config = new ConfigStore(MAPPER, props, cluster, new DatabaseProperties());
       assertThat(config.snapshot().grants).hasSize(1);
 
+      // Another instance with a different file of its own starts (with a warning): the database copy wins.
+      PortalProperties otherProps = new PortalProperties();
+      Path otherData = Files.createTempDirectory("dsp-other-config");
+      otherProps.setDataDir(otherData.toString());
+      Files.writeString(otherData.resolve("portal-config.json"), "{\"forms\":[],\"definitions\":[],\"grants\":[{\"id\":\"g2\","
+          + "\"definitionId\":\"d\",\"subjectType\":\"user\",\"subject\":\"bob\",\"access\":\"read\"}]}");
+      assertThat(new ConfigStore(MAPPER, otherProps, cluster, new DatabaseProperties()).snapshot().grants)
+          .extracting(g -> g.id()).containsExactly("g1");
+
       // Audit: three events in the files of the single instance.
       FileAuditStore files = new FileAuditStore(data.resolve("audit"));
       var log = AuditChainTest.newLog(data.resolve("audit"));

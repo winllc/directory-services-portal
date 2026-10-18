@@ -60,11 +60,17 @@ public class ConfigStore {
         // single instance), else empty; the marker records that the file was imported.
         doc = shared.createIfAbsent(DOCUMENT, mapper.writeValueAsString(local));
         if (hasLocal && doc.version() == 1 && doc.content().equals(mapper.writeValueAsString(local))) {
-          shared.createIfAbsent(IMPORT_MARKER, file.toString());
+          shared.createIfAbsent(IMPORT_MARKER, contentHash(local));
           log.info("Imported the portal configuration from {} into the shared database", file);
         }
       }
-      if (hasLocal && !shared.get(IMPORT_MARKER).exists()) {
+      SharedDocuments.Doc marker = shared.get(IMPORT_MARKER);
+      if (hasLocal && marker.exists() && !marker.content().equals(contentHash(local))) {
+        // The database copy wins; say so, so an operator can tell this file is not in use.
+        log.warn("{} differs from the configuration imported into the shared database; this file is not used (the shared"
+            + " configuration is). Move it away once you have checked nothing in it is missing.", file);
+      }
+      if (hasLocal && !marker.exists()) {
         throw new IllegalStateException("Refusing to start: the shared database's configuration was created without importing "
             + file + ", which holds this instance's forms, definitions and grants. Upgrade a single instance to the database"
             + " first, with its data volume, so it imports them; or, if the database's configuration is the one to keep, move "
@@ -85,6 +91,11 @@ public class ConfigStore {
     } catch (RuntimeException e) {
       throw new IllegalStateException("Could not read " + file + ": " + e.getMessage(), e);
     }
+  }
+
+  /** SHA-256 of a configuration as JSON: the import marker, to tell another instance's file from it. */
+  private String contentHash(StoreData d) {
+    return com.winllc.dsp.audit.AuditJson.sha256Hex(mapper.writeValueAsString(d));
   }
 
   /** Whether a configuration holds anything an administrator made (worth importing). */
