@@ -196,6 +196,24 @@ class SsoOidcTest extends ApiTestSupport {
   }
 
   @Test
+  void administratorRightsFromProviderGroupsEndWithTheirLifetime() throws Exception {
+    MvcResult mapped = callback(start(null), "code-l1", Map.of("preferred_username", "alice", "groups", List.of("portal-admins")));
+    MockHttpSession session = (MockHttpSession) mapped.getRequest().getSession(false);
+    // SSO_IDP_ADMIN_SESSION_LIFETIME (1h) after sign-in, the session ends: the provider is asked again.
+    session.setAttribute(SessionService.SIGNED_IN_AT, System.currentTimeMillis() - Duration.ofMinutes(61).toMillis());
+    MvcResult r = mvc.perform(get("/api/admin/audit?pageSize=1").session(session)).andReturn();
+    assertThat(status(r)).isEqualTo(401);
+    assertThat(body(r).get("code").asString()).isEqualTo("session_expired");
+
+    // A directory administrator signing in through the provider keeps the usual lifetime.
+    MvcResult admin = callback(start(null), "code-l2", Map.of("preferred_username", "admin", "groups", List.of("portal-admins")));
+    MockHttpSession adminSession = (MockHttpSession) admin.getRequest().getSession(false);
+    assertThat(adminSession.getAttribute(SessionService.IDP_ADMIN)).isNull();
+    adminSession.setAttribute(SessionService.SIGNED_IN_AT, System.currentTimeMillis() - Duration.ofMinutes(61).toMillis());
+    assertThat(status(mvc.perform(get("/api/admin/audit?pageSize=1").session(adminSession)).andReturn())).isEqualTo(200);
+  }
+
+  @Test
   void theBannerComesFirst() throws Exception {
     ens.getConsentBanner().setEnabled(true);
     MvcResult refused = mvc.perform(get("/api/auth/sso/authorize/oidc")).andReturn();

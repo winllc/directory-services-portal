@@ -145,6 +145,8 @@ export function ssoErrorMessage(code: string | null): string | null {
     case 'no_account':
     case 'no_identity':
       return 'Your sign-in worked, but no directory account matches it. Contact your administrator.';
+    case 'unverified_email':
+      return 'Your identity provider has not verified your email address, so the portal cannot use it to find your account.';
     case 'unavailable':
       return 'Signing in is not possible right now (the audit log is unavailable). Try again later.';
     default:

@@ -46,7 +46,8 @@ import org.springframework.stereotype.Service;
  * ({@value #BACKGROUND_HEADER}) keep the container session alive but are not activity, so an open
  * but unattended tab still times out. The container's own timeout (the same idle timeout) ends
  * sessions whose tab was closed. Every expiry is audited as {@code auth.session-expired} with the
- * reason {@code idle}, {@code absolute}, {@code concurrent} or {@code account-removed}.
+ * reason {@code idle}, {@code absolute}, {@code concurrent}, {@code account-removed} or
+ * {@code idp-admin-lifetime}.
  *
  * <p>With the shared database, sessions live in {@code spring_session} (Spring Session JDBC): the
  * per-user limit finds a user's sessions there (indexed by the SHA-256 of their DN) on whichever
@@ -82,8 +83,11 @@ public class SessionService implements HttpSessionListener {
   /** Signed-in sessions per user, oldest first (container sessions only). */
   private final Map<String, LinkedHashMap<String, HttpSession>> byUser = new ConcurrentHashMap<>();
 
+  private final com.winllc.dsp.sso.SsoProperties sso;
+
   public SessionService(EnsProperties ens, PortalProperties props, AuthService auth, AuditLog audit, SecurityContextRepository contexts,
-      Cluster cluster, ObjectProvider<FindByIndexNameSessionRepository<? extends Session>> shared) {
+      Cluster cluster, ObjectProvider<FindByIndexNameSessionRepository<? extends Session>> shared, com.winllc.dsp.sso.SsoProperties sso) {
+    this.sso = sso;
     this.ens = ens;
     this.props = props;
     this.auth = auth;
@@ -100,6 +104,7 @@ public class SessionService implements HttpSessionListener {
         case "idle" -> "Your session timed out after a period of inactivity. Sign in again.";
         case "absolute" -> "Your session has reached its maximum length. Sign in again.";
         case "concurrent" -> "You signed in elsewhere, which ended this session. Sign in again.";
+        case "idp-admin-lifetime" -> "Your administrator session has reached its maximum length. Sign in again.";
         default -> "Your session has ended. Sign in again.";
       };
     }
@@ -155,6 +160,12 @@ public class SessionService implements HttpSessionListener {
     }
     Duration absolute = ens.getSession().getAbsoluteTimeout();
     if (absolute != null && !absolute.isZero() && now - signedInAt >= absolute.toMillis()) return expire(session, user, "absolute");
+    // Administrator rights from the provider's groups are only re-checked at sign-in: such a
+    // session ends after SSO_IDP_ADMIN_SESSION_LIFETIME.
+    Duration idpAdmin = sso.getIdpAdminLifetime();
+    if (Boolean.TRUE.equals(session.getAttribute(IDP_ADMIN)) && idpAdmin != null && now - signedInAt >= idpAdmin.toMillis()) {
+      return expire(session, user, "idp-admin-lifetime");
+    }
     Long lastActivity = attribute(session, LAST_ACTIVITY);
     Duration idle = ens.getSession().idleTimeoutFor(user.isAdmin());
     if (lastActivity != null && idle != null && !idle.isZero() && now - lastActivity >= idle.toMillis()) return expire(session, user, "idle");

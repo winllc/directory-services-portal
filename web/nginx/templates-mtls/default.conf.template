@@ -61,8 +61,13 @@ server {
         # nginx is the edge: overwrite (don't append) so clients can't spoof their address.
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # The host (and port) the browser used; the port nginx listens on is internal.
-        proxy_set_header X-Forwarded-Host $http_host;
+        # The public host (PUBLIC_HOST), else the one the browser used; the port nginx listens on is internal.
+        proxy_set_header X-Forwarded-Host "${DSP_FORWARDED_HOST}";
+        # Only the headers above describe the request: drop the ones a client could add to steer
+        # the API's idea of its own address (Spring prefers Forwarded over X-Forwarded-*).
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-Prefix "";
+        proxy_set_header X-Forwarded-Port "";
         proxy_read_timeout 120s;
         # The security headers come from this server block; drop the API's copies so each is sent once.
         proxy_hide_header Content-Security-Policy;

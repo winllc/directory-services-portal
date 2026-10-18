@@ -42,11 +42,13 @@ final class SsoRegistrations {
   /** OpenID Connect from the issuer's discovery document (whose issuer must match). */
   static final class Oidc implements ClientRegistrationRepository {
     private final SsoProperties.Oidc cfg;
+    private final String base;
     private volatile ClientRegistration registration;
     private volatile Instant failedAt;
 
-    Oidc(SsoProperties.Oidc cfg) {
-      this.cfg = cfg;
+    Oidc(SsoProperties props) {
+      this.cfg = props.getOidc();
+      this.base = props.base();
     }
 
     @Override
@@ -63,7 +65,7 @@ final class SsoRegistrations {
               .registrationId(OIDC)
               .clientId(cfg.getClientId())
               .scope(cfg.scopeList())
-              .redirectUri("{baseUrl}/api/auth/sso/callback/{registrationId}")
+              .redirectUri(base + "/api/auth/sso/callback/{registrationId}")
               .userNameAttributeName("sub")
               .clientName(cfg.getLabel().isBlank() ? "Single sign-on" : cfg.getLabel());
           if (secret == null || secret.isBlank()) {
@@ -88,11 +90,13 @@ final class SsoRegistrations {
   /** SAML 2.0 from the IdP's metadata. */
   static final class Saml implements RelyingPartyRegistrationRepository, Iterable<RelyingPartyRegistration> {
     private final SsoProperties.Saml cfg;
+    private final String base;
     private volatile RelyingPartyRegistration registration;
     private volatile Instant failedAt;
 
-    Saml(SsoProperties.Saml cfg) {
-      this.cfg = cfg;
+    Saml(SsoProperties props) {
+      this.cfg = props.getSaml();
+      this.base = props.base();
     }
 
     @Override
@@ -106,8 +110,8 @@ final class SsoRegistrations {
         try {
           RelyingPartyRegistration.Builder b = RelyingPartyRegistrations.fromMetadataLocation(cfg.resourceLocation())
               .registrationId(SAML)
-              .entityId(cfg.getEntityId().isBlank() ? "{baseUrl}/api/auth/sso/saml/metadata" : cfg.getEntityId())
-              .assertionConsumerServiceLocation("{baseUrl}/api/auth/sso/saml/acs/{registrationId}")
+              .entityId(cfg.getEntityId().isBlank() ? base + "/api/auth/sso/saml/metadata" : cfg.getEntityId())
+              .assertionConsumerServiceLocation(base + "/api/auth/sso/saml/acs/{registrationId}")
               .assertionConsumerServiceBinding(Saml2MessageBinding.POST);
           if (cfg.signing()) {
             Saml2X509Credential signing = Saml2X509Credential.signing(privateKey(Path.of(cfg.getSigningKeyFile())),

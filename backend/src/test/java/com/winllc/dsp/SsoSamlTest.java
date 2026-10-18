@@ -89,6 +89,7 @@ class SsoSamlTest extends ApiTestSupport {
         </md:EntityDescriptor>""".formatted(IDP, cert, IDP));
     registry.add("portal.sso.saml.metadata-location", metadata::toString);
     registry.add("portal.sso.saml.label", () -> "Sign in with Test IdP");
+    registry.add("portal.sso.public-url", () -> "http://localhost");
   }
 
   @Autowired SsoStateStore state;
@@ -158,6 +159,22 @@ class SsoSamlTest extends ApiTestSupport {
     Started nobody = start();
     assertThat(answer(nobody, response(nobody.requestId(), "nobody", SP, SIGNER, true), true).getResponse().getRedirectedUrl())
         .isEqualTo("/login?sso_error=no_account");
+  }
+
+  @Test
+  void aForgedHostCannotChangeTheEntityIdOrAudience() throws Exception {
+    MvcResult m = mvc.perform(get("/api/auth/sso/saml/metadata").header("Forwarded", "host=dsp-test.example;proto=https")
+        .header("X-Forwarded-Host", "dsp-test.example")).andReturn();
+    assertThat(m.getResponse().getContentAsString()).contains("entityID=\"" + SP + "\"").contains(ACS).doesNotContain("dsp-test.example");
+    // An assertion the IdP issued to another SP (another portal on the same IdP) is refused, even
+    // when the request claims that portal's host.
+    Started s = start();
+    String other = "https://dsp-test.example/api/auth/sso/saml/metadata";
+    var req = post("/api/auth/sso/saml/acs/saml")
+        .param("SAMLResponse", Base64.getEncoder().encodeToString(response(s.requestId(), "alice", other, SIGNER, true).getBytes(StandardCharsets.UTF_8)))
+        .param("RelayState", s.relayState()).cookie(s.sso())
+        .header("Forwarded", "host=dsp-test.example;proto=https").header("X-Forwarded-Host", "dsp-test.example").header("X-Forwarded-Proto", "https");
+    assertThat(mvc.perform(req).andReturn().getResponse().getRedirectedUrl()).endsWith("/login?sso_error=failed");
   }
 
   @Test

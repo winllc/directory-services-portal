@@ -107,8 +107,10 @@ public class SsoSignIn {
     if (found.size() > 1) throw new MappingException("no_account", value, "More than one directory entry matches the asserted identity");
     SessionUser user = auth.buildUser(found.get(0).dn(), value, method, null);
     List<String> adminGroups = provider.adminGroupList();
-    boolean idpAdmin = idpGroups != null && idpGroups.stream().anyMatch(g -> adminGroups.stream().anyMatch(a -> a.equalsIgnoreCase(g)));
-    if (idpAdmin && !user.isAdmin()) user = user.asAdmin();
+    // idpAdmin: administrator only through the provider's groups (the directory doesn't say so).
+    boolean idpAdmin = !user.isAdmin() && idpGroups != null
+        && idpGroups.stream().anyMatch(g -> adminGroups.stream().anyMatch(a -> a.equalsIgnoreCase(g)));
+    if (idpAdmin) user = user.asAdmin();
     return new Identity(method, value, user, idpAdmin);
   }
 

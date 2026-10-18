@@ -22,6 +22,29 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class SsoProperties {
   private final Oidc oidc = new Oidc();
   private final Saml saml = new Saml();
+  /**
+   * The address users open the portal at (https://portal.example.com), used for the redirect URI,
+   * the SAML entity id and assertion consumer service instead of the request's host. Required for
+   * SAML unless an entity id is given, so a forged Host or Forwarded header can't change them.
+   */
+  private String publicUrl = "";
+  /**
+   * How long a session may last when the provider's groups (not the directory) made the user an
+   * administrator: the provider is only asked again at sign-in, so a removal there takes effect
+   * when this ends (or the absolute timeout, if shorter).
+   */
+  private java.time.Duration idpAdminLifetime = java.time.Duration.ofHours(1);
+
+  public java.time.Duration getIdpAdminLifetime() { return idpAdminLifetime; }
+  public void setIdpAdminLifetime(java.time.Duration idpAdminLifetime) { this.idpAdminLifetime = idpAdminLifetime; }
+
+  public String getPublicUrl() { return publicUrl; }
+  public void setPublicUrl(String publicUrl) { this.publicUrl = publicUrl == null ? "" : publicUrl.trim().replaceAll("/+$", ""); }
+
+  /** The base for provider-facing URLs: the public URL, else Spring's {baseUrl} (from the request). */
+  public String base() {
+    return publicUrl.isBlank() ? "{baseUrl}" : publicUrl;
+  }
 
   public Oidc getOidc() { return oidc; }
   public Saml getSaml() { return saml; }
@@ -158,6 +181,10 @@ public class SsoProperties {
    */
   public List<String> problems() {
     List<String> out = new java.util.ArrayList<>();
+    if (idpAdminLifetime == null || idpAdminLifetime.isNegative() || idpAdminLifetime.isZero()) {
+      out.add("SSO_IDP_ADMIN_SESSION_LIFETIME must be a positive duration");
+    }
+    if (!publicUrl.isBlank() && !secureUrl(publicUrl)) out.add("PORTAL_PUBLIC_URL must be an https:// URL (http:// only for localhost)");
     if (oidc.enabled()) {
       if (!secureUrl(oidc.getIssuerUri())) out.add("SSO_OIDC_ISSUER_URI must be an https:// URL (http:// only for localhost)");
       if (!oidc.getUserFilter().contains("{{value}}")) out.add("SSO_OIDC_USER_FILTER must contain {{value}}");
@@ -171,6 +198,9 @@ public class SsoProperties {
         out.add("SSO_SAML_METADATA must be an https:// URL or a file (http:// only for localhost)");
       }
       if (!saml.getUserFilter().contains("{{value}}")) out.add("SSO_SAML_USER_FILTER must contain {{value}}");
+      if (publicUrl.isBlank() && saml.getEntityId().isBlank()) {
+        out.add("SAML needs PORTAL_PUBLIC_URL (or SSO_SAML_ENTITY_ID): the entity id must not come from the request's Host");
+      }
       if (saml.getSigningKeyFile().isBlank() != saml.getSigningCertificateFile().isBlank()) {
         out.add("SSO_SAML_SIGNING_KEY_FILE and SSO_SAML_SIGNING_CERT_FILE go together");
       }

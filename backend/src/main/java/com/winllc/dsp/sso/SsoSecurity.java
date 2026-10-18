@@ -82,8 +82,8 @@ public class SsoSecurity {
     this.signIn = signIn;
     this.state = state;
     this.consent = consent;
-    this.oidcClients = new SsoRegistrations.Oidc(props.getOidc());
-    this.samlParties = new SsoRegistrations.Saml(props.getSaml());
+    this.oidcClients = new SsoRegistrations.Oidc(props);
+    this.samlParties = new SsoRegistrations.Saml(props);
   }
 
   /** The sign-in buttons for the login page: id, label and where the browser goes. */
@@ -156,6 +156,11 @@ public class SsoSecurity {
     OidcUser user = oidcUsers.loadUser(request);
     SsoProperties.Oidc cfg = props.getOidc();
     Object value = user.getAttributes().get(cfg.getUsernameClaim());
+    if ("email".equals(cfg.getUsernameClaim()) && !Boolean.TRUE.equals(user.getEmailVerified())) {
+      // An unverified address is whatever the user typed at the provider: never an identity.
+      throw new SsoSignIn.MappingException("unverified_email", value == null ? null : value.toString(),
+          "The provider did not mark the email address as verified (email_verified)");
+    }
     Collection<String> groups = strings(user.getAttributes().get(cfg.getGroupsClaim()));
     SsoSignIn.Identity identity = signIn.map("oidc", cfg, value == null ? null : value.toString(), groups);
     return new MappedOidcUser(user, identity);

@@ -124,6 +124,12 @@ portal:
   # administrator status then come from the directory. Provider groups make a user an
   # administrator only when listed in *_ADMIN_GROUPS (";"-separated).
   sso:
+    # The portal's public address (https://portal.example.com) for redirect URIs and the SAML
+    # entity id; required for SAML unless SSO_SAML_ENTITY_ID is set.
+    public-url: ${PORTAL_PUBLIC_URL:}
+    # How long a session whose administrator rights come from the provider's groups may last
+    # (the provider is asked again at the next sign-in); the absolute timeout applies if shorter.
+    idp-admin-lifetime: ${SSO_IDP_ADMIN_SESSION_LIFETIME:1h}
     oidc:
       issuer-uri: ${SSO_OIDC_ISSUER_URI:}
       client-id: ${SSO_OIDC_CLIENT_ID:}
