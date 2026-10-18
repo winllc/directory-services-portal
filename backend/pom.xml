@@ -29,10 +29,13 @@
     <unboundid.version>7.0.5</unboundid.version>
     <!-- Security fixes ahead of Spring Boot 4.1.1's managed versions (Trivy: CVE-2026-65182,
          CVE-2026-65905, CVE-2026-68525 in Tomcat 11.0.24; CVE-2026-89407, CVE-2026-89425,
-         CVE-2026-68497, CVE-2026-91776, CVE-2026-91777 in Jackson 3.1.5). Remove once the Boot
+         CVE-2026-68497, CVE-2026-91776, CVE-2026-91777 in Jackson 3.1.5 and 2.21.5). Remove once the Boot
          parent manages these versions or newer. -->
     <tomcat.version>11.0.27</tomcat.version>
     <jackson-bom.version>3.1.7</jackson-bom.version>
+    <!-- Jackson 2, which OpenSAML pulls in for SAML sign-in: the same CVEs as above, fixed in 2.21.7.
+         Remove once the Boot parent manages it or newer. -->
+    <jackson-2-bom.version>2.21.8</jackson-2-bom.version>
     <shedlock.version>7.10.1</shedlock.version>
   </properties>
 
