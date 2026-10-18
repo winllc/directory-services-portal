@@ -70,6 +70,8 @@ data:
   DSP_DATABASE_POOL_SIZE: {{ include "dsp.str" $v.database.poolSize | quote }}
   DSP_CONFIG_REFRESH: {{ include "dsp.str" $v.database.configRefresh | quote }}
   # Single sign-on
+  PORTAL_PUBLIC_URL: {{ include "dsp.str" $v.server.publicUrl | quote }}
+  SSO_IDP_ADMIN_SESSION_LIFETIME: {{ include "dsp.str" $v.sso.idpAdminSessionLifetime | quote }}
   SSO_OIDC_ISSUER_URI: {{ include "dsp.str" $v.sso.oidc.issuerUri | quote }}
   SSO_OIDC_CLIENT_ID: {{ include "dsp.str" $v.sso.oidc.clientId | quote }}
   {{- if include "dsp.secretSet" (dict "v" $v.sso.oidc.clientSecret) }}

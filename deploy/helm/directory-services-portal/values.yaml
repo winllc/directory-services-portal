@@ -58,9 +58,10 @@ api:
   # first start with the database imports it). The chart refuses other combinations.
   # (0 stops the portal and keeps the volumes.)
   replicaCount: 1
-  # Deployment strategy. "" (auto): Recreate while a ReadWriteOnce volume is mounted (a second pod
-  # could not attach it during an update), else RollingUpdate (maxUnavailable 0, maxSurge 1), so
-  # an upgrade never stops the portal. Or set Recreate or RollingUpdate.
+  # Deployment strategy. "" (auto): RollingUpdate (maxUnavailable 0, maxSurge 1, an upgrade never
+  # stops the portal) with database.url and no ReadWriteOnce volume mounted; Recreate otherwise
+  # (without the database two pods must never run at once). Or set Recreate, or RollingUpdate
+  # (which needs database.url).
   updateStrategy: ""
   # A PodDisruptionBudget for the API, rendered while replicaCount > 1: node drains keep at least
   # minAvailable pods serving.
@@ -252,6 +253,9 @@ database:
 # X-Forwarded-Proto/Host (the web tier sends them) so redirect URIs and the SAML entity id are
 # right; set server.cookieSecure (HTTPS) for SAML.
 sso:
+  # A session whose administrator rights come only from the provider's groups ends after this
+  # (SSO_IDP_ADMIN_SESSION_LIFETIME): the provider is asked again at the next sign-in.
+  idpAdminSessionLifetime: 1h
   oidc:
     # https://login.microsoftonline.com/<tenant>/v2.0, https://<org>.okta.com, https://adfs.example/adfs
     issuerUri: ""
@@ -262,6 +266,8 @@ sso:
       existingSecret: ""
       existingSecretKey: oidc-client-secret
     scopes: openid profile email
+    # Prefer a claim that never changes and is held in the directory (see the README); "email" is
+    # accepted only with email_verified true.
     usernameClaim: preferred_username
     userFilter: (&(objectClass=inetOrgPerson)(uid={{value}}))
     groupsClaim: groups
@@ -344,6 +350,11 @@ admin:
 
 # --- Server (env.template: Server) ------------------------------------------------------------
 server:
+  # The address users open the portal at, e.g. https://portal.example.com (PORTAL_PUBLIC_URL; the
+  # web tier's PUBLIC_HOST is its host). Single sign-on builds its redirect URI, SAML entity id and
+  # assertion consumer service from it, so a forged Host header can't change them. Required for
+  # SAML unless sso.saml.entityId is set; recommended whenever single sign-on is on.
+  publicUrl: ""
   # Sessions (ENS_SESSION_*): idle timeout, a shorter one for administrators ("": the same; STIG
   # suggests 15m), the longest a session lasts after sign-in, and concurrent sessions per user
   # (0: no limit; over it the oldest ends; STIG suggests 3).

@@ -35,5 +35,6 @@ sso:
     label: Sign in with Microsoft
 server:
   cookieSecure: true
+  publicUrl: https://portal.corp.example
 networkPolicy:
   enabled: true

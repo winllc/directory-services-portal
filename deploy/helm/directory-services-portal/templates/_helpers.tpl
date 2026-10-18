@@ -223,11 +223,20 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{- if not (has .Values.api.updateStrategy (list "" "Recreate" "RollingUpdate")) -}}
 {{- fail "api.updateStrategy must be empty (automatic), Recreate or RollingUpdate" -}}
 {{- end -}}
+{{- if and (eq .Values.api.updateStrategy "RollingUpdate") (not .Values.database.url) -}}
+{{- fail "api.updateStrategy RollingUpdate needs database.url: without the shared database two API pods during an update would both write the audit files and portal-config.json" -}}
+{{- end -}}
 {{- if and (eq .Values.api.updateStrategy "RollingUpdate") (include "dsp.apiRwoVolume" .) -}}
 {{- fail "api.updateStrategy RollingUpdate with a ReadWriteOnce volume mounted (persistence.license, persistence.data or audit.file.persistence): the new pod could not attach it while the old one runs" -}}
 {{- end -}}
 {{- if and .Values.sso.saml.metadataUrl .Values.sso.saml.metadataXml -}}
 {{- fail "sso.saml: give metadataUrl or metadataXml, not both" -}}
+{{- end -}}
+{{- if and (or .Values.sso.saml.metadataUrl .Values.sso.saml.metadataXml) (not .Values.server.publicUrl) (not .Values.sso.saml.entityId) -}}
+{{- fail "sso.saml needs server.publicUrl (or sso.saml.entityId): the SAML entity id and assertion consumer service must not come from the request's Host" -}}
+{{- end -}}
+{{- if and .Values.server.publicUrl (not (regexMatch "^https?://[^/]+/?$" .Values.server.publicUrl)) -}}
+{{- fail "server.publicUrl must be a URL without a path, e.g. https://portal.example.com" -}}
 {{- end -}}
 {{- if and .Values.sso.oidc.issuerUri (not .Values.sso.oidc.clientId) -}}
 {{- fail "sso.oidc.issuerUri needs sso.oidc.clientId" -}}
@@ -288,10 +297,14 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{- end -}}
 {{- end -}}
 
-{{/* The API's update strategy: api.updateStrategy, or Recreate while a ReadWriteOnce volume is mounted. */}}
+{{/*
+The API's update strategy: api.updateStrategy, else RollingUpdate only with the shared database
+and no ReadWriteOnce volume; Recreate otherwise (without the database, two pods would both write
+the audit files and configuration, even on ReadWriteMany storage).
+*/}}
 {{- define "dsp.apiStrategy" -}}
 {{- if .Values.api.updateStrategy -}}{{ .Values.api.updateStrategy }}
-{{- else if include "dsp.apiRwoVolume" . -}}Recreate
+{{- else if or (not .Values.database.url) (include "dsp.apiRwoVolume" .) -}}Recreate
 {{- else -}}RollingUpdate
 {{- end -}}
 {{- end -}}

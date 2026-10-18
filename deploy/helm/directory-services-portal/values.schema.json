@@ -623,6 +623,9 @@
               "pattern": "^([0-9]+(ns|us|ms|s|m|h|d)?)?$"
             }
           }
+        },
+        "publicUrl": {
+          "type": "string"
         }
       }
     },
@@ -1326,6 +1329,9 @@
               }
             }
           }
+        },
+        "idpAdminSessionLifetime": {
+          "type": "string"
         }
       }
     }

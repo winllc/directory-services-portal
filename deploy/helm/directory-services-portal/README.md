@@ -267,7 +267,9 @@ persistence:
 ```
 
 With more than one replica the chart renders a PodDisruptionBudget (`api.podDisruptionBudget`)
-and, once no ReadWriteOnce volume is mounted, a `RollingUpdate` strategy (`maxUnavailable: 0`), so
+and, with the database and no ReadWriteOnce volume mounted, a `RollingUpdate` strategy
+(`maxUnavailable: 0`; without the database it is always `Recreate`, and `RollingUpdate` is
+refused), so
 upgrades and node drains don't interrupt the portal. It refuses `replicaCount > 1` without
 `database.url`, with a ReadWriteOnce license volume, or with a ReadWriteOnce data or audit-file
 volume. The license state (installation id, license, revisions seen) still lives on the license
@@ -290,9 +292,12 @@ sso:
     label: Sign in with Microsoft
 server:
   cookieSecure: true
+  publicUrl: https://portal.example.com   # redirect URI and SAML entity id; required for SAML
 ```
 
-Register `https://<portal>/api/auth/sso/callback/oidc` as the redirect URI. For SAML set
+Register `https://<portal>/api/auth/sso/callback/oidc` as the redirect URI. `server.publicUrl`
+also sets the web tier's `PUBLIC_HOST`, so a client's `Host` header can't change what the API
+believes its address is. For SAML set
 `sso.saml.metadataUrl` (or `metadataXml`) and register the SP with
 `https://<portal>/api/auth/sso/saml/metadata` (entity id and metadata URL) and the assertion
 consumer service `https://<portal>/api/auth/sso/saml/acs/saml`. Provider setup for Entra ID, Okta
@@ -400,7 +405,7 @@ Existing claims (`existingClaim`) are never touched.
 | `api.image.tag` | `""` | empty: the chart's appVersion |
 | `api.image.pullPolicy` | `IfNotPresent` | |
 | `api.replicaCount` | `1` | more than 1 needs `database.url`, a ReadWriteMany license volume and no ReadWriteOnce data volume (see Several API replicas) |
-| `api.updateStrategy` | `""` | `""`: `Recreate` while a ReadWriteOnce volume is mounted, else `RollingUpdate`; or set one |
+| `api.updateStrategy` | `""` | `""`: `RollingUpdate` with `database.url` and no ReadWriteOnce volume, else `Recreate`; `RollingUpdate` needs `database.url` |
 | `api.podDisruptionBudget.minAvailable` | `1` | rendered while `replicaCount > 1` |
 | `api.javaOpts` | `-XX:MaxRAMPercentage=75.0` | `JAVA_OPTS` |
 | `api.javaToolOptions` | `""` | `JAVA_TOOL_OPTIONS` (printed at startup: no passwords) |
@@ -442,6 +447,8 @@ Existing claims (`existingClaim`) are never touched.
 
 | Value | Default | |
 |---|---|---|
+| `server.publicUrl` | `""` | `PORTAL_PUBLIC_URL` and the web tier's `PUBLIC_HOST`; required for SAML unless `sso.saml.entityId` is set |
+| `sso.idpAdminSessionLifetime` | `1h` | sessions whose admin rights come only from provider groups end after this |
 | `sso.oidc.issuerUri` / `.clientId` | `""` | both set: OpenID Connect on (`SSO_OIDC_*`) |
 | `sso.oidc.clientSecret.value` / `.existingSecret` / `.existingSecretKey` | `""` / `""` / `oidc-client-secret` | mounted as a file; empty: public client (PKCE) |
 | `sso.oidc.scopes` / `.usernameClaim` / `.groupsClaim` | `openid profile email` / `preferred_username` / `groups` | |

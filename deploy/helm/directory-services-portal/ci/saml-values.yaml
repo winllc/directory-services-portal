@@ -25,3 +25,4 @@ sso:
       existingSecret: dsp-saml-signing
 server:
   cookieSecure: true
+  publicUrl: https://portal.corp.example
