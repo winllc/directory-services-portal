@@ -65,6 +65,11 @@ public class SessionService implements HttpSessionListener {
   static final String ENDED = SessionService.class.getName() + ".ended";
   private static final String KEY = SessionService.class.getName() + ".key";
   private static final String OWNER = SessionService.class.getName() + ".owner";
+  /**
+   * Set for a single sign-on whose provider groups grant administrator rights (by the configured
+   * mapping): kept when groups are read again from the directory.
+   */
+  public static final String IDP_ADMIN = SessionService.class.getName() + ".idpAdmin";
 
   private final EnsProperties ens;
   private final PortalProperties props;
@@ -98,6 +103,19 @@ public class SessionService implements HttpSessionListener {
         default -> "Your session has ended. Sign in again.";
       };
     }
+  }
+
+  /**
+   * Starts the session of a new sign-in: a fresh session id (no fixation), the security context,
+   * then the session controls ({@link #signedIn}).
+   */
+  public void establish(SessionUser user, HttpServletRequest request, HttpServletResponse response) {
+    SecurityContext context = context(user);
+    SecurityContextHolder.setContext(context);
+    request.getSession(true);
+    request.changeSessionId();
+    contexts.saveContext(context, request, response);
+    signedIn(request, user);
   }
 
   /** Called once the session for a new sign-in exists (after its id was changed). */
@@ -154,6 +172,7 @@ public class SessionService implements HttpSessionListener {
         fresh = user;
       }
       if (fresh == null) return expire(session, user, "account-removed");
+      if (!fresh.isAdmin() && Boolean.TRUE.equals(session.getAttribute(IDP_ADMIN))) fresh = fresh.asAdmin();
       if (!fresh.equals(user)) {
         if (fresh.isAdmin() != user.isAdmin()) {
           log.info("{} is {} an administrator", user.username(), fresh.isAdmin() ? "now" : "no longer");

@@ -60,6 +60,15 @@ public class ConsentService {
     session.setAttribute(ACKNOWLEDGED, Boolean.TRUE);
   }
 
+  /**
+   * Carries an acknowledgement given before a single sign-on over to the session the sign-on
+   * creates (the provider's answer arrives without the session cookie). Already audited when given.
+   */
+  public void carryOver(HttpServletRequest request) {
+    if (!enabled()) return;
+    request.getSession(true).setAttribute(ACKNOWLEDGED, Boolean.TRUE);
+  }
+
   /** Refuses a sign-in (403, code {@value #CONSENT_REQUIRED}) until the banner is acknowledged. */
   public void requireAcknowledged(HttpServletRequest request, AuditLog.Draft signIn) {
     if (!required(request)) return;
