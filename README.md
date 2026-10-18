@@ -655,11 +655,13 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 
 | variable | default | |
 |---|---|---|
+| `PORTAL_PUBLIC_URL` | | the address users open, e.g. `https://portal.example.com`: redirect URI, SAML entity id and ACS are built from it, never from the request's `Host`. **Required for SAML** (unless `SSO_SAML_ENTITY_ID` is set), recommended for OIDC. Give the web tier `PUBLIC_HOST` (its host[:port]) too |
+| `SSO_IDP_ADMIN_SESSION_LIFETIME` | `1h` | a session whose administrator rights come only from the provider's groups ends this long after sign-in (the provider is asked again then) |
 | `SSO_OIDC_ISSUER_URI` | | the issuer; `https://` (http only for localhost). Its discovery document must name the same issuer |
 | `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
 | `SSO_OIDC_CLIENT_SECRET_FILE` / `SSO_OIDC_CLIENT_SECRET` | | the client secret (prefer the file); empty: a public client |
 | `SSO_OIDC_SCOPES` | `openid profile email` | |
-| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` | the claim mapped through the user filter |
+| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` | the claim mapped through the user filter; `email` is used only when `email_verified` is true |
 | `SSO_OIDC_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{value}}))` | |
 | `SSO_OIDC_GROUPS_CLAIM` / `SSO_OIDC_ADMIN_GROUPS` | `groups` / empty | provider groups that grant administrator |
 | `SSO_OIDC_LABEL` | `Sign in with single sign-on` | button text |
@@ -670,8 +672,15 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 | `SSO_SAML_CLOCK_SKEW` | `2m` | tolerated clock difference (at most `10m`) |
 | `SSO_SAML_SIGNING_KEY_FILE` / `SSO_SAML_SIGNING_CERT_FILE` | | PKCS#8 PEM key and certificate, for IdPs that require signed AuthnRequests |
 
-Endpoints to register with the provider (`<portal>` is the address users open; behind a proxy it
-must forward `X-Forwarded-Proto` and `X-Forwarded-Host`, as the web tier does):
+**Choose an identity claim that can't be changed or reused.** The mapping is only as strong as the
+claim: prefer an immutable one held in the directory, such as Entra ID's `oid` (stored in an
+attribute such as `employeeID` or `msDS-cloudExtensionAttribute1`), Okta's `sub`, or AD FS's
+`ImmutableID`/objectGUID-derived claims, over `preferred_username`, UPNs or email addresses, which
+can be renamed or handed to someone else. And restrict who may use the application at the
+provider (Entra *Assignment required*, Okta assignments, AD FS access control policy), so that
+only intended users can get an assertion for the portal at all.
+
+Endpoints to register with the provider (`<portal>` is `PORTAL_PUBLIC_URL`):
 
 | | |
 |---|---|
@@ -693,24 +702,34 @@ TLS proxy). The provider's tokens are not kept: the session holds only the porta
 notice-and-consent banner must be acknowledged before a sign-on starts. Every sign-on and refusal
 is audited as `auth.login` with `method` `oidc` or `saml` (refusals with a `reasonCode`); the user
 is sent back to `/login?sso_error=<code>` with a message. Sign-out ends the portal session only
-(not the provider's).
+(not the provider's). Administrator rights granted by `SSO_*_ADMIN_GROUPS` are not re-checked
+with the provider during a session: such a session ends after `SSO_IDP_ADMIN_SESSION_LIFETIME`
+(or the absolute timeout, if shorter), so a removal at the provider takes effect by then. Rights
+from the directory are read again every `GROUP_REFRESH_INTERVAL` as usual. The web tier drops
+`Forwarded`, `X-Forwarded-Prefix` and `X-Forwarded-Port` from clients and sends `PUBLIC_HOST` as
+`X-Forwarded-Host` when set.
 
 **Microsoft Entra ID** (OIDC). App registrations > New registration; platform *Web*, redirect URI
 as above. Certificates & secrets > new client secret. Token configuration > add the groups claim
 (*Security groups*, emitted as *Group ID*) if administrators come from an Entra group. Then:
 `SSO_OIDC_ISSUER_URI=https://login.microsoftonline.com/<tenant-id>/v2.0`,
-`SSO_OIDC_CLIENT_ID=<application (client) id>`, the secret, and for Active Directory users
-`SSO_OIDC_USERNAME_CLAIM=preferred_username` with
-`SSO_OIDC_USER_FILTER=(&(objectClass=user)(userPrincipalName={{value}}))`;
+`SSO_OIDC_CLIENT_ID=<application (client) id>`, the secret. Enterprise applications > the app >
+Properties: *Assignment required* = Yes, then assign the users or groups. Map users by `oid`
+(`SSO_OIDC_USERNAME_CLAIM=oid`, `SSO_OIDC_USER_FILTER=(&(objectClass=user)(employeeID={{value}}))`
+when the object id is synced into that attribute); `preferred_username` with
+`(&(objectClass=user)(userPrincipalName={{value}}))` works but follows renames;
 `SSO_OIDC_ADMIN_GROUPS=<object id of the group>`. Users in more than 200 groups get no groups
 claim (Entra's overage rule): give them administrator rights through `ADMIN_GROUPS` instead.
 
 **Okta** (OIDC). Applications > Create App Integration > OIDC, *Web Application*; sign-in redirect
 URI as above; assign the users. `SSO_OIDC_ISSUER_URI=https://<org>.okta.com/oauth2/default` (or
-your custom authorization server), the client id and secret. For administrator groups, add a
+your custom authorization server), the client id and secret; assign the application only to the
+users who should reach the portal. For administrator groups, add a
 `groups` claim to the authorization server (filter, e.g. *Starts with* `portal-`) and list the
-group names in `SSO_OIDC_ADMIN_GROUPS`. Map users by `preferred_username` (the Okta login) or
-`email` (`SSO_OIDC_USERNAME_CLAIM=email`, `SSO_OIDC_USER_FILTER=(&(objectClass=inetOrgPerson)(mail={{value}}))`).
+group names in `SSO_OIDC_ADMIN_GROUPS`. Map users by `sub` (the Okta user id, stored in a directory attribute) where you can;
+`preferred_username` (the Okta login) or a verified `email`
+(`SSO_OIDC_USERNAME_CLAIM=email`, `SSO_OIDC_USER_FILTER=(&(objectClass=inetOrgPerson)(mail={{value}}))`)
+also work but follow renames.
 
 **AD FS** (SAML, or OIDC on AD FS 2016+). SAML: AD FS Management > Relying Party Trusts > Add,
 *Import data about the relying party published online*: `https://<portal>/api/auth/sso/saml/metadata`.
@@ -774,11 +793,14 @@ The license state (installation id, license, revisions seen) is still kept in
 Kubernetes a ReadWriteMany license volume, which the chart requires for more than one replica).
 The ENS license library's database store will remove that requirement.
 
-**Moving an existing installation to the database.** Set the `DSP_DATABASE_*` variables and
-restart the single instance with its data volume still mounted. The first start imports
+**Moving an existing installation to the database: upgrade a single instance first.** Set the
+`DSP_DATABASE_*` variables and restart the single instance with its data volume still mounted. The first start imports
 `portal-config.json`, the audit files (the chain carries on from the same head), the audit API
 tokens and forwarder cursors and, when first read, the saved analysis results, and logs an
-`Imported ...` line for each. The files are left as they were but are no longer read or written:
+`Imported ...` line for each, and records what it imported. An instance that later finds the
+database already holding a configuration or audit chain that was not imported from its own
+(non-empty) files refuses to start and says how to proceed, rather than silently drop them. The
+files are left as they were but are no longer read or written:
 **don't go back** to running without the database afterwards (the files would miss everything
 since), and back up the database instead of the data volume. Then add instances. Background tasks
 running during the restart are lost, as with any restart. On Kubernetes see the chart README,
@@ -809,7 +831,7 @@ Session controls (DISA STIG; the ENS platform baseline):
 | `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` | a session ends this long after sign-in, whatever its activity |
 | `ENS_SESSION_MAX_PER_USER` | `0` (no limit) | concurrent sessions per user; signing in once more ends the **oldest** (STIG suggests `3`) |
 | `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists ends its sessions |
-| `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`) |
+| `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`). Each attempt is counted, atomically, before its password is tried (a success clears the count), so parallel requests can't try more |
 | `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory (a restart clears them), or in the shared database (see [High availability](#high-availability-several-api-instances)) |
 
 Idle time counts what the user does: the web client marks its background polling (task progress,
