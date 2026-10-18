@@ -50,12 +50,22 @@ api:
     tag: ""
     pullPolicy: IfNotPresent
 
-  # Exactly one replica. The API is a single writer: the audit store (hash-chained files in the
-  # data volume), the JSON configuration store and the license state (installation id) are
-  # files on ReadWriteOnce volumes, and sessions and background tasks live in the API's memory.
-  # More than one replica is not supported; the Deployment uses the Recreate strategy so an
-  # upgrade never runs two API pods at once. (0 stops the portal and keeps the volumes.)
+  # API replicas. One (the default) keeps everything as before: sessions, the sign-in lockout and
+  # jobs in the API's memory, configuration and the audit store in the data volume. More than one
+  # needs the shared database (database.url), whose tables hold all of these, and volumes that
+  # don't pin the pods to one node: persistence.license ReadWriteMany (the license state; see the
+  # README, High availability), persistence.data disabled or ReadWriteMany (read once, when the
+  # first start with the database imports it). The chart refuses other combinations.
+  # (0 stops the portal and keeps the volumes.)
   replicaCount: 1
+  # Deployment strategy. "" (auto): Recreate while a ReadWriteOnce volume is mounted (a second pod
+  # could not attach it during an update), else RollingUpdate (maxUnavailable 0, maxSurge 1), so
+  # an upgrade never stops the portal. Or set Recreate or RollingUpdate.
+  updateStrategy: ""
+  # A PodDisruptionBudget for the API, rendered while replicaCount > 1: node drains keep at least
+  # minAvailable pods serving.
+  podDisruptionBudget:
+    minAvailable: 1
 
   # JVM options for the API (the image's entrypoint passes JAVA_OPTS to java).
   javaOpts: "-XX:MaxRAMPercentage=75.0"
@@ -213,6 +223,69 @@ persistence:
     accessModes: [ReadWriteOnce]
     existingClaim: ""
     annotations: {}
+
+# --- Shared database (several API replicas) ----------------------------------------------------
+# PostgreSQL 13 or later (DSP_DATABASE_*). Optional with one replica, required for more: it holds
+# sessions (Spring Session), the sign-in lockout, configuration, the audit store, jobs and cluster
+# locks; the schema is created and upgraded by the API (Flyway). On the first start with it, the
+# API imports portal-config.json, the audit files and analysis results from the data volume, so
+# keep that volume mounted for that start. Empty url: off (nothing changes).
+database:
+  # jdbc:postgresql://host:5432/dsp
+  url: ""
+  username: ""
+  # Mounted as a file (DSP_DATABASE_PASSWORD_FILE), never an environment variable.
+  password:
+    value: ""
+    existingSecret: ""
+    existingSecretKey: database-password
+  poolSize: 10
+  # How soon a configuration change made on one replica is seen by the others.
+  configRefresh: 2s
+
+# --- Single sign-on (SSO_*) ---------------------------------------------------------------------
+# OpenID Connect and SAML 2.0, each off until configured; password and certificate sign-in work as
+# before. The asserted identity ({{value}}) must match exactly one directory entry through
+# userFilter; groups and administrator rights then come from the directory. Provider groups make a
+# user an administrator only when listed in adminGroups. See the README, Single sign-on, for
+# Entra ID, Okta and ADFS. Behind the ingress, the portal's public URL must reach the API with
+# X-Forwarded-Proto/Host (the web tier sends them) so redirect URIs and the SAML entity id are
+# right; set server.cookieSecure (HTTPS) for SAML.
+sso:
+  oidc:
+    # https://login.microsoftonline.com/<tenant>/v2.0, https://<org>.okta.com, https://adfs.example/adfs
+    issuerUri: ""
+    clientId: ""
+    # Mounted as a file (SSO_OIDC_CLIENT_SECRET_FILE). Empty: a public client (PKCE only).
+    clientSecret:
+      value: ""
+      existingSecret: ""
+      existingSecretKey: oidc-client-secret
+    scopes: openid profile email
+    usernameClaim: preferred_username
+    userFilter: (&(objectClass=inetOrgPerson)(uid={{value}}))
+    groupsClaim: groups
+    adminGroups: []
+    label: ""
+  saml:
+    # The IdP's metadata URL (https://), or leave empty and give metadataXml.
+    metadataUrl: ""
+    # The IdP's metadata document itself (mounted from a ConfigMap), for IdPs the API can't reach.
+    metadataXml: ""
+    # This SP's entity id; empty: https://<portal>/api/auth/sso/saml/metadata.
+    entityId: ""
+    # Empty: the NameID identifies the user.
+    usernameAttribute: ""
+    userFilter: (&(objectClass=inetOrgPerson)(uid={{value}}))
+    groupsAttribute: ""
+    adminGroups: []
+    label: ""
+    clockSkew: 2m
+    # A Secret with a PEM certificate and PKCS#8 key, for IdPs that require signed AuthnRequests.
+    signing:
+      existingSecret: ""
+      certificateKey: tls.crt
+      privateKeyKey: tls.key
 
 # --- License ----------------------------------------------------------------------------------
 # Optional. Without a license only sign-in and the license screen (Administration > License,
@@ -547,6 +620,14 @@ networkPolicy:
     # Splunk HEC / syslog / OCSP and CRL (X.509 revocation checks).
     audit:
       ports: [443, 514, 6514, 8088]
+      cidrs: [0.0.0.0/0]
+    # The shared database (when database.url is set).
+    database:
+      ports: [5432]
+      cidrs: [0.0.0.0/0]
+    # The single sign-on providers' discovery, keys, token endpoint and metadata (when configured).
+    sso:
+      ports: [443]
       cidrs: [0.0.0.0/0]
     # Further egress rules for the API, as NetworkPolicy egress entries.
     extra: []

@@ -61,6 +61,38 @@ data:
   BANNER_FOREGROUND: {{ include "dsp.str" $v.server.banner.foreground | quote }}
   BANNER_BACKGROUND: {{ include "dsp.str" $v.server.banner.background | quote }}
   MAX_HTTP_REQUEST_HEADER_SIZE: {{ include "dsp.str" $v.server.maxHttpRequestHeaderSize | quote }}
+  # Shared database (several replicas)
+  DSP_DATABASE_URL: {{ include "dsp.str" $v.database.url | quote }}
+  DSP_DATABASE_USERNAME: {{ include "dsp.str" $v.database.username | quote }}
+  {{- if include "dsp.secretSet" (dict "v" $v.database.password) }}
+  DSP_DATABASE_PASSWORD_FILE: /etc/dsp/database/password
+  {{- end }}
+  DSP_DATABASE_POOL_SIZE: {{ include "dsp.str" $v.database.poolSize | quote }}
+  DSP_CONFIG_REFRESH: {{ include "dsp.str" $v.database.configRefresh | quote }}
+  # Single sign-on
+  SSO_OIDC_ISSUER_URI: {{ include "dsp.str" $v.sso.oidc.issuerUri | quote }}
+  SSO_OIDC_CLIENT_ID: {{ include "dsp.str" $v.sso.oidc.clientId | quote }}
+  {{- if include "dsp.secretSet" (dict "v" $v.sso.oidc.clientSecret) }}
+  SSO_OIDC_CLIENT_SECRET_FILE: /etc/dsp/sso-oidc/client-secret
+  {{- end }}
+  SSO_OIDC_SCOPES: {{ include "dsp.str" $v.sso.oidc.scopes | quote }}
+  SSO_OIDC_USERNAME_CLAIM: {{ include "dsp.str" $v.sso.oidc.usernameClaim | quote }}
+  SSO_OIDC_USER_FILTER: {{ include "dsp.str" $v.sso.oidc.userFilter | quote }}
+  SSO_OIDC_GROUPS_CLAIM: {{ include "dsp.str" $v.sso.oidc.groupsClaim | quote }}
+  SSO_OIDC_ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.sso.oidc.adminGroups | quote }}
+  SSO_OIDC_LABEL: {{ include "dsp.str" $v.sso.oidc.label | quote }}
+  SSO_SAML_METADATA: {{ ternary "/etc/dsp/sso-saml-metadata/idp-metadata.xml" (include "dsp.str" $v.sso.saml.metadataUrl) (not (empty $v.sso.saml.metadataXml)) | quote }}
+  SSO_SAML_ENTITY_ID: {{ include "dsp.str" $v.sso.saml.entityId | quote }}
+  SSO_SAML_USERNAME_ATTRIBUTE: {{ include "dsp.str" $v.sso.saml.usernameAttribute | quote }}
+  SSO_SAML_USER_FILTER: {{ include "dsp.str" $v.sso.saml.userFilter | quote }}
+  SSO_SAML_GROUPS_ATTRIBUTE: {{ include "dsp.str" $v.sso.saml.groupsAttribute | quote }}
+  SSO_SAML_ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.sso.saml.adminGroups | quote }}
+  SSO_SAML_LABEL: {{ include "dsp.str" $v.sso.saml.label | quote }}
+  SSO_SAML_CLOCK_SKEW: {{ include "dsp.str" $v.sso.saml.clockSkew | quote }}
+  {{- if $v.sso.saml.signing.existingSecret }}
+  SSO_SAML_SIGNING_KEY_FILE: /etc/dsp/sso-saml-signing/signing.key
+  SSO_SAML_SIGNING_CERT_FILE: /etc/dsp/sso-saml-signing/signing.crt
+  {{- end }}
   # Audit log
   AUDIT_DIR: {{ include "dsp.str" $v.audit.dir | quote }}
   AUDIT_MEMORY_EVENTS: {{ include "dsp.str" $v.audit.memoryEvents | quote }}
@@ -105,3 +137,16 @@ data:
   X509_USER_FILTER: {{ $v.x509.userFilter | quote }}
   X509_REQUIRE_CERTIFICATE_MATCH: {{ $v.x509.requireCertificateMatch | quote }}
   X509_AUTO_LOGIN: {{ $v.x509.autoLogin | quote }}
+{{- if include "dsp.samlMetadataXml" . }}
+---
+# The SAML IdP's metadata (sso.saml.metadataXml), mounted at /etc/dsp/sso-saml-metadata.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dsp.apiName" . }}-saml-idp
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+data:
+  idp-metadata.xml: {{ $v.sso.saml.metadataXml | quote }}
+{{- end }}

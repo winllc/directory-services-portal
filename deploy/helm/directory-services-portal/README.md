@@ -235,6 +235,71 @@ controller's pods. If other controls already ensure that only the ingress contro
 web pods (a cluster-wide policy, a service mesh), set `x509.allowUnrestrictedWebIngress: true`
 instead. An OpenShift Route cannot forward client certificates: use passthrough there.
 
+### Several API replicas (high availability)
+
+More than one API pod needs the shared PostgreSQL database (13 or later). It holds sessions, the
+sign-in lockout, configuration, the audit store, background jobs and cluster locks; the API
+creates its tables (Flyway). Upgrade in two steps so the first start can import the data volume:
+
+```yaml
+# Step 1: keep one replica and the data volume; add the database.
+database:
+  url: jdbc:postgresql://postgres.db.svc:5432/dsp
+  username: dsp
+  password:
+    existingSecret: dsp-database      # key: database-password (or set existingSecretKey)
+```
+
+The first start copies `portal-config.json`, the audit files (the hash chain carries on from the
+same head), the audit API tokens and forwarder cursors and the saved analysis results into the
+database; the files are left as they were but are not read again. Check the API log for
+`Imported ...` lines, then:
+
+```yaml
+# Step 2: drop the data volume, put the license state on a ReadWriteMany volume, scale out.
+api:
+  replicaCount: 3
+persistence:
+  data:
+    enabled: false
+  license:
+    accessModes: [ReadWriteMany]   # e.g. an NFS or CephFS storage class
+```
+
+With more than one replica the chart renders a PodDisruptionBudget (`api.podDisruptionBudget`)
+and, once no ReadWriteOnce volume is mounted, a `RollingUpdate` strategy (`maxUnavailable: 0`), so
+upgrades and node drains don't interrupt the portal. It refuses `replicaCount > 1` without
+`database.url`, with a ReadWriteOnce license volume, or with a ReadWriteOnce data or audit-file
+volume. The license state (installation id, license, revisions seen) still lives on the license
+volume, which is why it must be ReadWriteMany; moving it into the database is the next step (see
+the source README, High availability). Audit forwarding to Splunk and syslog runs on one elected
+replica at a time; retention runs on one replica.
+
+### Single sign-on
+
+```yaml
+sso:
+  oidc:
+    issuerUri: https://login.microsoftonline.com/<tenant-id>/v2.0
+    clientId: <application-id>
+    clientSecret:
+      existingSecret: dsp-oidc          # key: oidc-client-secret
+    usernameClaim: preferred_username
+    userFilter: (&(objectClass=user)(userPrincipalName={{value}}))
+    adminGroups: [<object id of the portal admins group>]
+    label: Sign in with Microsoft
+server:
+  cookieSecure: true
+```
+
+Register `https://<portal>/api/auth/sso/callback/oidc` as the redirect URI. For SAML set
+`sso.saml.metadataUrl` (or `metadataXml`) and register the SP with
+`https://<portal>/api/auth/sso/saml/metadata` (entity id and metadata URL) and the assertion
+consumer service `https://<portal>/api/auth/sso/saml/acs/saml`. Provider setup for Entra ID, Okta
+and ADFS is in the source README, Single sign-on. With `networkPolicy.enabled`, the API gets the
+`networkPolicy.egress.sso` rule (443) and, with a database, `networkPolicy.egress.database`
+(5432).
+
 ### Air-gapped
 
 Mirror the two images (same tags) into your registry, then:
@@ -257,7 +322,8 @@ init container and the `helm test` pod use the same two images, so nothing else 
 helm upgrade dsp oci://ghcr.io/winllc/charts/directory-services-portal --version 1.2.4 -n dsp -f my-values.yaml
 ```
 
-The API is replaced (`Recreate`: the old pod stops before the new one starts); the PVCs, and
+The API is replaced (`Recreate`: the old pod stops before the new one starts, while a
+ReadWriteOnce volume is mounted; `RollingUpdate` otherwise, see Several API replicas); the PVCs, and
 with them the license, the installation id and the data, are kept. With `x509.enabled`, the first
 upgrade to a release with the X.509 proxy secret generates it and restarts both workloads; an
 edge-terminated setup (without `tls.enabled`) then also needs `x509.trustedCa`,
@@ -274,6 +340,11 @@ no responder or CRL answers for signs in with a warning in the API log. With
 `x509.revocation.fail: closed` to refuse those as DISA STIG expects (with `crlDir` or an
 `ocspResponderUrl` relay on a closed network), or `mode: "off"` to keep the check off. A mode you
 set yourself keeps `closed` as before. `helm upgrade --reuse-values` keeps the old `off`.
+
+From the release with single sign-on and the shared database, nothing changes until you set
+`sso.*` or `database.*`: one replica, `Recreate`, the same volumes. `api.replicaCount` may now be
+more than 1 with the conditions above, and `api.updateStrategy` (empty: automatic) and
+`api.podDisruptionBudget` are new.
 
 From the release with the platform baseline, the API's probes moved from `/api/health` to
 Spring Boot's liveness and readiness groups on the metrics port (`metrics.enabled`, default on):
@@ -328,7 +399,9 @@ Existing claims (`existingClaim`) are never touched.
 | `api.image.repository` | `ghcr.io/winllc/directory-services-portal-api` | |
 | `api.image.tag` | `""` | empty: the chart's appVersion |
 | `api.image.pullPolicy` | `IfNotPresent` | |
-| `api.replicaCount` | `1` | 0 or 1 only: single writer of the audit store, configuration and license state; sessions are in memory |
+| `api.replicaCount` | `1` | more than 1 needs `database.url`, a ReadWriteMany license volume and no ReadWriteOnce data volume (see Several API replicas) |
+| `api.updateStrategy` | `""` | `""`: `Recreate` while a ReadWriteOnce volume is mounted, else `RollingUpdate`; or set one |
+| `api.podDisruptionBudget.minAvailable` | `1` | rendered while `replicaCount > 1` |
 | `api.javaOpts` | `-XX:MaxRAMPercentage=75.0` | `JAVA_OPTS` |
 | `api.javaToolOptions` | `""` | `JAVA_TOOL_OPTIONS` (printed at startup: no passwords) |
 | `api.resources` | requests 250m / 768Mi, limit 1536Mi | |
@@ -357,9 +430,28 @@ Existing claims (`existingClaim`) are never touched.
 | `persistence.license.accessModes` | `[ReadWriteOnce]` | |
 | `persistence.license.existingClaim` | `""` | use this PVC |
 | `persistence.license.annotations` | `{}` | |
-| `persistence.data.*` | enabled, `2Gi`, same knobs | `/data` (`DATA_DIR`): configuration, audit store, analysis results |
+| `persistence.data.*` | enabled, `2Gi`, same knobs | `/data` (`DATA_DIR`): configuration, audit store, analysis results (with `database.url`: only imported on the first start) |
+| `database.url` | `""` | `jdbc:postgresql://host:5432/db` (`DSP_DATABASE_URL`); empty: no shared database |
+| `database.username` | `""` | |
+| `database.password.value` / `.existingSecret` / `.existingSecretKey` | `""` / `""` / `database-password` | mounted as `DSP_DATABASE_PASSWORD_FILE` |
+| `database.poolSize` / `.configRefresh` | `10` / `2s` | connections per pod; how soon other replicas see a configuration change |
 | `license.existingSecret` | `""` | Secret with key `license.lic` |
 | `license.file` | `""` | `--set-file license.file=./license.lic` |
+
+### Single sign-on
+
+| Value | Default | |
+|---|---|---|
+| `sso.oidc.issuerUri` / `.clientId` | `""` | both set: OpenID Connect on (`SSO_OIDC_*`) |
+| `sso.oidc.clientSecret.value` / `.existingSecret` / `.existingSecretKey` | `""` / `""` / `oidc-client-secret` | mounted as a file; empty: public client (PKCE) |
+| `sso.oidc.scopes` / `.usernameClaim` / `.groupsClaim` | `openid profile email` / `preferred_username` / `groups` | |
+| `sso.oidc.userFilter` | `(&(objectClass=inetOrgPerson)(uid={{value}}))` | maps the claim to one directory entry |
+| `sso.oidc.adminGroups` / `.label` | `[]` / `""` | provider groups that grant administrator; button text |
+| `sso.saml.metadataUrl` / `.metadataXml` | `""` | the IdP's metadata (one of them turns SAML on) |
+| `sso.saml.entityId` | `""` | empty: `https://<portal>/api/auth/sso/saml/metadata` |
+| `sso.saml.usernameAttribute` / `.groupsAttribute` | `""` | empty username attribute: the NameID |
+| `sso.saml.userFilter` / `.adminGroups` / `.label` / `.clockSkew` | as OIDC / `2m` | |
+| `sso.saml.signing.existingSecret` / `.certificateKey` / `.privateKeyKey` | `""` / `tls.crt` / `tls.key` | for IdPs that require signed AuthnRequests |
 
 ### Directory
 
@@ -478,6 +570,8 @@ proxy secret.
 | `networkPolicy.egress.allowAll` | `false` | true: the API may connect anywhere |
 | `networkPolicy.egress.ldap.ports` / `.cidrs` | `[389, 636]` / `[0.0.0.0/0]` | |
 | `networkPolicy.egress.audit.ports` / `.cidrs` | `[443, 514, 6514, 8088]` / `[0.0.0.0/0]` | Splunk, syslog (UDP added for `protocol: udp`), OCSP/CRL |
+| `networkPolicy.egress.database.ports` / `.cidrs` | `[5432]` / `[0.0.0.0/0]` | with `database.url` |
+| `networkPolicy.egress.sso.ports` / `.cidrs` | `[443]` / `[0.0.0.0/0]` | with single sign-on |
 | `networkPolicy.egress.extra` | `[]` | more egress rules |
 | `tests.enabled` | `true` | the `helm test` pod (web image, curls `/api/health` through the web tier) |
 

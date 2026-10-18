@@ -144,7 +144,7 @@ secretKeyRef:
 {{/* Whether the chart creates its own Secret. */}}
 {{- define "dsp.hasChartSecret" -}}
 {{- $v := .Values -}}
-{{- if or (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) -}}true{{- end -}}
+{{- if or (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "dsp.licenseSecretName" -}}
@@ -201,7 +201,36 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{/* Validation of value combinations that would otherwise fail at runtime. */}}
 {{- define "dsp.validate" -}}
 {{- if gt (int .Values.api.replicaCount) 1 -}}
-{{- fail "api.replicaCount must be 0 or 1: the API is a single writer (audit store, configuration, license state) and keeps sessions in memory" -}}
+{{- if not .Values.database.url -}}
+{{- fail "api.replicaCount > 1 needs database.url (the shared PostgreSQL database for sessions, the sign-in lockout, configuration, the audit store and jobs)" -}}
+{{- end -}}
+{{- if and .Values.persistence.license.enabled (not (has "ReadWriteMany" .Values.persistence.license.accessModes)) -}}
+{{- fail "api.replicaCount > 1 needs persistence.license.accessModes [ReadWriteMany]: every replica reads the license state (installation id, license) from that volume (see the README, High availability)" -}}
+{{- end -}}
+{{- if not .Values.persistence.license.enabled -}}
+{{- fail "api.replicaCount > 1 needs persistence.license enabled with ReadWriteMany: without it each pod would get its own installation id" -}}
+{{- end -}}
+{{- if and .Values.persistence.data.enabled (not (has "ReadWriteMany" .Values.persistence.data.accessModes)) -}}
+{{- fail "api.replicaCount > 1 with persistence.data ReadWriteOnce: the data volume is only read by the first start with the database (to import it); once that has run, set persistence.data.enabled=false (or use ReadWriteMany)" -}}
+{{- end -}}
+{{- if and .Values.audit.file.enabled .Values.audit.file.persistence.enabled (not (has "ReadWriteMany" .Values.audit.file.persistence.accessModes)) -}}
+{{- fail "api.replicaCount > 1 with audit.file.persistence ReadWriteOnce: use ReadWriteMany or no persistence for the audit file (the audit store itself is in the database)" -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.database.url (not (hasPrefix "jdbc:postgresql://" .Values.database.url)) -}}
+{{- fail "database.url must be a PostgreSQL JDBC URL: jdbc:postgresql://host:5432/database" -}}
+{{- end -}}
+{{- if not (has .Values.api.updateStrategy (list "" "Recreate" "RollingUpdate")) -}}
+{{- fail "api.updateStrategy must be empty (automatic), Recreate or RollingUpdate" -}}
+{{- end -}}
+{{- if and (eq .Values.api.updateStrategy "RollingUpdate") (include "dsp.apiRwoVolume" .) -}}
+{{- fail "api.updateStrategy RollingUpdate with a ReadWriteOnce volume mounted (persistence.license, persistence.data or audit.file.persistence): the new pod could not attach it while the old one runs" -}}
+{{- end -}}
+{{- if and .Values.sso.saml.metadataUrl .Values.sso.saml.metadataXml -}}
+{{- fail "sso.saml: give metadataUrl or metadataXml, not both" -}}
+{{- end -}}
+{{- if and .Values.sso.oidc.issuerUri (not .Values.sso.oidc.clientId) -}}
+{{- fail "sso.oidc.issuerUri needs sso.oidc.clientId" -}}
 {{- end -}}
 {{- if and .Values.x509.enabled (not .Values.tls.enabled) (eq (lower (include "dsp.x509Header" .)) "x-ssl-client-cert") -}}
 {{- fail "x509.enabled without tls.enabled (edge termination) needs x509.header set to the header your ingress controller forwards the certificate in (ingress-nginx: ssl-client-cert); the web tier blanks X-SSL-Client-Cert on plain HTTP" -}}
@@ -248,4 +277,26 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{- end -}}
 {{- end -}}
 {{- join " " $opts -}}
+{{- end -}}
+
+{{/* Whether the API mounts a ReadWriteOnce volume (which pins an update to Recreate). */}}
+{{- define "dsp.apiRwoVolume" -}}
+{{- $v := .Values -}}
+{{- if and $v.persistence.license.enabled (not (has "ReadWriteMany" $v.persistence.license.accessModes)) -}}true
+{{- else if and $v.persistence.data.enabled (not (has "ReadWriteMany" $v.persistence.data.accessModes)) -}}true
+{{- else if and $v.audit.file.enabled $v.audit.file.persistence.enabled (not (has "ReadWriteMany" $v.audit.file.persistence.accessModes)) -}}true
+{{- end -}}
+{{- end -}}
+
+{{/* The API's update strategy: api.updateStrategy, or Recreate while a ReadWriteOnce volume is mounted. */}}
+{{- define "dsp.apiStrategy" -}}
+{{- if .Values.api.updateStrategy -}}{{ .Values.api.updateStrategy }}
+{{- else if include "dsp.apiRwoVolume" . -}}Recreate
+{{- else -}}RollingUpdate
+{{- end -}}
+{{- end -}}
+
+{{/* Whether single sign-on needs the SAML metadata ConfigMap. */}}
+{{- define "dsp.samlMetadataXml" -}}
+{{- if .Values.sso.saml.metadataXml -}}true{{- end -}}
 {{- end -}}

@@ -163,8 +163,7 @@
         },
         "replicaCount": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 1
+          "minimum": 0
         },
         "javaOpts": {
           "type": "string"
@@ -200,6 +199,25 @@
             },
             "annotations": {
               "type": "object"
+            }
+          }
+        },
+        "updateStrategy": {
+          "type": "string",
+          "enum": [
+            "",
+            "Recreate",
+            "RollingUpdate"
+          ]
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "properties": {
+            "minAvailable": {
+              "type": [
+                "integer",
+                "string"
+              ]
             }
           }
         }
@@ -1125,6 +1143,40 @@
             },
             "extra": {
               "type": "array"
+            },
+            "database": {
+              "type": "object",
+              "properties": {
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "cidrs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "sso": {
+              "type": "object",
+              "properties": {
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "cidrs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         }
@@ -1144,6 +1196,138 @@
         "json",
         "text"
       ]
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string"
+            },
+            "existingSecret": {
+              "type": "string"
+            },
+            "existingSecretKey": {
+              "type": "string"
+            }
+          }
+        },
+        "poolSize": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "configRefresh": {
+          "type": "string"
+        }
+      }
+    },
+    "sso": {
+      "type": "object",
+      "properties": {
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "issuerUri": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "scopes": {
+              "type": "string"
+            },
+            "usernameClaim": {
+              "type": "string"
+            },
+            "userFilter": {
+              "type": "string"
+            },
+            "groupsClaim": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "clientSecret": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "existingSecret": {
+                  "type": "string"
+                },
+                "existingSecretKey": {
+                  "type": "string"
+                }
+              }
+            },
+            "adminGroups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "saml": {
+          "type": "object",
+          "properties": {
+            "metadataUrl": {
+              "type": "string"
+            },
+            "metadataXml": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "string"
+            },
+            "usernameAttribute": {
+              "type": "string"
+            },
+            "userFilter": {
+              "type": "string"
+            },
+            "groupsAttribute": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "clockSkew": {
+              "type": "string"
+            },
+            "adminGroups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "signing": {
+              "type": "object",
+              "properties": {
+                "existingSecret": {
+                  "type": "string"
+                },
+                "certificateKey": {
+                  "type": "string"
+                },
+                "privateKeyKey": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
