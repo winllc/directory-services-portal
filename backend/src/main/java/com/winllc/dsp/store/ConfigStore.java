@@ -33,6 +33,7 @@ import tools.jackson.databind.json.JsonMapper;
 public class ConfigStore {
   private static final Logger log = LoggerFactory.getLogger(ConfigStore.class);
   static final String DOCUMENT = "portal-config";
+  static final String IMPORT_MARKER = "import/portal-config";
 
   private final JsonMapper mapper;
   private final Path file;
@@ -51,11 +52,23 @@ public class ConfigStore {
     if (shared == null) {
       this.data = loadFile();
     } else {
+      StoreData local = loadFile();
+      boolean hasLocal = hasContent(local);
       SharedDocuments.Doc doc = shared.get(DOCUMENT);
       if (!doc.exists()) {
-        StoreData initial = loadFile();
-        doc = shared.createIfAbsent(DOCUMENT, mapper.writeValueAsString(initial));
-        if (Files.exists(file)) log.info("Imported the portal configuration from {} into the shared database", file);
+        // Created from this instance's file when it has one (the first start of an upgraded
+        // single instance), else empty; the marker records that the file was imported.
+        doc = shared.createIfAbsent(DOCUMENT, mapper.writeValueAsString(local));
+        if (hasLocal && doc.version() == 1 && doc.content().equals(mapper.writeValueAsString(local))) {
+          shared.createIfAbsent(IMPORT_MARKER, file.toString());
+          log.info("Imported the portal configuration from {} into the shared database", file);
+        }
+      }
+      if (hasLocal && !shared.get(IMPORT_MARKER).exists()) {
+        throw new IllegalStateException("Refusing to start: the shared database's configuration was created without importing "
+            + file + ", which holds this instance's forms, definitions and grants. Upgrade a single instance to the database"
+            + " first, with its data volume, so it imports them; or, if the database's configuration is the one to keep, move "
+            + file + " away and start again.");
       }
       this.data = parse(doc.content());
       this.version = doc.version();
@@ -72,6 +85,11 @@ public class ConfigStore {
     } catch (RuntimeException e) {
       throw new IllegalStateException("Could not read " + file + ": " + e.getMessage(), e);
     }
+  }
+
+  /** Whether a configuration holds anything an administrator made (worth importing). */
+  static boolean hasContent(StoreData d) {
+    return !d.forms.isEmpty() || !d.definitions.isEmpty() || !d.grants.isEmpty() || !d.dashboards.isEmpty() || !d.analyses.isEmpty();
   }
 
   private StoreData parse(String json) {

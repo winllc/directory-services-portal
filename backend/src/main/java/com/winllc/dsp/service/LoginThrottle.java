@@ -9,7 +9,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Failed password sign-ins per (client address, user name) within the lockout window, counted from
+ * Password sign-in attempts per (client address, user name) within the lockout window, counted
+ * before each attempt (a success clears them; see AuthService), from
  * the first failure. Alone they are kept in memory; with the shared database in
  * {@code dsp_login_failure} (as SHA-256 of the key), so the lockout holds whichever replica a
  * request reaches.
@@ -52,6 +53,15 @@ public class LoginThrottle {
     long now = System.currentTimeMillis();
     return failures.compute(key, (k, f) -> f == null || now - f.first() > windowMs ? new Failures(1, now) : new Failures(f.count() + 1, f.first()))
         .count();
+  }
+
+  /** Takes back one counted attempt (one the directory couldn't answer). */
+  public void undo(String key) {
+    if (jdbc != null) {
+      jdbc.update("UPDATE dsp_login_failure SET failures = failures - 1 WHERE throttle_key = ? AND failures > 0", AuditJson.sha256Hex(key));
+      return;
+    }
+    failures.computeIfPresent(key, (k, f) -> f.count() <= 1 ? null : new Failures(f.count() - 1, f.first()));
   }
 
   /** A successful sign-in clears the count. */

@@ -97,9 +97,12 @@ public class AuditState {
   public synchronized void setCursor(String output, long seq, String time) throws IOException {
     cursors.put(output, new Cursor(seq, time));
     if (shared != null) {
+      // Only forward: a replica that lost the leadership without noticing can't move it back.
       saveShared(root -> {
         JsonNode existing = root.get("cursors");
         ObjectNode c = existing instanceof ObjectNode o ? o : root.putObject("cursors");
+        JsonNode previous = c.get(output);
+        if (previous != null && previous.get("seq") != null && previous.get("seq").asLong() >= seq) return;
         c.putObject(output).put("seq", seq).put("time", time);
       });
       return;

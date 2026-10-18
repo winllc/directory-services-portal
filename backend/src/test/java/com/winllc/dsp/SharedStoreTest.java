@@ -154,6 +154,28 @@ class SharedStoreTest extends ApiTestSupport {
   }
 
   @Test
+  void concurrentAttemptsCannotTryMorePasswordsThanTheLimit() throws Exception {
+    int max = props.getLogin().getMaxFailures();
+    java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(12);
+    try {
+      List<java.util.concurrent.Future<Integer>> results = new java.util.ArrayList<>();
+      for (int i = 0; i < 30; i++) {
+        results.add(pool.submit(() -> status(mvc.perform(json(post("/api/auth/login"), Map.of("username", "heidi", "password", "wrong"))).andReturn())));
+      }
+      int tried = 0;
+      for (var f : results) {
+        int st = f.get();
+        assertThat(st).isIn(401, 429);
+        if (st == 401) tried++;
+      }
+      assertThat(tried).isEqualTo(max);
+    } finally {
+      pool.shutdownNow();
+      jdbc.update("DELETE FROM dsp_login_failure");
+    }
+  }
+
+  @Test
   void configurationChangesReachEveryReplicaWithoutLosingAny() {
     ConfigStore other = new ConfigStore(mapper, props, otherReplica(), database);
     int forms = store.snapshot().forms.size();

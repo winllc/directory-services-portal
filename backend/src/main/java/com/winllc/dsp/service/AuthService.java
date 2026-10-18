@@ -78,13 +78,24 @@ public class AuthService {
     }
     String throttleKey = clientKey + "|" + username.toLowerCase();
     int maxFailures = Math.max(1, props.getLogin().getMaxFailures());
-    if (throttle.locked(throttleKey, maxFailures, windowMs())) {
+    // Counted before the password is tried, in one atomic step: concurrent attempts can't all
+    // pass the check, so no more than LOGIN_MAX_FAILURES passwords are tried per window. A
+    // success clears the count; an attempt the directory couldn't answer is not counted.
+    int count = throttle.recordFailure(throttleKey, windowMs());
+    if (count > maxFailures) {
       event.anonymous(attempted).denied("Too many failed attempts");
       throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed login attempts. Try again later.");
     }
-    String dn = USERNAME.matcher(username).matches() && !password.isEmpty() ? findUserDn(username) : null;
-    if (dn == null || !directory.authenticate(dn, password)) {
-      int count = throttle.recordFailure(throttleKey, windowMs());
+    String dn;
+    boolean ok;
+    try {
+      dn = USERNAME.matcher(username).matches() && !password.isEmpty() ? findUserDn(username) : null;
+      ok = dn != null && directory.authenticate(dn, password);
+    } catch (RuntimeException e) {
+      throttle.undo(throttleKey);
+      throw e;
+    }
+    if (!ok) {
       event.anonymous(attempted).failed(dn == null ? "Unknown user" : "Wrong password");
       if (count == maxFailures) {
         long minutes = Math.max(1, windowMs() / 60_000);

@@ -48,16 +48,31 @@ public class JdbcAuditStore extends AuditStore {
     this.dir = dir.toAbsolutePath();
   }
 
+  /** The {@code dsp_document} row recording which local audit chain was imported (its head). */
+  static final String IMPORT_MARKER = "import/audit";
+
   /**
    * Copies the file store's events in when the table is still empty (first start with the
-   * database). Returns how many were imported.
+   * database) and records which chain it was (the import marker). Returns how many were imported.
+   *
+   * @throws IllegalStateException when this instance has local audit events the shared store
+   *     doesn't hold (another instance started on the database first, or these files were written
+   *     after the import): starting would silently drop them
    */
   public long importFrom(FileAuditStore files) {
     if (files.headSeq() == 0) return 0;
+    String localHead = files.headSeq() + ":" + files.headHash();
     Long imported = tx.execute(status -> {
       cluster.lockForTransaction(LOCK);
       Long existing = jdbc.queryForObject("SELECT count(*) FROM dsp_audit_event", Long.class);
-      if (existing != null && existing > 0) return 0L;
+      List<String> marker = jdbc.queryForList("SELECT content FROM dsp_document WHERE name = ?", String.class, IMPORT_MARKER);
+      if (existing != null && existing > 0) {
+        if (!marker.isEmpty() && marker.get(0).equals(localHead)) return 0L;
+        throw new IllegalStateException("Refusing to start: the shared database's audit store already holds events, but the "
+            + files.headSeq() + " audit events in " + files.dir() + " were " + (marker.isEmpty() ? "never imported" : "not the ones imported")
+            + ". Upgrade a single instance to the database first, with its data volume, so it imports them; or, if these files"
+            + " are an outdated copy, move them out of " + files.dir() + " (keep them as an archive) and start again.");
+      }
       List<Object[]> batch = new ArrayList<>();
       long[] count = {0};
       files.scanOldestFirst(s -> {
@@ -71,6 +86,8 @@ public class JdbcAuditStore extends AuditStore {
         return true;
       });
       if (!batch.isEmpty()) jdbc.batchUpdate("INSERT INTO dsp_audit_event (seq, event_month, line) VALUES (?, ?, ?)", batch);
+      jdbc.update("INSERT INTO dsp_document (name, version, content) VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET content = EXCLUDED.content,"
+          + " version = dsp_document.version + 1, updated_at = now()", IMPORT_MARKER, localHead);
       return count[0];
     });
     long n = imported == null ? 0 : imported;

@@ -63,6 +63,33 @@ class SharedImportTest {
       assertThat(shared.importFrom(files)).as("only once").isZero();
       assertThat(shared.headHash()).isEqualTo(files.headHash());
       assertThat(shared.verify().intact()).isTrue();
+      // The same files again (a restart): nothing to do.
+      assertThat(new JdbcAuditStore(cluster, data.resolve("audit")).importFrom(new FileAuditStore(data.resolve("audit")))).isZero();
+
+      // Another instance with audit files of its own that were never imported: it refuses to
+      // start rather than drop them.
+      Path otherDir = Files.createTempDirectory("dsp-other");
+      var otherLog = AuditChainTest.newLog(otherDir.resolve("audit"));
+      otherLog.event("test.other").system().success();
+      FileAuditStore otherFiles = new FileAuditStore(otherDir.resolve("audit"));
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> new JdbcAuditStore(cluster, otherDir.resolve("audit")).importFrom(otherFiles))
+          .isInstanceOf(IllegalStateException.class).hasMessageContaining("Refusing to start").hasMessageContaining("not the ones imported");
+      // A configuration created empty first, then an instance with a file of its own: refused.
+      cluster.documents().delete("portal-config");
+      cluster.documents().delete("import/portal-config");
+      PortalProperties empty = new PortalProperties();
+      empty.setDataDir(Files.createTempDirectory("dsp-empty").toString());
+      new ConfigStore(MAPPER, empty, cluster, new DatabaseProperties());
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> new ConfigStore(MAPPER, props, cluster, new DatabaseProperties()))
+          .isInstanceOf(IllegalStateException.class).hasMessageContaining("without importing");
+
+      // Forwarder cursors only move forward, whoever writes them.
+      AuditState leader = new AuditState(data.resolve("audit"), MAPPER, cluster.documents());
+      AuditState stale = new AuditState(data.resolve("audit"), MAPPER, cluster.documents());
+      leader.setCursor("splunk", 10, "t1");
+      stale.setCursor("splunk", 5, "t0");
+      AuditState fresh = new AuditState(data.resolve("audit"), MAPPER, cluster.documents());
+      assertThat(fresh.cursor("splunk").seq()).isEqualTo(10);
     }
   }
 }
