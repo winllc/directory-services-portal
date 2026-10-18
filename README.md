@@ -557,14 +557,14 @@ Every certificate is checked before it is accepted:
   revoked (`ENS_X509_REVOCATION`).
 
 **Revocation checking** (CAC/PIV; DISA STIG requires it, so the API logs a warning at startup when
-certificate sign-in is on without it):
+certificate sign-in is on with `ENS_X509_REVOCATION=off`):
 
 | variable | default | meaning |
 |---|---|---|
-| `ENS_X509_REVOCATION` | `off` | `off`, `ocsp`, `crl` or `ocsp-then-crl` (CRLs when OCSP gives no answer). Needs `X509_TRUSTED_CA_FILE`: the API does not start without it. `X509_CHECK_REVOCATION=true`, the older setting, means `ocsp-then-crl` failing closed |
+| `ENS_X509_REVOCATION` | `ocsp-then-crl` | `off`, `ocsp`, `crl` or `ocsp-then-crl` (CRLs when OCSP gives no answer). A mode you set needs `X509_TRUSTED_CA_FILE`: the API does not start without it. `X509_CHECK_REVOCATION=true`, the older setting, means `ocsp-then-crl` failing closed while this is unset or `off` |
 | `ENS_X509_OCSP_RESPONDER_URL` | | ask this responder instead of the certificate's AIA one, e.g. a local OCSP relay on an air-gapped network |
 | `ENS_X509_CRL_DIR` | | a directory of CRL files (DER or PEM), read again when they change: the air-gapped option. With it set, CRL distribution points are **not** fetched |
-| `ENS_X509_REVOCATION_FAIL` | `closed` | `closed`: when the status can't be determined, refuse; `open`: allow and log a warning |
+| `ENS_X509_REVOCATION_FAIL` | `open` while `ENS_X509_REVOCATION` is unset, otherwise `closed` | `closed`: when the status can't be determined, refuse; `open`: allow and log a warning |
 | `ENS_X509_REVOCATION_CACHE` | `10m` | how long a good or revoked answer is kept, per issuer and serial |
 | `ENS_X509_ALLOWED_ISSUERS` | | issuer DNs separated by `;` (DNs contain commas); certificates from other issuers are refused |
 
@@ -577,6 +577,25 @@ addresses; LDAP distribution points are skipped. Fetched CRLs are reused until t
 (at most a day). A refusal is audited as an `auth.login` failure with the reason
 `certificate revoked` or `revocation unknown` (`details.reasonCode` `certificate_revoked` /
 `revocation_unknown`).
+
+**The default is a live check that soft-fails.** With neither `ENS_X509_REVOCATION` nor
+`ENS_X509_REVOCATION_FAIL` given (or both empty), every certificate is checked over OCSP and then
+its CRL. One found revoked is refused and audited. One that no responder or CRL answers for (the
+network is closed, the responder is down, the certificate names neither) signs in, and a warning
+naming it is logged: `Allowing client certificate … although no OCSP responder or CRL answered for
+it (soft-fail; …)`. A warning at startup says the check is soft-fail and how to change it:
+- DISA STIG expects fail-closed: set `ENS_X509_REVOCATION_FAIL=closed` once the responders or
+  `ENS_X509_CRL_DIR` answer reliably.
+- On an air-gapped network, `ENS_X509_CRL_DIR` (or an `ENS_X509_OCSP_RESPONDER_URL` relay) gives the
+  check something to answer with, and saves each sign-in waiting on fetches that cannot succeed.
+- `ENS_X509_REVOCATION=off` still turns the check off, with the startup warning above.
+- Choosing a mode yourself (`ocsp`, `crl` or `ocsp-then-crl`) keeps `closed` as the failure
+  behaviour, as in earlier releases; so does `X509_CHECK_REVOCATION=true`.
+- The default check verifies answers against `X509_TRUSTED_CA_FILE` (with the `mtls` profile,
+  `TLS_CLIENT_CA_FILE`). Without it the API still starts, with a warning, and every certificate
+  signs in unchecked, with a warning; set it, or set `ENS_X509_REVOCATION=off`.
+- Upgrading: a `.env` that sets `ENS_X509_REVOCATION=off` (the earlier package template did) keeps
+  the check off; clear the value to get the default.
 
 It is then mapped to exactly one directory user:
 

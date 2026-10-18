@@ -137,6 +137,19 @@ if [ -z "$demo" ]; then
   echo "    Edit .env: at least LDAP_URL, LDAP_BIND_DN, LDAP_BIND_PASSWORD, the search bases and ADMIN_USERS/ADMIN_GROUPS."
 fi
 [ -f license/license.lic ] || echo "    License: after starting, sign in as an administrator and upload your ENS license under Administration > License (/admin/license). Until then only sign-in and that screen work."
+# Client-certificate revocation: checked live by default (ocsp-then-crl, soft-fail). An .env from
+# an earlier package sets it off explicitly, which is kept; say so rather than change it.
+if grep -q '^X509_ENABLED=true' .env; then
+  revocation="$(sed -n 's/^ENS_X509_REVOCATION=//p' .env | tail -n 1 | tr -d '"' | tr '[:upper:]' '[:lower:]')"
+  revocation_fail="$(sed -n 's/^ENS_X509_REVOCATION_FAIL=//p' .env | tail -n 1 | tr -d '"' | tr '[:upper:]' '[:lower:]')"
+  if [ "$revocation" = off ]; then
+    echo "    Revocation: OFF (ENS_X509_REVOCATION=off in .env). DISA STIG requires it: empty ENS_X509_REVOCATION and"
+    echo "                ENS_X509_REVOCATION_FAIL for the default live check (OCSP, then the CRL; soft-fail)."
+  elif [ -z "$revocation" ] && [ -z "$revocation_fail" ]; then
+    echo "    Revocation: client certificates are checked at sign-in (OCSP, then the CRL), soft-fail: one nobody"
+    echo "                can answer for signs in with a warning. ENS_X509_REVOCATION_FAIL=closed refuses those instead."
+  fi
+fi
 echo "    Start:   ./portal.sh up"
 echo "    Status:  ./portal.sh status    Logs: ./portal.sh logs"
 if [ -n "$start" ]; then ./portal.sh up; fi
