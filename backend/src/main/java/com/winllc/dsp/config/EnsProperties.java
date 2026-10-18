@@ -141,22 +141,41 @@ public class EnsProperties {
   public static class X509 {
     public static final List<String> MODES = List.of("off", "ocsp", "crl", "ocsp-then-crl");
 
-    /** off, ocsp, crl or ocsp-then-crl. Empty means off; while off, the older X509_CHECK_REVOCATION=true means ocsp-then-crl. */
+    /**
+     * off, ocsp, crl or ocsp-then-crl. Empty (unset) means ocsp-then-crl, soft-fail (see {@link #failOpen}). While
+     * it is empty or off, the older X509_CHECK_REVOCATION=true means ocsp-then-crl, failing closed.
+     */
     private String revocation = "";
     /** Overrides the certificate's AIA OCSP responder (e.g. a local relay on an air-gapped network). */
     private String ocspResponderUrl = "";
     /** Directory of CRL files (DER or PEM); when set, CRL distribution points are not fetched. */
     private String crlDir = "";
-    /** closed: refuse when the status can't be determined; open: allow and log a warning. */
-    private String revocationFail = "closed";
+    /**
+     * closed: refuse when the status can't be determined; open: allow and log a warning. Empty (unset): open while
+     * {@link #revocation} is unset too, closed once a mode is chosen.
+     */
+    private String revocationFail = "";
     /** How long a good or revoked answer is kept, per issuer and serial. */
     private Duration revocationCache = Duration.ofMinutes(10);
     /** Issuer DNs certificates must come from, separated by ";" or new lines (DNs contain commas). Empty: any trusted CA. */
     private String allowedIssuers = "";
 
+    /** What an unset ENS_X509_REVOCATION means: a live check, OCSP and then the CRL. */
+    public static final String DEFAULT_MODE = "ocsp-then-crl";
+
     /** The mode as configured (lower case); blank when not set. */
     public String configuredMode() {
       return revocation == null ? "" : revocation.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** Whether ENS_X509_REVOCATION was left unset, and so means {@link #DEFAULT_MODE}. */
+    public boolean isModeDefaulted() {
+      return configuredMode().isEmpty();
+    }
+
+    /** The fail mode as configured (lower case); blank when not set. */
+    public String configuredFail() {
+      return revocationFail == null ? "" : revocationFail.trim().toLowerCase(Locale.ROOT);
     }
 
     public List<X500Principal> allowedIssuerList() {
@@ -169,8 +188,8 @@ public class EnsProperties {
       List<String> out = new ArrayList<>();
       String mode = configuredMode();
       if (!mode.isEmpty() && !MODES.contains(mode)) out.add("ENS_X509_REVOCATION must be one of " + String.join(", ", MODES) + ": " + revocation);
-      String fail = revocationFail == null ? "" : revocationFail.trim().toLowerCase(Locale.ROOT);
-      if (!fail.equals("closed") && !fail.equals("open")) out.add("ENS_X509_REVOCATION_FAIL must be closed or open: " + revocationFail);
+      String fail = configuredFail();
+      if (!fail.isEmpty() && !fail.equals("closed") && !fail.equals("open")) out.add("ENS_X509_REVOCATION_FAIL must be closed or open: " + revocationFail);
       if (ocspResponderUrl != null && !ocspResponderUrl.isBlank() && !ocspResponderUrl.trim().matches("(?i)https?://\\S+")) {
         out.add("ENS_X509_OCSP_RESPONDER_URL must be an http:// or https:// URL: " + ocspResponderUrl);
       }
@@ -186,8 +205,15 @@ public class EnsProperties {
       return out;
     }
 
+    /**
+     * Whether an undetermined status lets the certificate in. Unset, it is open only while ENS_X509_REVOCATION is
+     * unset as well: the default is a live check that refuses what it finds revoked and lets through, with a
+     * warning, what no responder or CRL answers for, so a site that cannot reach them still signs people in. A site
+     * that chose a mode left this unset to get closed in earlier releases, and still gets closed.
+     */
     public boolean failOpen() {
-      return revocationFail != null && revocationFail.trim().equalsIgnoreCase("open");
+      String fail = configuredFail();
+      return fail.isEmpty() ? isModeDefaulted() : fail.equals("open");
     }
 
     public String getRevocation() { return revocation; }

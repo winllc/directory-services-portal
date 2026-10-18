@@ -148,13 +148,17 @@ ens:
     admin-idle-timeout: ${ENS_SESSION_ADMIN_IDLE_TIMEOUT:}
     absolute-timeout: ${ENS_SESSION_ABSOLUTE_TIMEOUT:12h}
     max-per-user: ${ENS_SESSION_MAX_PER_USER:0}
-  # Client-certificate revocation checking and issuer allowlist. ENS_X509_REVOCATION empty or off,
+  # Client-certificate revocation checking and issuer allowlist. ENS_X509_REVOCATION: off, ocsp,
+  # crl or ocsp-then-crl. Unset is ocsp-then-crl, soft-fail: a certificate found revoked is
+  # refused, and one no OCSP responder or CRL answers for signs in with a warning. Unset or off,
   # with the older X509_CHECK_REVOCATION=true: ocsp-then-crl, failing closed.
   x509:
     revocation: ${ENS_X509_REVOCATION:}
     ocsp-responder-url: ${ENS_X509_OCSP_RESPONDER_URL:}
     crl-dir: ${ENS_X509_CRL_DIR:}
-    revocation-fail: ${ENS_X509_REVOCATION_FAIL:closed}
+    # closed refuses a certificate whose status cannot be determined; open allows it, warning.
+    # Unset: open while ENS_X509_REVOCATION is unset too, closed once a mode is chosen.
+    revocation-fail: ${ENS_X509_REVOCATION_FAIL:}
     revocation-cache: ${ENS_X509_REVOCATION_CACHE:10m}
     allowed-issuers: ${ENS_X509_ALLOWED_ISSUERS:}
   # Audit outputs and retention: the shared ENS_AUDIT_* variables (see README, Audit logging).

@@ -45,13 +45,43 @@ class EnsSettingsTest {
       assertThat(ens.getSession().idleTimeoutFor(true)).isEqualTo(Duration.ofMinutes(30));
       assertThat(ens.getSession().getAbsoluteTimeout()).isEqualTo(Duration.ofHours(12));
       assertThat(ens.getSession().getMaxPerUser()).isZero();
+      // Unset: ocsp-then-crl, soft-fail.
       assertThat(ens.getX509().configuredMode()).isEmpty();
-      assertThat(ens.getX509().failOpen()).isFalse();
+      assertThat(ens.getX509().isModeDefaulted()).isTrue();
+      assertThat(ens.getX509().configuredFail()).isEmpty();
+      assertThat(ens.getX509().failOpen()).isTrue();
+      assertThat(ens.getX509().problems()).isEmpty();
       assertThat(ens.getX509().getRevocationCache()).isEqualTo(Duration.ofMinutes(10));
       assertThat(ens.getX509().allowedIssuerList()).isEmpty();
       assertThat(ctx.getEnvironment().getProperty("server.servlet.session.timeout")).isEqualTo("30m");
       assertThat(ctx.getEnvironment().getProperty("server.servlet.session.cookie.secure")).isEqualTo("false");
     });
+  }
+
+  /** An unset fail mode is open only while the mode is unset too; a chosen mode keeps closed, and both stay settable. */
+  @Test
+  void theFailModeFollowsWhetherAModeWasChosen() {
+    EnsProperties.X509 x509 = new EnsProperties.X509();
+    assertThat(x509.failOpen()).isTrue();
+    x509.setRevocationFail("closed");
+    assertThat(x509.failOpen()).isFalse();
+    x509.setRevocationFail("open");
+    assertThat(x509.failOpen()).isTrue();
+
+    x509.setRevocationFail("");
+    for (String mode : EnsProperties.X509.MODES) {
+      x509.setRevocation(mode);
+      assertThat(x509.isModeDefaulted()).isFalse();
+      assertThat(x509.failOpen()).as(mode).isFalse();
+    }
+    x509.setRevocation("ocsp");
+    x509.setRevocationFail(" Open ");
+    assertThat(x509.failOpen()).isTrue();
+    x509.setRevocation("  ");
+    x509.setRevocationFail(null);
+    assertThat(x509.isModeDefaulted()).isTrue();
+    assertThat(x509.failOpen()).isTrue();
+    assertThat(x509.problems()).isEmpty();
   }
 
   @Test

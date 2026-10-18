@@ -137,8 +137,56 @@ class StartupChecksTest {
 
   @Test
   void warnsWhenCertificateSignInChecksNoRevocation(CapturedOutput output) {
-    runner.withPropertyValues("X509_ENABLED=true").run(ctx -> assertThat(ctx).hasNotFailed());
+    runner.withPropertyValues("X509_ENABLED=true", "ENS_X509_REVOCATION=off").run(ctx -> assertThat(ctx).hasNotFailed());
     assertThat(output).contains("X.509 sign-in is enabled without revocation checking", "DISA STIG requires");
+  }
+
+  /** Neither setting given: checked live and soft-fail, and startup says so and what to set instead. */
+  @Test
+  void saysTheDefaultCheckIsSoftFail(CapturedOutput output) {
+    runner.withPropertyValues("X509_ENABLED=true", "X509_TRUSTED_CA_FILE=" + caFile).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output)
+        .contains("checked for revocation at sign-in by default (ocsp-then-crl), soft-fail", "ENS_X509_REVOCATION_FAIL=closed",
+            "ENS_X509_CRL_DIR", "ENS_X509_REVOCATION=off to check nothing")
+        .contains("Client certificates are checked for revocation at sign-in: ocsp-then-crl (the default), soft-fail")
+        .doesNotContain("without revocation checking");
+  }
+
+  /** Empty values, as an unset variable in a .env file or a Helm ConfigMap gives them, are the default. */
+  @Test
+  void treatsEmptySettingsAsUnset(CapturedOutput output) {
+    runner.withPropertyValues("X509_ENABLED=true", "X509_TRUSTED_CA_FILE=" + caFile, "ENS_X509_REVOCATION=", "ENS_X509_REVOCATION_FAIL=")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("ocsp-then-crl (the default), soft-fail");
+  }
+
+  /** A chosen mode with the fail mode unset stays fail-closed, as before; fail-closed and open can be set. */
+  @Test
+  void aChosenModeOrFailModeIsReported(CapturedOutput output) {
+    runner.withPropertyValues("X509_ENABLED=true", "X509_TRUSTED_CA_FILE=" + caFile, "ENS_X509_REVOCATION=ocsp")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("checked for revocation at sign-in: ocsp, fail-closed").doesNotContain("soft-fail");
+    runner.withPropertyValues("X509_ENABLED=true", "X509_TRUSTED_CA_FILE=" + caFile, "ENS_X509_REVOCATION_FAIL=closed")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("ocsp-then-crl (the default), fail-closed");
+    runner.withPropertyValues("X509_ENABLED=true", "X509_TRUSTED_CA_FILE=" + caFile, "ENS_X509_REVOCATION=crl",
+        "ENS_X509_REVOCATION_FAIL=open").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("ENS_X509_REVOCATION_FAIL=open: a client certificate whose revocation status cannot be determined",
+        "checked for revocation at sign-in: crl, soft-fail");
+  }
+
+  /**
+   * The default check without trusted CAs cannot answer for anybody: it starts, so an upgrade does, and warns. A
+   * fail-closed default refuses to start, as a chosen mode does.
+   */
+  @Test
+  void theDefaultCheckWithoutTrustedCasStartsWithAWarning(CapturedOutput output) {
+    runner.withPropertyValues("X509_ENABLED=true").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("no X509_TRUSTED_CA_FILE to verify OCSP responses and CRLs with: no certificate can be checked");
+    runner.withPropertyValues("X509_ENABLED=true", "ENS_X509_REVOCATION_FAIL=closed").run(ctx -> {
+      assertThat(ctx).hasFailed();
+      assertThat(ctx.getStartupFailure()).rootCause().hasMessageContaining("needs X509_TRUSTED_CA_FILE");
+    });
   }
 
   @Test
