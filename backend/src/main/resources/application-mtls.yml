@@ -31,5 +31,5 @@ portal:
     enabled: ${X509_ENABLED:true}
     source: servlet
     # Tomcat already validates the chain against TLS_CLIENT_CA_FILE; validating again in the
-    # portal also enables optional revocation checking.
+    # portal also checks revocation (ENS_X509_REVOCATION, on by default) against these CAs.
     trusted-ca-file: ${X509_TRUSTED_CA_FILE:${TLS_CLIENT_CA_FILE}}

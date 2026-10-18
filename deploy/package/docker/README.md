@@ -110,10 +110,13 @@ API accepts a forwarded certificate only with it, and checks it against `certs/c
 `.env` private (mode 600).
 For a test: `scripts/generate-dev-certs.sh certs` creates a CA, a server certificate and user
 certificates (`certs/alice.p12`, password `password`).
-Set `ENS_X509_REVOCATION` (`ocsp`, `crl` or `ocsp-then-crl`) to check certificates for revocation,
-as DISA STIG requires; the API warns at startup while it is off. For CRLs on an air-gapped
-network, mount a directory of CRL files into the API container (a compose override) and set
-`ENS_X509_CRL_DIR` to it.
+Certificates are checked for revocation at sign-in by default, as DISA STIG requires: with
+`ENS_X509_REVOCATION` and `ENS_X509_REVOCATION_FAIL` empty, over OCSP and then the CRL, against
+`certs/ca.pem`, soft-fail. A certificate found revoked is refused; one that no responder or CRL
+answers for signs in with a warning in the API log. Set `ENS_X509_REVOCATION_FAIL=closed` to
+refuse those too (as the STIG expects), or `ENS_X509_REVOCATION=off` to check nothing (the API
+then warns at startup). For CRLs on an air-gapped network, mount a directory of CRL files into the
+API container (a compose override) and set `ENS_X509_CRL_DIR` to it.
 
 ## Operate
 
@@ -154,6 +157,9 @@ backup.
 Settings a release adds are not written into an existing `.env` (except `X509_PROXY_SECRET`):
 they take their defaults, and older names keep working (`SESSION_TTL_MINUTES`, `COOKIE_SECURE`,
 `X509_CHECK_REVOCATION`). Compare your `.env` with this package's `env.template` to adopt them.
+An existing `.env` from an earlier package sets `ENS_X509_REVOCATION=off` and
+`ENS_X509_REVOCATION_FAIL=closed`, which keep revocation checking off; the installer says so. Empty
+both for the default live, soft-fail check.
 
 ## Notes
 

@@ -39,7 +39,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Revocation checking of client certificates (ENS_X509_REVOCATION: off, ocsp, crl or
- * ocsp-then-crl), configured per check: the OCSP response or the CRLs are fetched here, bounded
+ * ocsp-then-crl; unset is ocsp-then-crl, soft-fail), configured per check: the OCSP response or the CRLs are fetched here, bounded
  * ({@link RevocationFetcher}), and verified by the JDK's PKIX validator with its own
  * {@link PKIXRevocationChecker} for this path only. No global JDK security property is set, and
  * the JDK never fetches anything itself.
@@ -50,8 +50,9 @@ import org.springframework.stereotype.Component;
  *       set, else from the certificate's http(s) distribution points (kept until their next
  *       update, at most a day).
  *   <li>A good or revoked answer is kept for ENS_X509_REVOCATION_CACHE per issuer and serial; an
- *       undetermined one is not. ENS_X509_REVOCATION_FAIL=open lets an undetermined certificate
- *       in with a warning.
+ *       undetermined one is not. ENS_X509_REVOCATION_FAIL=open (and the default, while neither
+ *       setting is given) lets an undetermined certificate in with a warning; a revoked one is
+ *       always refused.
  * </ul>
  */
 @Component
@@ -90,13 +91,16 @@ public class RevocationChecker {
     this.fetcher = fetcher;
   }
 
-  /** The mode in effect: ENS_X509_REVOCATION, or ocsp-then-crl while it is off and the older X509_CHECK_REVOCATION=true. */
+  /**
+   * The mode in effect: ENS_X509_REVOCATION; ocsp-then-crl when it is unset; and ocsp-then-crl while it is unset or
+   * off and the older X509_CHECK_REVOCATION=true.
+   */
   public Mode mode() {
     if (legacy()) return Mode.OCSP_THEN_CRL;
     return switch (ens.getX509().configuredMode()) {
+      case "", "ocsp-then-crl" -> Mode.OCSP_THEN_CRL;
       case "ocsp" -> Mode.OCSP;
       case "crl" -> Mode.CRL;
-      case "ocsp-then-crl" -> Mode.OCSP_THEN_CRL;
       default -> Mode.OFF;
     };
   }
@@ -104,6 +108,11 @@ public class RevocationChecker {
   /** Whether an undetermined status lets the certificate in; never with the older X509_CHECK_REVOCATION. */
   public boolean failOpen() {
     return !legacy() && ens.getX509().failOpen();
+  }
+
+  /** Whether the check in effect is the default one: no mode chosen, and not the older X509_CHECK_REVOCATION. */
+  public boolean defaulted() {
+    return !legacy() && ens.getX509().isModeDefaulted();
   }
 
   private boolean legacy() {
@@ -150,7 +159,8 @@ public class RevocationChecker {
     if (status == Status.REVOKED) throw CertificateRejectedException.revoked();
     if (status == Status.UNKNOWN) {
       if (!failOpen()) throw CertificateRejectedException.revocationUnknown();
-      log.warn("The revocation status of {} (serial {}) could not be determined; allowed because ENS_X509_REVOCATION_FAIL=open",
+      log.warn("Allowing client certificate {} (serial {}) although no OCSP responder or CRL answered for it (soft-fail;"
+          + " ENS_X509_REVOCATION_FAIL=closed refuses it instead)",
           leaf.getSubjectX500Principal().getName(), leaf.getSerialNumber().toString(16));
     }
   }

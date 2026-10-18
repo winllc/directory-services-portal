@@ -25,7 +25,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 
@@ -34,6 +37,7 @@ import tools.jackson.databind.JsonNode;
  * certificate placeholders {edipi}, {uuid} and {upn}, against a local OCSP responder and CRL
  * distribution point signed by the test CA.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class X509RevocationTest extends ApiTestSupport {
   static TestCertificates.Ca ca;
   static TestCertificates.Ca otherCa;
@@ -88,7 +92,7 @@ class X509RevocationTest extends ApiTestSupport {
     props.getX509().setCheckRevocation(false);
     EnsProperties.X509 r = ens.getX509();
     r.setRevocation("");
-    r.setRevocationFail("closed");
+    r.setRevocationFail("");
     r.setOcspResponderUrl("");
     r.setCrlDir("");
     r.setRevocationCache(Duration.ofMinutes(10));
@@ -116,6 +120,94 @@ class X509RevocationTest extends ApiTestSupport {
     Path dir = Files.createTempDirectory("crls");
     for (int i = 0; i < crls.length; i++) Files.write(dir.resolve("ca-" + i + ".crl"), crls[i].getEncoded());
     return dir;
+  }
+
+  /** Neither setting given: a live check, OCSP then the CRL, refusing (and auditing) what it finds revoked. */
+  @Test
+  void checksLiveByDefaultAndRefusesRevokedCertificates() throws Exception {
+    assertThat(revocation.mode()).isEqualTo(RevocationChecker.Mode.OCSP_THEN_CRL);
+    assertThat(revocation.defaulted()).isTrue();
+    assertThat(revocation.failOpen()).isTrue();
+    X509Certificate good = TestCertificates.client("CN=alice").ocsp(server.url("/ocsp")).issuedBy(ca);
+    X509Certificate revoked = TestCertificates.client("CN=bob").ocsp(server.url("/ocsp")).issuedBy(ca);
+    server.revoked.add(revoked.getSerialNumber());
+    int before = server.ocspRequests.get();
+
+    assertThat(status(certLogin(good))).isEqualTo(200);
+    MvcResult refused = certLogin(revoked);
+    assertThat(status(refused)).isEqualTo(401);
+    assertThat(error(refused)).isEqualTo("The client certificate has been revoked");
+    assertThat(server.ocspRequests.get()).isEqualTo(before + 2);
+
+    // OCSP gives no answer: the CRL does, and a revoked certificate is still refused.
+    X509Certificate crlRevoked = TestCertificates.client("CN=bob").ocsp(down).crl(server.url("/crl")).issuedBy(ca);
+    server.crl = TestCertificates.crl(ca, crlRevoked);
+    assertThat(error(certLogin(crlRevoked))).isEqualTo("The client certificate has been revoked");
+
+    assertThat(loginFailures()).hasSize(2).allSatisfy(e -> {
+      assertThat(e.get("reason").asString()).isEqualTo("certificate revoked");
+      assertThat(e.get("details").get("reasonCode").asString()).isEqualTo("certificate_revoked");
+    });
+  }
+
+  /** Neither setting given: a certificate nobody can answer for signs in, with a warning naming it. */
+  @Test
+  void softFailsByDefaultWhenNoResponderOrCrlAnswers(CapturedOutput output) throws Exception {
+    X509Certificate unreachable = TestCertificates.client("CN=alice").ocsp(down).crl(down).issuedBy(ca);
+    X509Certificate namesNothing = TestCertificates.client("CN=bob").issuedBy(ca);
+
+    assertThat(status(certLogin(unreachable))).isEqualTo(200);
+    assertThat(status(certLogin(namesNothing))).isEqualTo(200);
+    assertThat(output).contains("Allowing client certificate CN=alice", "no OCSP responder or CRL answered for it (soft-fail;",
+        "Allowing client certificate CN=bob");
+    assertThat(loginFailures()).isEmpty();
+  }
+
+  /** Fail-closed is still there with the default mode, and is what a chosen mode means when the fail mode is unset. */
+  @Test
+  void failsClosedWhenSetOrWhenAModeIsChosen() throws Exception {
+    X509Certificate cert = TestCertificates.client("CN=alice").ocsp(down).issuedBy(ca);
+
+    ens.getX509().setRevocationFail("closed");
+    assertThat(revocation.failOpen()).isFalse();
+    assertThat(error(certLogin(cert))).isEqualTo("The revocation status of the client certificate could not be determined");
+
+    // A site that chose a mode itself and left the fail mode unset was fail-closed before, and stays so.
+    ens.getX509().setRevocationFail("");
+    for (String mode : List.of("ocsp", "crl", "ocsp-then-crl")) {
+      ens.getX509().setRevocation(mode);
+      assertThat(revocation.defaulted()).isFalse();
+      assertThat(revocation.failOpen()).as(mode).isFalse();
+      assertThat(status(certLogin(cert))).as(mode).isEqualTo(401);
+    }
+
+    ens.getX509().setRevocation("");
+    assertThat(loginFailures()).hasSize(4)
+        .allSatisfy(e -> assertThat(e.get("reason").asString()).isEqualTo("revocation unknown"));
+  }
+
+  /** off still turns the check off: nobody is asked, and a revoked certificate signs in. */
+  @Test
+  void offStillChecksNothing() throws Exception {
+    ens.getX509().setRevocation("off");
+    assertThat(revocation.mode()).isEqualTo(RevocationChecker.Mode.OFF);
+    X509Certificate revoked = TestCertificates.client("CN=alice").ocsp(server.url("/ocsp")).issuedBy(ca);
+    server.revoked.add(revoked.getSerialNumber());
+    int before = server.ocspRequests.get();
+    assertThat(status(certLogin(revoked))).isEqualTo(200);
+    assertThat(server.ocspRequests.get()).isEqualTo(before);
+  }
+
+  /** The default check without trusted CAs cannot verify any answer: it lets the certificate in, warning. */
+  @Test
+  void softFailsByDefaultWithoutTrustedCas(CapturedOutput output) throws Exception {
+    props.getX509().setTrustedCaFile("");
+    X509Certificate cert = TestCertificates.client("CN=alice").ocsp(server.url("/ocsp")).issuedBy(ca);
+    assertThat(status(certLogin(cert))).isEqualTo(200);
+    assertThat(output).contains("without checking it for revocation: there is no X509_TRUSTED_CA_FILE");
+
+    ens.getX509().setRevocationFail("closed");
+    assertThat(error(certLogin(cert))).isEqualTo("The revocation status of the client certificate could not be determined");
   }
 
   @Test

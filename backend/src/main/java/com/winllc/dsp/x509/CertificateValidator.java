@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.security.auth.x500.X500Principal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -34,6 +36,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CertificateValidator {
+  private static final Logger log = LoggerFactory.getLogger(CertificateValidator.class);
   static final String EKU_CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
   static final String EKU_ANY = "2.5.29.37.0";
 
@@ -87,9 +90,13 @@ public class CertificateValidator {
       // A forwarded certificate is only as good as the API's own chain check (the startup checks
       // refuse header mode without a CA file; this covers a configuration changed at runtime).
       throw new CertificateRejectedException("Certificate sign-in through a proxy needs X509_TRUSTED_CA_FILE");
-    } else if (revocation.mode() != RevocationChecker.Mode.OFF && !revocation.failOpen()) {
-      // Revocation is verified against the trusted CAs (the startup checks require them).
-      throw CertificateRejectedException.revocationUnknown();
+    } else if (revocation.mode() != RevocationChecker.Mode.OFF) {
+      // Revocation is verified against the trusted CAs: the startup checks require them, except for the default
+      // soft-fail check, which then cannot get an answer about anybody.
+      if (!revocation.failOpen()) throw CertificateRejectedException.revocationUnknown();
+      log.warn("Allowing client certificate {} (serial {}) without checking it for revocation: there is no"
+          + " X509_TRUSTED_CA_FILE to verify OCSP responses and CRLs with (soft-fail)",
+          leaf.getSubjectX500Principal().getName(), leaf.getSerialNumber().toString(16));
     }
   }
 
