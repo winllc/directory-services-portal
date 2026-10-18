@@ -1,5 +1,6 @@
 package com.winllc.dsp.sso;
 
+import com.winllc.dsp.util.LogSafe;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditLog;
@@ -163,7 +164,7 @@ public class SsoSignIn {
     } else if (e instanceof Saml2AuthenticationException s && s.getSaml2Error() != null) {
       reason = s.getSaml2Error().getErrorCode() + ": " + s.getSaml2Error().getDescription();
     }
-    log.warn("Single sign-on ({}) refused: {}", method, reason);
+    log.warn("Single sign-on ({}) refused: {}", method, LogSafe.of(reason));
     try {
       audit.event("auth.login").anonymous(asserted).target("user", asserted, null).detail("method", method).detail("reasonCode", code)
           .failed(reason);

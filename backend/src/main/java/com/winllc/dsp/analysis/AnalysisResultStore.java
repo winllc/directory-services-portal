@@ -1,5 +1,6 @@
 package com.winllc.dsp.analysis;
 
+import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.cluster.Cluster;
 import com.winllc.dsp.cluster.SharedDocuments;
 import com.winllc.dsp.config.PortalProperties;
@@ -50,17 +51,21 @@ public class AnalysisResultStore {
 
   public AnalysisResultStore(JsonMapper mapper, PortalProperties props, Cluster cluster) {
     this.mapper = mapper;
-    this.dir = Path.of(props.getDataDir()).toAbsolutePath().resolve("analysis-results");
+    this.dir = Path.of(props.getDataDir()).toAbsolutePath().resolve("analysis-results").normalize();
     this.shared = cluster.shared() ? cluster.documents() : null;
   }
 
   private static String document(String id) {
+    if (id == null || !SAFE_ID.matcher(id).matches() || id.startsWith(".")) throw new IllegalArgumentException("Invalid analysis id");
     return "analysis-result/" + id;
   }
 
+  /** The result file of an analysis: the id must be a plain name, and the file inside {@link #dir}. */
   private Path file(String id) {
-    if (!SAFE_ID.matcher(id).matches() || id.startsWith(".")) throw new IllegalArgumentException("Invalid analysis id");
-    return dir.resolve(id + ".json");
+    if (id == null || !SAFE_ID.matcher(id).matches() || id.startsWith(".")) throw new IllegalArgumentException("Invalid analysis id");
+    Path f = dir.resolve(id + ".json").normalize();
+    if (!f.startsWith(dir) || !f.getParent().equals(dir)) throw new IllegalArgumentException("Invalid analysis id");
+    return f;
   }
 
   public void save(String id, Stored stored) {
@@ -104,10 +109,10 @@ public class AnalysisResultStore {
       }
       return stored;
     } catch (IOException e) {
-      log.warn("Could not read analysis result {}: {}", f, e.getMessage());
+      log.warn("Could not read analysis result {}: {}", LogSafe.of(f), LogSafe.of(e.getMessage()));
       return null;
     } catch (RuntimeException e) {
-      log.warn("Ignoring unreadable analysis result {}: {}", f, e.getMessage());
+      log.warn("Ignoring unreadable analysis result {}: {}", LogSafe.of(f), LogSafe.of(e.getMessage()));
       return null;
     }
   }
@@ -118,7 +123,7 @@ public class AnalysisResultStore {
     try {
       Files.deleteIfExists(file(id));
     } catch (IOException e) {
-      log.warn("Could not delete the stored result of analysis {}", id, e);
+      log.warn("Could not delete the stored result of analysis {}: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
     }
   }
 
@@ -143,7 +148,7 @@ public class AnalysisResultStore {
       }
       return stored;
     } catch (IOException | RuntimeException e) {
-      log.warn("Could not read analysis result {}: {}", id, e.getMessage());
+      log.warn("Could not read analysis result {}: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
       return null;
     }
   }

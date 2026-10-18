@@ -1,5 +1,6 @@
 package com.winllc.dsp.sso;
 
+import com.winllc.dsp.util.LogSafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -80,7 +81,7 @@ final class SsoRegistrations {
           return registration;
         } catch (RuntimeException e) {
           failedAt = Instant.now();
-          log.error("Single sign-on: cannot read the OpenID Connect provider {}: {}", cfg.getIssuerUri(), e.getMessage());
+          log.error("Single sign-on: cannot read the OpenID Connect provider {}: {}", cfg.getIssuerUri(), LogSafe.of(e.getMessage()));
           return null;
         }
       }
@@ -126,11 +127,11 @@ final class SsoRegistrations {
           }
           registration = built;
           failedAt = null;
-          log.info("Single sign-on: SAML IdP {} ready", built.getAssertingPartyMetadata().getEntityId());
+          log.info("Single sign-on: SAML IdP {} ready", LogSafe.of(built.getAssertingPartyMetadata().getEntityId()));
           return registration;
         } catch (RuntimeException | IOException | java.security.GeneralSecurityException e) {
           failedAt = Instant.now();
-          log.error("Single sign-on: cannot read the SAML IdP metadata {}: {}", cfg.getMetadataLocation(), e.getMessage());
+          log.error("Single sign-on: cannot read the SAML IdP metadata {}: {}", cfg.getMetadataLocation(), LogSafe.of(e.getMessage()));
           return null;
         }
       }

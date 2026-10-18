@@ -1,5 +1,6 @@
 package com.winllc.dsp.jobs;
 
+import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.analysis.AnalysisResult;
 import com.winllc.dsp.cluster.Cluster;
 import java.sql.Timestamp;
@@ -37,20 +38,18 @@ final class JobMirror {
   }
 
   /** Writes a local job's view (and result, once it succeeded) when it changed since last time. */
-  void publish(Job job) {
-    long revision = job.revision();
+  synchronized void publish(Job job) {
+    Job.Snapshot snap = job.snapshot();
     Long last = published.get(job.id);
-    if (last != null && last == revision) return;
-    Job.View view = job.view();
-    Job.Status status = job.status();
+    if (last != null && last == snap.revision()) return;
     String result = null;
-    if (status == Job.Status.SUCCEEDED && !job.resultPublished) {
-      Object value = job.result();
+    if (snap.status() == Job.Status.SUCCEEDED && !job.resultPublished) {
+      Object value = snap.result();
       try {
         result = mapper.writeValueAsString(Map.of("type", value instanceof AnalysisResult ? "analysis" : "json", "value", value == null ? "" : value));
         job.resultPublished = true;
       } catch (RuntimeException e) {
-        log.warn("Could not share the result of job {}: {}", job.id, e.getMessage());
+        log.warn("Could not share the result of job {}: {}", LogSafe.of(job.id), LogSafe.of(e.getMessage()));
       }
     }
     try {
@@ -59,11 +58,11 @@ final class JobMirror {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (id) DO UPDATE SET view_json = EXCLUDED.view_json, status = EXCLUDED.status, background = EXCLUDED.background,
             result_json = coalesce(EXCLUDED.result_json, dsp_job.result_json), finished_at = EXCLUDED.finished_at, updated_at = now()""",
-          job.id, job.owner, replica, mapper.writeValueAsString(view), result, status.name(), job.background(),
-          Timestamp.from(job.createdAt), job.finishedAt() == null ? null : Timestamp.from(job.finishedAt()));
-      published.put(job.id, revision);
+          job.id, job.owner, replica, mapper.writeValueAsString(snap.view()), result, snap.status().name(), snap.background(),
+          Timestamp.from(job.createdAt), snap.finishedAt() == null ? null : Timestamp.from(snap.finishedAt()));
+      published.put(job.id, snap.revision());
     } catch (RuntimeException e) {
-      log.warn("Could not share job {}: {}", job.id, e.getMessage());
+      log.warn("Could not share job {}: {}", LogSafe.of(job.id), LogSafe.of(e.getMessage()));
     }
   }
 

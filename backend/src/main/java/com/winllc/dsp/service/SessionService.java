@@ -1,5 +1,6 @@
 package com.winllc.dsp.service;
 
+import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.audit.AuditJson;
 import com.winllc.dsp.audit.AuditUnavailableException;
@@ -179,14 +180,14 @@ public class SessionService implements HttpSessionListener {
         fresh = auth.refresh(user);
       } catch (RuntimeException e) {
         // Directory unavailable: keep what the session has and try again after the next interval.
-        log.warn("Could not read the groups of {} again ({}); keeping those from sign-in", user.username(), e.getMessage());
+        log.warn("Could not read the groups of {} again ({}); keeping those from sign-in", LogSafe.of(user.username()), LogSafe.of(e.getMessage()));
         fresh = user;
       }
       if (fresh == null) return expire(session, user, "account-removed");
       if (!fresh.isAdmin() && Boolean.TRUE.equals(session.getAttribute(IDP_ADMIN))) fresh = fresh.asAdmin();
       if (!fresh.equals(user)) {
         if (fresh.isAdmin() != user.isAdmin()) {
-          log.info("{} is {} an administrator", user.username(), fresh.isAdmin() ? "now" : "no longer");
+          log.info("{} is {} an administrator", LogSafe.of(user.username()), fresh.isAdmin() ? "now" : "no longer");
           session.setMaxInactiveInterval(seconds(ens.getSession().idleTimeoutFor(fresh.isAdmin())));
         }
         SecurityContext context = context(fresh);
@@ -228,7 +229,7 @@ public class SessionService implements HttpSessionListener {
     try {
       audit.event("auth.session-expired").by(user).target("user", user.dn(), user.displayName()).reason(reason).success();
     } catch (AuditUnavailableException e) {
-      log.error("Session of {} ended ({}) but could not be audited: {}", user.username(), reason, e.getMessage());
+      log.error("Session of {} ended ({}) but could not be audited: {}", LogSafe.of(user.username()), reason, LogSafe.of(e.getMessage()));
     }
   }
 
@@ -382,7 +383,7 @@ public class SessionService implements HttpSessionListener {
       try {
         user = row.context() == null ? null : userOfContext(deserializer.convert(row.context()));
       } catch (RuntimeException e) {
-        log.warn("Could not read an expired session's user: {}", e.getMessage());
+        log.warn("Could not read an expired session's user: {}", LogSafe.of(e.getMessage()));
       }
       if (user != null) {
         recordExpiry(user, "idle");

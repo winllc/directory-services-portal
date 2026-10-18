@@ -1,5 +1,6 @@
 package com.winllc.dsp.audit;
 
+import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.cluster.Cluster;
 import com.winllc.dsp.cluster.SharedDocuments;
 import java.io.IOException;
@@ -109,7 +110,7 @@ public class AuditTokens {
     try {
       if (shared.version(DOCUMENT) != version) use(shared.get(DOCUMENT));
     } catch (RuntimeException e) {
-      log.warn("Could not check the shared audit API tokens for changes: {}", e.getMessage());
+      log.warn("Could not check the shared audit API tokens for changes: {}", LogSafe.of(e.getMessage()));
     }
   }
 
@@ -198,7 +199,7 @@ public class AuditTokens {
           tokens.set(i, t.used(at));
           save();
         } catch (IOException e) {
-          log.warn("Could not record the last use of audit API token {}: {}", t.name(), e.getMessage());
+          log.warn("Could not record the last use of audit API token {}: {}", LogSafe.of(t.name()), LogSafe.of(e.getMessage()));
         }
       }
       return view(tokens.get(i));

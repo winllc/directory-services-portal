@@ -1,5 +1,6 @@
 package com.winllc.dsp.jobs;
 
+import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.cluster.Cluster;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.model.SessionUser;
@@ -198,7 +199,10 @@ public class JobService implements DisposableBean {
       if (job.cancelRequested()) {
         job.cancelled();
       } else {
-        if (!(t instanceof ApiException)) log.warn("Job {} ({}) failed", job.id, job.title, t);
+        if (!(t instanceof ApiException)) {
+          log.warn("Job {} ({}) failed: {}", LogSafe.of(job.id), LogSafe.of(job.title), LogSafe.of(t));
+          log.debug("Job {} failure", LogSafe.of(job.id), t);
+        }
         job.fail(t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage(), t);
       }
     } finally {
@@ -243,7 +247,7 @@ public class JobService implements DisposableBean {
     Job j = jobs.get(id);
     if (mirror != null) {
       try {
-        if (j != null && j.background() && j.status().finished() && !mirror.exists(id)) {
+        if (j != null && j.finishedInBackground() && !mirror.exists(id)) {
           // Dismissed on another replica.
           jobs.remove(id);
           mirror.forget(id);
@@ -252,7 +256,7 @@ public class JobService implements DisposableBean {
           j = mirror.find(id, true);
         }
       } catch (RuntimeException e) {
-        log.warn("Could not read shared job {}: {}", id, e.getMessage());
+        log.warn("Could not read shared job {}: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
       }
     }
     if (j == null || !j.owner.equals(user.username())) throw ApiException.notFound("Job not found (finished jobs are kept for a while)");
@@ -280,7 +284,7 @@ public class JobService implements DisposableBean {
         out.add(v);
       }
     } catch (RuntimeException e) {
-      log.warn("Could not read the shared jobs of {}: {}", user.username(), e.getMessage());
+      log.warn("Could not read the shared jobs of {}: {}", LogSafe.of(user.username()), LogSafe.of(e.getMessage()));
       for (Job j : jobs.values()) {
         if (!j.owner.equals(user.username()) || !j.background()) continue;
         if (type != null && (j.target == null || !j.target.type().equals(type) || !Objects.equals(j.target.id(), id))) continue;
@@ -325,7 +329,7 @@ public class JobService implements DisposableBean {
           Job remote = mirror.find(id, false);
           if (remote != null && remote.owner.equals(user.username())) mirror.markSeen(id);
         } catch (RuntimeException e) {
-          log.warn("Could not mark shared job {} seen: {}", id, e.getMessage());
+          log.warn("Could not mark shared job {} seen: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
         }
       }
     }
@@ -377,7 +381,7 @@ public class JobService implements DisposableBean {
       }
       mirror.expire(retain);
     } catch (RuntimeException e) {
-      log.warn("Could not synchronize the shared jobs: {}", e.getMessage());
+      log.warn("Could not synchronize the shared jobs: {}", LogSafe.of(e.getMessage()));
     }
   }
 

@@ -101,6 +101,18 @@ public final class Job {
     return revision;
   }
 
+  /** A finished job shown in the job list, checked in one step. */
+  synchronized boolean finishedInBackground() {
+    return background && status.finished();
+  }
+
+  /** Everything the shared copy needs, read in one step (consistent with each other). */
+  record Snapshot(long revision, View view, Status status, Object result, boolean background, Instant finishedAt) {}
+
+  synchronized Snapshot snapshot() {
+    return new Snapshot(revision, view(), status, result, background, finishedAt);
+  }
+
   public String id() {
     return id;
   }
