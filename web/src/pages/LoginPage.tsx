@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Database, IdCard, LogIn } from 'lucide-react';
+import { Database, IdCard, KeyRound, LogIn } from 'lucide-react';
 import { useServerInfo } from '../api/hooks';
 import { useAuth } from '../lib/auth';
 import { Alert, Button, FormRow } from '../components/ui';
@@ -17,6 +17,9 @@ export function LoginPage() {
   const [busy, setBusy] = useState<'password' | 'certificate' | null>(null);
   const from = (location.state as { from?: string } | null)?.from ?? '/';
   const auth = info.data?.auth ?? { password: true, x509: false, x509AutoLogin: false };
+  const sso = auth.sso ?? [];
+  // A single sign-on the server refused comes back here as ?sso_error=<code>.
+  const ssoError = ssoErrorMessage(new URLSearchParams(location.search).get('sso_error'));
 
   if (user) return <Navigate to={from} replace />;
   // The notice-and-consent banner comes before any sign-in.
@@ -56,20 +59,42 @@ export function LoginPage() {
           </div>
           <h1>Directory Services Portal</h1>
           <p className="muted">
-            {auth.password && auth.x509
-              ? 'Sign in with your certificate or directory account'
-              : auth.x509
-                ? 'Sign in with your certificate'
-                : 'Sign in with your directory account'}
+            {sso.length > 0 && !auth.password && !auth.x509
+              ? 'Sign in with your organization account'
+              : auth.password && auth.x509
+                ? 'Sign in with your certificate or directory account'
+                : auth.x509
+                  ? 'Sign in with your certificate'
+                  : 'Sign in with your directory account'}
           </p>
         </div>
         {error && <Alert tone="danger">{error}</Alert>}
+        {!error && ssoError && <Alert tone="danger" title="Single sign-on failed">{ssoError}</Alert>}
         {!error && sessionNotice && <Alert tone="info" title="Signed out">{sessionNotice}</Alert>}
         {!error && certificateError && auth.x509 && <Alert tone="warning" title="Certificate not accepted">{certificateError}</Alert>}
         {info.data && !info.data.connected && (
           <Alert tone="warning" title="Directory unreachable">
             {info.data.error ?? 'The portal cannot reach the directory right now, so signing in may fail. Try again later.'}
           </Alert>
+        )}
+
+        {sso.map((option) => (
+          // A full-page navigation: the server redirects to the identity provider, which returns to the portal.
+          <a
+            key={option.id}
+            href={option.url}
+            className={`btn btn-${auth.password || auth.x509 ? 'secondary' : 'primary'} btn-block`}
+            aria-disabled={busy !== null}
+            onClick={(e) => busy !== null && e.preventDefault()}
+          >
+            <KeyRound size={16} />
+            {option.label}
+          </a>
+        ))}
+        {sso.length > 0 && (auth.x509 || auth.password) && (
+          <div className="login-divider">
+            <span>or</span>
+          </div>
         )}
 
         {auth.x509 && (
@@ -107,4 +132,22 @@ export function LoginPage() {
       </form>
     </div>
   );
+}
+
+/** What to tell the user when the server sent them back from a single sign-on with an error. */
+export function ssoErrorMessage(code: string | null): string | null {
+  switch (code) {
+    case null:
+    case '':
+      return null;
+    case 'consent':
+      return 'Read and acknowledge the notice and consent banner, then sign in again.';
+    case 'no_account':
+    case 'no_identity':
+      return 'Your sign-in worked, but no directory account matches it. Contact your administrator.';
+    case 'unavailable':
+      return 'Signing in is not possible right now (the audit log is unavailable). Try again later.';
+    default:
+      return 'Single sign-on did not complete. Try again, or contact your administrator if it keeps failing.';
+  }
 }
