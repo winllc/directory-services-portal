@@ -150,6 +150,10 @@ jobs:
           helm template dsp "$CHART" "${rwx[@]}" --show-only templates/api-deployment.yaml | grep -q 'type: Recreate'
           # SAML's entity id must not come from the request's Host.
           fails "sso.saml needs server.publicUrl" -f "$CHART/ci/saml-values.yaml" --set server.publicUrl=
+          for bad in http://portal.example.com https://user@portal.example.com https://portal.example.com/path 'https://portal example.com'; do
+            fails "server.publicUrl must be https://host" -f "$CHART/ci/saml-values.yaml" --set "server.publicUrl=$bad"
+          done
+          helm template dsp "$CHART" -f "$CHART/ci/saml-values.yaml" --set server.publicUrl=http://localhost:8080 > /dev/null
           helm template dsp "$CHART" -f "$ha" --show-only templates/web-deployment.yaml | grep -A1 'name: PUBLIC_HOST' | grep -q '"portal.corp.example"'
           # One replica as before: Recreate, no PodDisruptionBudget, no database or SSO settings.
           one="$(helm template dsp "$CHART" -f "$CHART/ci/default-values.yaml")"

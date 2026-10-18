@@ -235,8 +235,8 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{- if and (or .Values.sso.saml.metadataUrl .Values.sso.saml.metadataXml) (not .Values.server.publicUrl) (not .Values.sso.saml.entityId) -}}
 {{- fail "sso.saml needs server.publicUrl (or sso.saml.entityId): the SAML entity id and assertion consumer service must not come from the request's Host" -}}
 {{- end -}}
-{{- if and .Values.server.publicUrl (not (regexMatch "^https?://[^/]+/?$" .Values.server.publicUrl)) -}}
-{{- fail "server.publicUrl must be a URL without a path, e.g. https://portal.example.com" -}}
+{{- if and .Values.server.publicUrl (not (or (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$" .Values.server.publicUrl) (regexMatch "^http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?/?$" .Values.server.publicUrl))) -}}
+{{- fail "server.publicUrl must be https://host[:port] without a path or user info (http:// only for localhost or 127.0.0.1), e.g. https://portal.example.com" -}}
 {{- end -}}
 {{- if and .Values.sso.oidc.issuerUri (not .Values.sso.oidc.clientId) -}}
 {{- fail "sso.oidc.issuerUri needs sso.oidc.clientId" -}}
