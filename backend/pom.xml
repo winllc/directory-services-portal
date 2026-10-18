@@ -33,6 +33,7 @@
          parent manages these versions or newer. -->
     <tomcat.version>11.0.27</tomcat.version>
     <jackson-bom.version>3.1.7</jackson-bom.version>
+    <shedlock.version>7.10.1</shedlock.version>
   </properties>
 
   <dependencies>
@@ -63,6 +64,61 @@
       <version>${unboundid.version}</version>
     </dependency>
 
+    <!-- Sign-in through an identity provider (DSP-03): OpenID Connect (authorization code with
+         PKCE) and SAML 2.0. Both stay off until configured (portal.sso.*). -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-jose</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-saml2-service-provider</artifactId>
+    </dependency>
+
+    <!-- The optional shared database for several API replicas (DSP-04): sessions (Spring Session
+         JDBC), sign-in throttling, configuration, the audit store, jobs and cluster locks
+         (ShedLock). Nothing here is used, and no connection is made, while DSP_DATABASE_URL is
+         unset. The Boot starters are left out on purpose: their auto-configuration would demand a
+         database. -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.session</groupId>
+      <artifactId>spring-session-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-core</artifactId>
+      <version>${shedlock.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-provider-jdbc-template</artifactId>
+      <version>${shedlock.version}</version>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webmvc-test</artifactId>
@@ -73,6 +129,17 @@
       <artifactId>spring-boot-starter-security-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- The shared-database tests run against a real PostgreSQL (skipped without Docker). -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
     <!-- Generates CA and client certificates for the X.509 authentication tests. -->
     <dependency>
       <groupId>org.bouncycastle</groupId>
@@ -81,6 +148,21 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <!-- OpenSAML, which Spring Security's SAML 2.0 support is built on, is published only to the
+       Shibboleth project's repository (as Spring Security's own documentation sets up). -->
+  <repositories>
+    <repository>
+      <id>shibboleth-releases</id>
+      <url>https://build.shibboleth.net/maven/releases/</url>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+  </repositories>
 
   <build>
     <finalName>directory-services-portal</finalName>

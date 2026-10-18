@@ -1,5 +1,6 @@
 package com.winllc.dsp.audit;
 
+import com.winllc.dsp.cluster.Cluster;
 import com.enssolutions.license.LicenseCheck;
 import com.winllc.dsp.license.Licensing;
 import jakarta.annotation.PreDestroy;
@@ -29,8 +30,10 @@ public class AuditLifecycle {
   private final AuditProperties props;
   private final ObjectProvider<Licensing> licensing;
   private final AtomicBoolean started = new AtomicBoolean();
+  private final Cluster cluster;
 
-  public AuditLifecycle(AuditLog audit, AuditDelivery delivery, AuditProperties props, ObjectProvider<Licensing> licensing) {
+  public AuditLifecycle(AuditLog audit, AuditDelivery delivery, AuditProperties props, ObjectProvider<Licensing> licensing, Cluster cluster) {
+    this.cluster = cluster;
     this.audit = audit;
     this.delivery = delivery;
     this.props = props;
@@ -53,6 +56,14 @@ public class AuditLifecycle {
 
   /** Records {@code license.mode-changed} when the mode differs from the last one recorded. */
   @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
+  public void scheduledLicenseCheck() {
+    cluster.runLocked("audit-license-mode", Duration.ofMinutes(2), Duration.ofSeconds(30), this::checkLicenseMode);
+  }
+
+  /**
+   * Records {@code license.mode-changed} when the mode differs from the last one recorded (with
+   * the shared database: by any replica, so the last one recorded is read again first).
+   */
   public synchronized void checkLicenseMode() {
     Licensing l = licensing.getIfAvailable();
     if (l == null) return;
@@ -64,6 +75,7 @@ public class AuditLifecycle {
     }
     String mode = check.mode().name();
     AuditState state = delivery.state();
+    state.refresh();
     String previous = state.licenseMode();
     if (mode.equals(previous)) return;
     audit.event("license.mode-changed").target("license", Licensing.PRODUCT, "License")
@@ -80,7 +92,9 @@ public class AuditLifecycle {
   @Scheduled(cron = "0 17 3 * * *")
   public void retentionJob() {
     if (props.getRetentionDays() <= 0) return;
-    prune(Instant.now().minus(Duration.ofDays(props.getRetentionDays())));
+    // One replica prunes; the others find the lock held and skip this run.
+    cluster.runLocked("audit-retention", Duration.ofHours(1), Duration.ofMinutes(5),
+        () -> prune(Instant.now().minus(Duration.ofDays(props.getRetentionDays()))));
   }
 
   /**

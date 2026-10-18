@@ -108,6 +108,17 @@ portal:
     analysis-threads: ${JOBS_ANALYSIS_THREADS:2}
     max-active-per-user: ${JOBS_MAX_ACTIVE_PER_USER:5}
     retain-minutes: ${JOBS_RETAIN_MINUTES:1440}
+  # The optional shared database (PostgreSQL) that lets several API replicas run side by side:
+  # sessions, the sign-in lockout, configuration, the audit store, jobs and cluster locks. Unset,
+  # all of these stay in memory and DATA_DIR as before (a single instance). Prefer
+  # DSP_DATABASE_PASSWORD_FILE to DSP_DATABASE_PASSWORD. See README, High availability.
+  database:
+    url: ${DSP_DATABASE_URL:}
+    username: ${DSP_DATABASE_USERNAME:}
+    password: ${DSP_DATABASE_PASSWORD:}
+    password-file: ${DSP_DATABASE_PASSWORD_FILE:}
+    pool-size: ${DSP_DATABASE_POOL_SIZE:10}
+    config-refresh: ${DSP_CONFIG_REFRESH:2s}
   # Optional fixed banner at the top and bottom of every page (off while the text is empty).
   banner:
     text: ${BANNER_TEXT:}

@@ -1,5 +1,7 @@
 package com.winllc.dsp.analysis;
 
+import com.winllc.dsp.cluster.Cluster;
+import com.winllc.dsp.cluster.SharedDocuments;
 import com.winllc.dsp.config.PortalProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -20,6 +22,8 @@ import tools.jackson.databind.json.JsonMapper;
  * The latest result of each saved analysis, kept in {@code <dataDir>/analysis-results/<id>.json}
  * so it can be reopened later (and survives restarts) without running the analysis again. The
  * few most recently read results stay in memory, since their findings are browsed page by page.
+ * With the shared database each result is the {@code analysis-result/<id>} document instead, so
+ * every replica can show it; files from before are imported when first read.
  */
 @Component
 public class AnalysisResultStore {
@@ -31,7 +35,7 @@ public class AnalysisResultStore {
 
   private static final int CACHED = 4;
 
-  private record Cached(FileTime modified, Stored stored) {}
+  private record Cached(Object modified, Stored stored) {}
 
   private final JsonMapper mapper;
   private final Path dir;
@@ -42,9 +46,16 @@ public class AnalysisResultStore {
     }
   };
 
-  public AnalysisResultStore(JsonMapper mapper, PortalProperties props) {
+  private final SharedDocuments shared;
+
+  public AnalysisResultStore(JsonMapper mapper, PortalProperties props, Cluster cluster) {
     this.mapper = mapper;
     this.dir = Path.of(props.getDataDir()).toAbsolutePath().resolve("analysis-results");
+    this.shared = cluster.shared() ? cluster.documents() : null;
+  }
+
+  private static String document(String id) {
+    return "analysis-result/" + id;
   }
 
   private Path file(String id) {
@@ -54,6 +65,11 @@ public class AnalysisResultStore {
 
   public void save(String id, Stored stored) {
     forget(id);
+    if (shared != null) {
+      file(id);
+      shared.put(document(id), mapper.writeValueAsString(stored));
+      return;
+    }
     try {
       Files.createDirectories(dir);
       Path target = file(id);
@@ -71,6 +87,7 @@ public class AnalysisResultStore {
 
   public Stored load(String id) {
     Path f = file(id);
+    if (shared != null) return loadShared(id, f);
     try {
       if (!Files.exists(f)) {
         forget(id);
@@ -97,10 +114,37 @@ public class AnalysisResultStore {
 
   public void delete(String id) {
     forget(id);
+    if (shared != null) shared.delete(document(id));
     try {
       Files.deleteIfExists(file(id));
     } catch (IOException e) {
       log.warn("Could not delete the stored result of analysis {}", id, e);
+    }
+  }
+
+  private Stored loadShared(String id, Path f) {
+    try {
+      SharedDocuments.Doc doc = shared.get(document(id));
+      if (!doc.exists() && Files.exists(f)) {
+        // A result saved before the shared database: imported on first read.
+        doc = shared.createIfAbsent(document(id), Files.readString(f));
+      }
+      if (!doc.exists()) {
+        forget(id);
+        return null;
+      }
+      synchronized (cache) {
+        Cached c = cache.get(id);
+        if (c != null && c.modified().equals(doc.version())) return c.stored();
+      }
+      Stored stored = mapper.readValue(doc.content(), Stored.class);
+      synchronized (cache) {
+        cache.put(id, new Cached(doc.version(), stored));
+      }
+      return stored;
+    } catch (IOException | RuntimeException e) {
+      log.warn("Could not read analysis result {}: {}", id, e.getMessage());
+      return null;
     }
   }
 

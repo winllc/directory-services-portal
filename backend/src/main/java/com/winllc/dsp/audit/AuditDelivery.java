@@ -1,5 +1,7 @@
 package com.winllc.dsp.audit;
 
+import com.winllc.dsp.cluster.Cluster;
+import com.winllc.dsp.cluster.ClusterLeader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
@@ -18,6 +20,9 @@ import tools.jackson.databind.json.JsonMapper;
  * The audit outputs and their delivery state: stdout and the file (synchronous, see
  * {@link AuditOutputs}), and the background forwarders to Splunk HEC and syslog with their cursors
  * in {@link AuditState}. Logs one line per output at startup (never the HEC token).
+ *
+ * <p>With the shared database the forwarders run on one replica only, the {@link ClusterLeader};
+ * another takes over (from the shared cursors) when it stops.
  */
 @Component
 public class AuditDelivery implements AuditForwarder.Listener {
@@ -33,13 +38,18 @@ public class AuditDelivery implements AuditForwarder.Listener {
   private final AuditState state;
   private final List<AuditForwarder> forwarders = new ArrayList<>();
   private final ObjectProvider<MeterRegistry> meters;
+  private final Cluster cluster;
+  private final ClusterLeader leader;
 
-  public AuditDelivery(AuditLog audit, AuditProperties props, AuditOutputs outputs, JsonMapper mapper, ObjectProvider<MeterRegistry> meters) {
+  public AuditDelivery(AuditLog audit, AuditProperties props, AuditOutputs outputs, JsonMapper mapper, ObjectProvider<MeterRegistry> meters,
+      Cluster cluster, ClusterLeader leader) {
     this.audit = audit;
     this.meters = meters;
     this.props = props;
     this.outputs = outputs;
-    this.state = new AuditState(audit.store().dir(), mapper);
+    this.cluster = cluster;
+    this.leader = leader;
+    this.state = new AuditState(audit.store().dir(), mapper, cluster.shared() ? cluster.documents() : null);
     if (props.getSplunk().enabled()) {
       forwarders.add(new SplunkHecForwarder(props.getSplunk(), audit.host(), audit.product(), audit.store(), state, this));
     }
@@ -70,7 +80,23 @@ public class AuditDelivery implements AuditForwarder.Listener {
     AuditForwarder syslog = forwarders.stream().filter(f -> f instanceof SyslogForwarder).findFirst().orElse(null);
     log.info("Audit output syslog: {}", syslog == null ? "disabled" : "enabled, " + syslog.destination() + " (facility "
         + props.getSyslog().getFacility() + ")");
-    forwarders.forEach(AuditForwarder::start);
+    if (forwarders.isEmpty()) return;
+    if (!cluster.shared()) {
+      forwarders.forEach(AuditForwarder::start);
+      return;
+    }
+    log.info("Audit forwarders run on the cluster leader");
+    leader.watch(this::leadership);
+  }
+
+  /** Starts the forwarders (from the shared cursors) on becoming the leader; stops them after. */
+  private synchronized void leadership(boolean isLeader) {
+    if (isLeader) {
+      state.refresh();
+      forwarders.forEach(AuditForwarder::start);
+    } else {
+      forwarders.forEach(AuditForwarder::stop);
+    }
   }
 
   @PreDestroy
@@ -80,12 +106,14 @@ public class AuditDelivery implements AuditForwarder.Listener {
 
   /** The lowest seq every enabled background output has delivered (the head when there are none). */
   public long deliveredByAll() {
+    if (cluster.shared() && !leader.isLeader()) state.refresh();
     long min = audit.store().headSeq();
     for (AuditForwarder f : forwarders) min = Math.min(min, f.cursor());
     return min;
   }
 
   public List<OutputStatus> status() {
+    if (cluster.shared() && !leader.isLeader()) state.refresh();
     long head = audit.store().headSeq();
     List<OutputStatus> out = new ArrayList<>();
     out.add(new OutputStatus("stdout", outputs.stdoutEnabled(), false, "ens.audit logger", outputs.stdoutEnabled() ? head : null,

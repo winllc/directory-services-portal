@@ -61,7 +61,7 @@ class AuditChainTest {
 
   @Test
   void storeChainsEventsAndTamperingIsDetectedAtItsSeq() throws Exception {
-    AuditStore store = new AuditStore(dir);
+    AuditStore store = new FileAuditStore(dir);
     for (int i = 0; i < 5; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
     assertThat(store.headSeq()).isEqualTo(5);
     AuditStore.Verification ok = store.verify();
@@ -74,7 +74,7 @@ class AuditChainTest {
     List<String> lines = new ArrayList<>(Files.readAllLines(file));
     lines.set(2, lines.get(2).replace("\"system.started\"", "\"system.stopped\""));
     Files.write(file, lines);
-    AuditStore.Verification broken = new AuditStore(dir).verify();
+    AuditStore.Verification broken = new FileAuditStore(dir).verify();
     assertThat(broken.intact()).isFalse();
     assertThat(broken.brokenSeq()).isEqualTo(3);
 
@@ -82,15 +82,15 @@ class AuditChainTest {
     lines = new ArrayList<>(Files.readAllLines(file));
     lines.remove(2);
     Files.write(file, lines);
-    assertThat(new AuditStore(dir).verify().brokenSeq()).isEqualTo(3);
+    assertThat(new FileAuditStore(dir).verify().brokenSeq()).isEqualTo(3);
   }
 
   @Test
   void continuesTheChainAfterARestartAndEndsAPartialLine() throws Exception {
-    AuditStore store = new AuditStore(dir);
+    AuditStore store = new FileAuditStore(dir);
     store.append(event("system.started", "2026-01-01T00:00:00.000Z"), null);
     Files.writeString(dir.resolve("audit-2026-01.jsonl"), "{\"schema\":\"ens-audit/1\",\"id\":\"trunc", java.nio.file.StandardOpenOption.APPEND);
-    AuditStore reopened = new AuditStore(dir);
+    AuditStore reopened = new FileAuditStore(dir);
     assertThat(reopened.headSeq()).isEqualTo(1);
     reopened.append(event("system.started", "2026-01-02T00:00:00.000Z"), null);
     AuditStore.Verification v = reopened.verify();
@@ -101,14 +101,14 @@ class AuditChainTest {
 
   @Test
   void countsAStoreWithoutRoomAsNotWritable() throws Exception {
-    assertThat(new AuditStore(dir.resolve("audit")).writable()).isTrue();
+    assertThat(new FileAuditStore(dir.resolve("audit")).writable()).isTrue();
     assertThat(AuditStore.enoughSpace(AuditStore.MIN_FREE_BYTES)).isTrue();
     assertThat(AuditStore.enoughSpace(AuditStore.MIN_FREE_BYTES - 1)).isFalse();
   }
 
   @Test
   void neverWritesToAnOlderMonthThanTheHead() throws Exception {
-    AuditStore store = new AuditStore(dir);
+    AuditStore store = new FileAuditStore(dir);
     store.append(event("system.started", "2026-02-01T00:00:00.000Z"), null);
     store.append(event("system.started", "2026-01-31T23:59:59.000Z"), null); // clock went back
     assertThat(dir.resolve("audit-2026-01.jsonl")).doesNotExist();
@@ -117,7 +117,7 @@ class AuditChainTest {
 
   @Test
   void verificationAfterPruningReportsTheAnchor() throws Exception {
-    AuditStore store = new AuditStore(dir);
+    AuditStore store = new FileAuditStore(dir);
     store.append(event("system.started", "2025-12-30T00:00:00.000Z"), null);
     for (int i = 0; i < 4; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
     AuditStore.Pruned p = store.prune(s -> s.time().compareTo("2026-01-02") < 0);
@@ -218,7 +218,7 @@ class AuditChainTest {
     props.getAudit().setDir(auditDir.toString());
     StaticListableBeanFactory none = new StaticListableBeanFactory();
     return new AuditLog(MAPPER, props, none.getBeanProvider(BuildProperties.class), none.getBeanProvider(Licensing.class),
-        none.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+        none.getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class), com.winllc.dsp.cluster.Cluster.standalone());
   }
 
   static Instant at(String s) {
