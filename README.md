@@ -65,6 +65,25 @@ Each package has its own README (`deploy/package/docker/README.md`,
 installers verify. Building from source, the demo compose stack in this repository and
 `docker build` are for development only (see [Development](#development)).
 
+### Upgrade notes: single sign-on and the shared database
+
+Upgrading an existing installation needs no change: without `SSO_*` and `DSP_DATABASE_*` the
+portal signs in, stores its data and runs as one instance exactly as before (the Helm chart keeps
+one replica and the `Recreate` strategy). What is new and optional:
+
+- [Single sign-on](#single-sign-on-openid-connect-saml-20) (OIDC, SAML 2.0), off until configured.
+  The login page gets a button per provider; `/api/auth/sso/**` is new (the web tier already
+  forwards `/api/`).
+- [The shared database](#high-availability-several-api-instances) (`DSP_DATABASE_*`, PostgreSQL)
+  for several API instances. Its first start imports `DATA_DIR`; keep the data volume mounted for
+  it, and don't return to running without the database afterwards.
+- Helm: `api.replicaCount` may exceed 1 (with the database and a ReadWriteMany license volume),
+  `api.updateStrategy`, `api.podDisruptionBudget`, `database.*`, `sso.*`,
+  `networkPolicy.egress.database` and `.sso`.
+- The release bundle's `env.template` lists the new variables; `upgrade.sh` keeps your `.env`, so
+  add them from the template only if you use them. The native package reads the same variables
+  from `portal.env`.
+
 ## Releases
 
 Cut a release by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`. The CI `image` job
@@ -620,6 +639,151 @@ Group membership, admin status and permissions work exactly as they do for passw
 > must be presented when the connection is established, which is how `client-auth: want`
 > works. Tomcat logs a warning about this at startup.
 
+### Single sign-on (OpenID Connect, SAML 2.0)
+Users can sign in through the organization's identity provider. Each protocol is **off until
+configured**; password and certificate sign-in work as before alongside it (`PASSWORD_LOGIN_ENABLED=false`
+leaves only single sign-on and certificates). The login page shows one button per configured
+provider.
+
+How a sign-in is mapped: the provider asserts an identity (an OIDC claim, or a SAML attribute or
+the NameID). `SSO_*_USER_FILTER`, with `{{value}}` replaced by that identity (filter-escaped), must
+match **exactly one** directory entry; none or several refuses the sign-in. Groups, administrator
+status (`ADMIN_USERS`, `ADMIN_GROUPS`) and permissions then come from the directory, exactly as for
+password sign-in, and are read again every `GROUP_REFRESH_INTERVAL`. The provider's own groups
+make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN_GROUPS`
+(`;`-separated, compared case-insensitively); nothing else the provider asserts grants a role.
+
+| variable | default | |
+|---|---|---|
+| `SSO_OIDC_ISSUER_URI` | | the issuer; `https://` (http only for localhost). Its discovery document must name the same issuer |
+| `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
+| `SSO_OIDC_CLIENT_SECRET_FILE` / `SSO_OIDC_CLIENT_SECRET` | | the client secret (prefer the file); empty: a public client |
+| `SSO_OIDC_SCOPES` | `openid profile email` | |
+| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` | the claim mapped through the user filter |
+| `SSO_OIDC_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{value}}))` | |
+| `SSO_OIDC_GROUPS_CLAIM` / `SSO_OIDC_ADMIN_GROUPS` | `groups` / empty | provider groups that grant administrator |
+| `SSO_OIDC_LABEL` | `Sign in with single sign-on` | button text |
+| `SSO_SAML_METADATA` | | the IdP's metadata: an `https://` URL or a file. Turns SAML on |
+| `SSO_SAML_ENTITY_ID` | `https://<portal>/api/auth/sso/saml/metadata` | this service provider's entity id |
+| `SSO_SAML_USERNAME_ATTRIBUTE` | empty: the NameID | the attribute mapped through the user filter |
+| `SSO_SAML_USER_FILTER`, `SSO_SAML_GROUPS_ATTRIBUTE`, `SSO_SAML_ADMIN_GROUPS`, `SSO_SAML_LABEL` | as OIDC | |
+| `SSO_SAML_CLOCK_SKEW` | `2m` | tolerated clock difference (at most `10m`) |
+| `SSO_SAML_SIGNING_KEY_FILE` / `SSO_SAML_SIGNING_CERT_FILE` | | PKCS#8 PEM key and certificate, for IdPs that require signed AuthnRequests |
+
+Endpoints to register with the provider (`<portal>` is the address users open; behind a proxy it
+must forward `X-Forwarded-Proto` and `X-Forwarded-Host`, as the web tier does):
+
+| | |
+|---|---|
+| OIDC redirect URI | `https://<portal>/api/auth/sso/callback/oidc` |
+| SAML entity id and SP metadata | `https://<portal>/api/auth/sso/saml/metadata` |
+| SAML assertion consumer service (HTTP-POST) | `https://<portal>/api/auth/sso/saml/acs/saml` |
+
+What is checked. OIDC: the authorization code flow with PKCE (S256, confidential clients too),
+`state` and `nonce`; the ID token's signature against the provider's JWKS, its issuer, audience
+(the client id) and expiry (60 seconds of clock skew). SAML: AuthnRequests go by HTTP-Redirect;
+the response or every assertion must be signed with a key from the IdP's metadata; issuer,
+audience (the entity id), recipient, `NotBefore`/`NotOnOrAfter` (with `SSO_SAML_CLOCK_SKEW`) and
+`InResponseTo` (this browser's request) are checked; **IdP-initiated** (unsolicited) responses are
+refused, and each assertion id is accepted only once (replay). Sign-in requests in flight are kept
+on the server under a one-time handle in a short-lived `DSP_SSO` cookie, because the provider's
+answer never carries the `SameSite=Strict` session cookie; SAML's cross-site POST needs that cookie
+to be `SameSite=None; Secure`, so **SAML requires HTTPS** (set `ENS_COOKIE_SECURE=true` behind a
+TLS proxy). The provider's tokens are not kept: the session holds only the portal user. The
+notice-and-consent banner must be acknowledged before a sign-on starts. Every sign-on and refusal
+is audited as `auth.login` with `method` `oidc` or `saml` (refusals with a `reasonCode`); the user
+is sent back to `/login?sso_error=<code>` with a message. Sign-out ends the portal session only
+(not the provider's).
+
+**Microsoft Entra ID** (OIDC). App registrations > New registration; platform *Web*, redirect URI
+as above. Certificates & secrets > new client secret. Token configuration > add the groups claim
+(*Security groups*, emitted as *Group ID*) if administrators come from an Entra group. Then:
+`SSO_OIDC_ISSUER_URI=https://login.microsoftonline.com/<tenant-id>/v2.0`,
+`SSO_OIDC_CLIENT_ID=<application (client) id>`, the secret, and for Active Directory users
+`SSO_OIDC_USERNAME_CLAIM=preferred_username` with
+`SSO_OIDC_USER_FILTER=(&(objectClass=user)(userPrincipalName={{value}}))`;
+`SSO_OIDC_ADMIN_GROUPS=<object id of the group>`. Users in more than 200 groups get no groups
+claim (Entra's overage rule): give them administrator rights through `ADMIN_GROUPS` instead.
+
+**Okta** (OIDC). Applications > Create App Integration > OIDC, *Web Application*; sign-in redirect
+URI as above; assign the users. `SSO_OIDC_ISSUER_URI=https://<org>.okta.com/oauth2/default` (or
+your custom authorization server), the client id and secret. For administrator groups, add a
+`groups` claim to the authorization server (filter, e.g. *Starts with* `portal-`) and list the
+group names in `SSO_OIDC_ADMIN_GROUPS`. Map users by `preferred_username` (the Okta login) or
+`email` (`SSO_OIDC_USERNAME_CLAIM=email`, `SSO_OIDC_USER_FILTER=(&(objectClass=inetOrgPerson)(mail={{value}}))`).
+
+**AD FS** (SAML, or OIDC on AD FS 2016+). SAML: AD FS Management > Relying Party Trusts > Add,
+*Import data about the relying party published online*: `https://<portal>/api/auth/sso/saml/metadata`.
+Claim issuance policy: *Send LDAP Attributes as Claims*, User-Principal-Name to *UPN* and
+Token-Groups (unqualified names) to *Group*. Then
+`SSO_SAML_METADATA=https://<adfs>/FederationMetadata/2007-06/FederationMetadata.xml`,
+`SSO_SAML_USERNAME_ATTRIBUTE=http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn`,
+`SSO_SAML_USER_FILTER=(&(objectClass=user)(userPrincipalName={{value}}))`, and for administrator
+groups `SSO_SAML_GROUPS_ATTRIBUTE=http://schemas.xmlsoap.org/claims/Group` with
+`SSO_SAML_ADMIN_GROUPS=Portal Admins`. AD FS signs assertions by default; if it requires signed
+requests, give the SP a key (`SSO_SAML_SIGNING_*`) and re-import the metadata. OIDC on AD FS:
+Application Groups > *Server application accessing a web API*;
+`SSO_OIDC_ISSUER_URI=https://<adfs>/adfs`, `SSO_OIDC_USERNAME_CLAIM=upn`.
+
+**Multi-factor authentication.** Password sign-in has no second factor of its own: time-based
+one-time passwords (RFC 6238) for password sign-in are planned but not part of this release. For
+MFA today, use single sign-on (the provider's MFA and conditional access apply) or certificate
+sign-in (CAC/PIV), and set `PASSWORD_LOGIN_ENABLED=false`.
+
+### High availability (several API instances)
+By default the API is a single instance: sessions, the sign-in lockout and background tasks are
+in its memory, and configuration and the audit store are files in `DATA_DIR`. To run several
+API instances behind one web tier or load balancer, give them a shared **PostgreSQL** (13 or
+later) database:
+
+| variable | default | |
+|---|---|---|
+| `DSP_DATABASE_URL` | | `jdbc:postgresql://host:5432/dsp`; unset: no shared database (nothing changes) |
+| `DSP_DATABASE_USERNAME` | | |
+| `DSP_DATABASE_PASSWORD_FILE` / `DSP_DATABASE_PASSWORD` | | prefer the file |
+| `DSP_DATABASE_POOL_SIZE` | `10` | connections per instance |
+| `DSP_CONFIG_REFRESH` | `2s` | how soon an instance sees a configuration change made on another |
+
+PostgreSQL was chosen because the portal had no datastore of its own and the configuration and
+audit chain must survive any one instance: a durable SQL store holds all shared state with one
+piece of new infrastructure (the other ENS applications already run PostgreSQL), where Redis
+would have needed a second store for the configuration and audit trail. The API creates and
+upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; the role needs
+`CREATE` on its schema). With it:
+
+- **Sessions** are Spring Session JDBC sessions (`spring_session`), with the same `DSP_SESSION`
+  cookie, timeouts and per-user limit across instances. Idle timeouts are recorded by a job that
+  one instance runs at a time.
+- **The sign-in lockout** counts failures in `dsp_login_failure` (keys stored as SHA-256), so it
+  holds whichever instance a request reaches.
+- **Configuration** is a versioned document: a change locks it, applies to the latest version and
+  writes the next, so changes made on different instances at once are applied one after the
+  other, never lost; other instances read the new version within `DSP_CONFIG_REFRESH`.
+- **The audit store** is one hash chain in `dsp_audit_event` (appends are serialized by a database
+  lock), with the same lines and verification as the files. Audit API tokens and forwarder
+  cursors are shared too. The Splunk and syslog forwarders run on one elected instance (another
+  takes over within seconds when it stops); retention and the license-mode check run under a
+  cluster lock (ShedLock).
+- **Background tasks** run on the instance that started them; their progress and results are
+  shared, so the task list, results, cancelling and dismissing work from any instance.
+- **Single sign-on** requests in flight and used SAML assertion ids are shared, so the provider's
+  answer may reach any instance.
+
+The license state (installation id, license, revisions seen) is still kept in
+`ENS_LICENSE_STATE_DIR`: every instance must see the same directory (a shared volume; on
+Kubernetes a ReadWriteMany license volume, which the chart requires for more than one replica).
+The ENS license library's database store will remove that requirement.
+
+**Moving an existing installation to the database.** Set the `DSP_DATABASE_*` variables and
+restart the single instance with its data volume still mounted. The first start imports
+`portal-config.json`, the audit files (the chain carries on from the same head), the audit API
+tokens and forwarder cursors and, when first read, the saved analysis results, and logs an
+`Imported ...` line for each. The files are left as they were but are no longer read or written:
+**don't go back** to running without the database afterwards (the files would miss everything
+since), and back up the database instead of the data volume. Then add instances. Background tasks
+running during the restart are lost, as with any restart. On Kubernetes see the chart README,
+Several API replicas; the chart then uses rolling updates and a PodDisruptionBudget.
+
 ### Page banners
 An optional fixed banner can be shown at the top and bottom of every page, including the login
 page. It's typically used for a classification or environment marking. The banners stay visible
@@ -646,7 +810,7 @@ Session controls (DISA STIG; the ENS platform baseline):
 | `ENS_SESSION_MAX_PER_USER` | `0` (no limit) | concurrent sessions per user; signing in once more ends the **oldest** (STIG suggests `3`) |
 | `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists ends its sessions |
 | `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`) |
-| `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory, so a restart clears them |
+| `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory (a restart clears them), or in the shared database (see [High availability](#high-availability-several-api-instances)) |
 
 Idle time counts what the user does: the web client marks its background polling (task progress,
 license and audit status) with `X-DSP-Background: 1`, which keeps nothing alive, so an open but
@@ -782,8 +946,12 @@ on a FIPS-enabled host will be recorded here.
   `/api/admin/**` requires `ROLE_ADMIN`, read again from the directory every
   `GROUP_REFRESH_INTERVAL`. Failed logins are throttled (`LOGIN_MAX_FAILURES`), and sessions time
   out (see [Sessions](#sessions)).
-- Sessions are held in server memory. Run a single instance, or add Spring Session (e.g.
-  Redis or JDBC) before scaling out.
+- Sessions are held in server memory, or with `DSP_DATABASE_URL` in the shared database (Spring
+  Session JDBC; see [High availability](#high-availability-several-api-instances)). Run a single
+  instance without the database.
+- Single sign-on maps the provider's assertion to one directory entry and never takes a role from
+  the provider unless `SSO_*_ADMIN_GROUPS` says so; see [Single sign-on](#single-sign-on-openid-connect-saml-20)
+  for what is validated.
 - Metrics and analyses read through the same permission checks as browsing (see
   [Metrics](#metrics)); comparisons and quality checks are for administrators only.
 - Changes, sign-ins and denials are recorded in the [audit log](#audit-logging). Treat the audit
