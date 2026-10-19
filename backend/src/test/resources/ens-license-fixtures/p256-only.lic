@@ -1,0 +1,30 @@
+# ENS Solutions license file
+# This file is signed. Any change to the block below makes it invalid.
+#
+# Product:      RSA Operations Portal
+# Edition:      Subscription
+# Licensee:     Pat Rivera, Example Agency
+# Covers:       5,000 SecurID users
+# Valid from:   2026-10-14
+# Expires:      2027-10-14
+# License id:   lic_00000000000000000005 (revision 1)
+-----BEGIN ENS LICENSE-----
+ce97ec20d43661a1.eyJmb3JtYXQiOiJlbnMtbGljZW5zZS8xIiwiaWQiOiJsaWN
+fMDAwMDAwMDAwMDAwMDAwMDAwMDUiLCJyZXZpc2lvbiI6MSwiaXNzdWVyIjoiRU5
+TIFNvbHV0aW9ucywgTExDIiwicHJvZHVjdCI6Im1mYS1wb3J0YWwiLCJlZGl0aW9
+uIjoic3Vic2NyaXB0aW9uIiwibGljZW5zZWUiOnsibmFtZSI6IlBhdCBSaXZlcmE
+iLCJvcmdhbml6YXRpb24iOiJFeGFtcGxlIEFnZW5jeSIsImVtYWlsIjoicGF0QGV
+4YW1wbGUuZ292In0sImxpbWl0Ijp7InF1YW50aXR5Ijo1MDAwLCJ1bml0IjoiU2V
+jdXJJRCB1c2VycyJ9LCJmZWF0dXJlcyI6WyJtZmEtcG9ydGFsLnNlbGYtc2Vydml
+jZSIsIm1mYS1wb3J0YWwudHJ1c3RlZC1hZ2VudHMiLCJtZmEtcG9ydGFsLmhlbHA
+tZGVzayIsIm1mYS1wb3J0YWwuc2hpcG1lbnRzIiwibWZhLXBvcnRhbC5zY2hlZHV
+sZWQtam9icyIsIm1mYS1wb3J0YWwuYnJhbmRpbmciLCJtZmEtcG9ydGFsLnJlcG9
+ydHMiLCJtZmEtcG9ydGFsLmJ1bGstdXBsb2FkIiwibWZhLXBvcnRhbC5ncm91cC1
+lbWFpbCJdLCJzdXBwb3J0Ijoic3RhbmRhcmQiLCJpc3N1ZWRBdCI6IjIwMjYtMTA
+tMTRUMDA6MDA6MDAuMDAwWiIsIm5vdEJlZm9yZSI6IjIwMjYtMTAtMTRUMDA6MDA
+6MDAuMDAwWiIsImV4cGlyZXNBdCI6IjIwMjctMTAtMTRUMDA6MDA6MDAuMDAwWiI
+sImdyYWNlRGF5cyI6MzAsIm1haW50ZW5hbmNlVW50aWwiOm51bGwsImluc3RhbGx
+hdGlvbklkIjpudWxsLCJ3YXRlcm1hcmsiOmZhbHNlfQ.MEUCID_TpnKW-o8O18UV
+X5d9wdgHLJIrgUXy5jCRkqnb_uo0AiEAv7nnR3fBGAYWVrdG5A_dK9vLnE-fkfmV
+cnTG8azqmfg
+-----END ENS LICENSE-----
