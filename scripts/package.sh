@@ -211,6 +211,7 @@ package_native() {
       -e 's|proxy_set_header X-DSP-Proxy-Secret "\${DSP_PROXY_SECRET}";|include /etc/directory-services-portal/nginx-proxy-secret.conf;  # written by install.sh|' \
       -e 's|\${DSP_CERT_HEADERS_HTTP}|proxy_set_header X-SSL-Client-Cert "";|' \
       -e 's|\${DSP_CSP_HEADER}|Content-Security-Policy|' \
+      -e 's|"\${DSP_FORWARDED_HOST}"|"$http_host"|' \
       -e 's|CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh)|CSP is only reported with the header name Content-Security-Policy-Report-Only|' \
       -e '/X509_EDGE_TERMINATION, see entrypoint.sh/d' \
       "$ROOT/web/nginx/templates/default.conf.template" | cat -s > "$dir/nginx/directory-services-portal.conf"

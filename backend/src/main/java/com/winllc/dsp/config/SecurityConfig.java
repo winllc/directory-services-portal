@@ -2,6 +2,7 @@ package com.winllc.dsp.config;
 
 import com.winllc.dsp.audit.AccessDenials;
 import com.winllc.dsp.service.SessionService;
+import com.winllc.dsp.sso.SsoSecurity;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -83,7 +84,7 @@ public class SecurityConfig {
   @Bean
   @Order(2)
   SecurityFilterChain securityFilterChain(HttpSecurity http, SecurityContextRepository contexts, AccessDenials denials, EnsProperties ens,
-      SessionService sessions) throws Exception {
+      SessionService sessions, SsoSecurity sso) throws Exception {
     http
         // Replaced by RequestHeaderCsrfFilter (custom header + SameSite=Strict cookie).
         .csrf(AbstractHttpConfigurer::disable)
@@ -97,6 +98,8 @@ public class SecurityConfig {
         .authorizeHttpRequests(auth -> auth
             .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/x509", "/api/auth/logout", "/api/auth/consent").permitAll()
             .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/info", "/api/health").permitAll()
+            // Single sign-on: starting it, the provider's answer and the SAML metadata.
+            .requestMatchers("/api/auth/sso/**").permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/**").authenticated()
             .anyRequest().permitAll())
@@ -107,6 +110,8 @@ public class SecurityConfig {
               JsonErrors.write(res, 403, "Administrator access required");
             }))
         .headers(baselineHeaders(ens));
+    // OIDC and SAML sign-in when configured (nothing otherwise).
+    sso.apply(http);
     return http.build();
   }
 }

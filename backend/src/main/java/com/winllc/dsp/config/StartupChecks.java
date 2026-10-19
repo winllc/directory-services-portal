@@ -14,10 +14,12 @@ public class StartupChecks {
   private static final Logger log = LoggerFactory.getLogger(StartupChecks.class);
   private final PortalProperties props;
   private final ObjectProvider<EnsProperties> ens;
+  private final ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso;
 
-  public StartupChecks(PortalProperties props, ObjectProvider<EnsProperties> ens) {
+  public StartupChecks(PortalProperties props, ObjectProvider<EnsProperties> ens, ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso) {
     this.props = props;
     this.ens = ens;
+    this.sso = sso;
   }
 
   @PostConstruct
@@ -39,6 +41,13 @@ public class StartupChecks {
     if (!x509.isEmpty()) {
       throw new IllegalStateException("Refusing to start: certificate sign-in through a proxy (X509_ENABLED=true, X509_SOURCE=header)"
           + " is not secure as configured: " + String.join("; ", x509) + ". Or turn it off with X509_ENABLED=false.");
+    }
+    com.winllc.dsp.sso.SsoProperties single = sso.getIfAvailable();
+    if (single != null) {
+      List<String> ssoProblems = single.problems();
+      if (!ssoProblems.isEmpty()) throw new IllegalStateException("Refusing to start: single sign-on: " + String.join("; ", ssoProblems));
+      if (single.getOidc().enabled()) log.info("Single sign-on: OpenID Connect ({}) offered", single.getOidc().getIssuerUri());
+      if (single.getSaml().enabled()) log.info("Single sign-on: SAML 2.0 (metadata {}) offered", single.getSaml().getMetadataLocation());
     }
     EnsProperties shared = ens.getIfAvailable();
     if (shared != null) checkRevocation(shared.getX509());

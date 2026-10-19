@@ -1,0 +1,16 @@
+{{- if gt (int .Values.api.replicaCount) 1 }}
+# Keeps API pods serving through node drains and other voluntary disruptions (replicaCount > 1).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "dsp.apiName" . }}
+  labels:
+    {{- include "dsp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "dsp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+{{- end }}

@@ -143,14 +143,8 @@ public class AuthController {
   }
 
   private void establishSession(SessionUser user, HttpServletRequest request, HttpServletResponse response) {
-    SecurityContext context = SessionService.context(user);
-    SecurityContextHolder.setContext(context);
-
-    // Prevent session fixation: always issue a fresh session id on sign-in.
-    request.getSession(true);
-    request.changeSessionId();
-    contexts.saveContext(context, request, response);
-    // Idle and absolute timeouts, the concurrent-session limit and group refresh start now.
-    sessions.signedIn(request, user);
+    // A fresh session id, the security context, then idle and absolute timeouts, the
+    // concurrent-session limit and group refresh.
+    sessions.establish(user, request, response);
   }
 }

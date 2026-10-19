@@ -9,12 +9,20 @@ metadata:
     {{- include "dsp.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
-  # One API pod at most: it is the single writer of the audit store, configuration and license
-  # state (see api.replicaCount in values.yaml).
+  # More than one replica only with the shared database (see api.replicaCount in values.yaml).
   replicas: {{ $v.api.replicaCount }}
   revisionHistoryLimit: {{ $v.revisionHistoryLimit }}
   strategy:
+    {{- if eq (include "dsp.apiStrategy" .) "Recreate" }}
+    # A ReadWriteOnce volume is mounted: the old pod stops before the new one starts.
     type: Recreate
+    {{- else }}
+    # A new pod must be ready before an old one stops: upgrades without downtime.
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+    {{- end }}
   selector:
     matchLabels:
       {{- include "dsp.selectorLabels" . | nindent 6 }}
@@ -184,6 +192,26 @@ spec:
               mountPath: /etc/dsp/truststore
               readOnly: true
             {{- end }}
+            {{- if include "dsp.secretSet" (dict "v" $v.database.password) }}
+            - name: database-password
+              mountPath: /etc/dsp/database
+              readOnly: true
+            {{- end }}
+            {{- if include "dsp.secretSet" (dict "v" $v.sso.oidc.clientSecret) }}
+            - name: oidc-client-secret
+              mountPath: /etc/dsp/sso-oidc
+              readOnly: true
+            {{- end }}
+            {{- if include "dsp.samlMetadataXml" . }}
+            - name: saml-metadata
+              mountPath: /etc/dsp/sso-saml-metadata
+              readOnly: true
+            {{- end }}
+            {{- if $v.sso.saml.signing.existingSecret }}
+            - name: saml-signing
+              mountPath: /etc/dsp/sso-saml-signing
+              readOnly: true
+            {{- end }}
             {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
             # LDAP_BIND_PASSWORD_FILE: a file, not an environment variable anyone inspecting the
             # pod or process can read.
@@ -257,6 +285,41 @@ spec:
             items:
               - key: {{ include "dsp.x509ProxySecretKey" . }}
                 path: proxy-secret
+        {{- end }}
+        {{- if include "dsp.secretSet" (dict "v" $v.database.password) }}
+        - name: database-password
+          secret:
+            secretName: {{ $v.database.password.existingSecret | default (include "dsp.fullname" .) }}
+            # Group-readable: the API runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: {{ ternary $v.database.password.existingSecretKey "database-password" (not (empty $v.database.password.existingSecret)) }}
+                path: password
+        {{- end }}
+        {{- if include "dsp.secretSet" (dict "v" $v.sso.oidc.clientSecret) }}
+        - name: oidc-client-secret
+          secret:
+            secretName: {{ $v.sso.oidc.clientSecret.existingSecret | default (include "dsp.fullname" .) }}
+            defaultMode: 0440
+            items:
+              - key: {{ ternary $v.sso.oidc.clientSecret.existingSecretKey "oidc-client-secret" (not (empty $v.sso.oidc.clientSecret.existingSecret)) }}
+                path: client-secret
+        {{- end }}
+        {{- if include "dsp.samlMetadataXml" . }}
+        - name: saml-metadata
+          configMap:
+            name: {{ include "dsp.apiName" . }}-saml-idp
+        {{- end }}
+        {{- if $v.sso.saml.signing.existingSecret }}
+        - name: saml-signing
+          secret:
+            secretName: {{ $v.sso.saml.signing.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $v.sso.saml.signing.certificateKey }}
+                path: signing.crt
+              - key: {{ $v.sso.saml.signing.privateKeyKey }}
+                path: signing.key
         {{- end }}
         {{- if include "dsp.secretSet" (dict "v" $v.ldap.bindPassword) }}
         - name: ldap-bind-password

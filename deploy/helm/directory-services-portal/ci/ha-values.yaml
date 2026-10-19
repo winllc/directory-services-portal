@@ -1,0 +1,40 @@
+# Several API replicas on the shared PostgreSQL database, with OIDC single sign-on: rolling updates,
+# a PodDisruptionBudget, the license state on a ReadWriteMany volume and no data volume (its
+# content was imported by the first start with the database).
+ldap:
+  url: ldaps://ldap.corp.example:636
+  bindDn: cn=portal,ou=system,dc=corp,dc=example
+  bindPassword:
+    existingSecret: dsp-ldap
+    existingSecretKey: password
+  baseDn: dc=corp,dc=example
+api:
+  replicaCount: 3
+persistence:
+  license:
+    accessModes: [ReadWriteMany]
+    storageClass: nfs
+  data:
+    enabled: false
+database:
+  url: jdbc:postgresql://postgres.db.svc:5432/dsp
+  username: dsp
+  password:
+    existingSecret: dsp-database
+    existingSecretKey: password
+sso:
+  oidc:
+    issuerUri: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0
+    clientId: 11111111-1111-1111-1111-111111111111
+    clientSecret:
+      existingSecret: dsp-oidc
+      existingSecretKey: client-secret
+    usernameClaim: preferred_username
+    userFilter: (&(objectClass=user)(userPrincipalName={{value}}))
+    adminGroups: [22222222-2222-2222-2222-222222222222]
+    label: Sign in with Microsoft
+server:
+  cookieSecure: true
+  publicUrl: https://portal.corp.example
+networkPolicy:
+  enabled: true

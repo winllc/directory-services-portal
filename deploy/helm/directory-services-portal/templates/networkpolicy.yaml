@@ -83,6 +83,12 @@ spec:
         - port: 53
           protocol: TCP
     {{- $rules := list $np.egress.ldap $np.egress.audit }}
+    {{- if $v.database.url }}
+    {{- $rules = append $rules $np.egress.database }}
+    {{- end }}
+    {{- if or $v.sso.oidc.issuerUri $v.sso.saml.metadataUrl $v.sso.saml.metadataXml }}
+    {{- $rules = append $rules $np.egress.sso }}
+    {{- end }}
     {{- if and $v.x509.enabled (or $v.x509.checkRevocation (ne (toString $v.x509.revocation.mode) "off")) }}
     {{- $rules = append $rules $v.x509.revocation.egress }}
     {{- end }}

@@ -57,7 +57,7 @@ class AuditOutputsTest {
   }
 
   AuditStore storeWith(int n) throws IOException {
-    AuditStore store = new AuditStore(dir);
+    AuditStore store = new FileAuditStore(dir);
     for (int i = 0; i < n; i++) {
       store.append(AuditChainTest.event(i == 0 ? "auth.login" : "entry.update", "2026-10-16T02:10:11.12" + i + "Z"), null);
     }

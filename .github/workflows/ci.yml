@@ -129,6 +129,47 @@ jobs:
           egress() { helm template dsp "$CHART" -f "$edge" "$@" --show-only templates/networkpolicy.yaml | grep -c 'cidr: 0.0.0.0/0' || true; }
           [ "$(egress)" -gt "$(egress --set x509.revocation.mode=off)" ] || { echo "no revocation egress by default"; exit 1; }
 
+      - name: Check the replica guards
+        run: |
+          # More than one API replica needs the shared database and volumes that don't pin pods to
+          # a node; one replica renders as before (Recreate, no PodDisruptionBudget).
+          ha="$CHART/ci/ha-values.yaml"
+          fails() { # fails EXPECTED-MESSAGE HELM-ARGS...
+            local want="$1" out; shift
+            if out="$(helm template dsp "$CHART" "$@" 2>&1)"; then echo "rendered, expected: $want"; exit 1; fi
+            grep -qF -- "$want" <<<"$out" || { echo "$out"; exit 1; }
+          }
+          fails "needs database.url" -f "$ha" --set database.url=
+          fails "persistence.license.accessModes [ReadWriteMany]" -f "$ha" --set 'persistence.license.accessModes={ReadWriteOnce}'
+          fails "persistence.data ReadWriteOnce" -f "$ha" --set persistence.data.enabled=true
+          fails "api.updateStrategy RollingUpdate with a ReadWriteOnce volume" -f "$CHART/ci/default-values.yaml" --set api.updateStrategy=RollingUpdate --set database.url=jdbc:postgresql://db:5432/dsp
+          fails "database.url must be a PostgreSQL JDBC URL" -f "$CHART/ci/default-values.yaml" --set database.url=postgres://x
+          # Without the database two pods must never overlap, even on ReadWriteMany storage.
+          rwx=(-f "$CHART/ci/default-values.yaml" --set 'persistence.license.accessModes={ReadWriteMany}' --set persistence.data.enabled=false)
+          fails "api.updateStrategy RollingUpdate needs database.url" "${rwx[@]}" --set api.updateStrategy=RollingUpdate
+          helm template dsp "$CHART" "${rwx[@]}" --show-only templates/api-deployment.yaml | grep -q 'type: Recreate'
+          # SAML's entity id must not come from the request's Host.
+          fails "sso.saml needs server.publicUrl" -f "$CHART/ci/saml-values.yaml" --set server.publicUrl=
+          for bad in http://portal.example.com https://user@portal.example.com https://portal.example.com/path 'https://portal example.com'; do
+            fails "server.publicUrl must be https://host" -f "$CHART/ci/saml-values.yaml" --set "server.publicUrl=$bad"
+          done
+          helm template dsp "$CHART" -f "$CHART/ci/saml-values.yaml" --set server.publicUrl=http://localhost:8080 > /dev/null
+          helm template dsp "$CHART" -f "$ha" --show-only templates/web-deployment.yaml | grep -A1 'name: PUBLIC_HOST' | grep -q '"portal.corp.example"'
+          # One replica as before: Recreate, no PodDisruptionBudget, no database or SSO settings.
+          one="$(helm template dsp "$CHART" -f "$CHART/ci/default-values.yaml")"
+          grep -q 'type: Recreate' <<<"$one"
+          if grep -q 'kind: PodDisruptionBudget' <<<"$one"; then echo "a PodDisruptionBudget for one replica"; exit 1; fi
+          grep -qx '  DSP_DATABASE_URL: ""' <<<"$one"
+          grep -qx '  SSO_OIDC_ISSUER_URI: ""' <<<"$one"
+          # Several: rolling updates, a PodDisruptionBudget, secrets as files.
+          many="$(helm template dsp "$CHART" -f "$ha")"
+          grep -q 'type: RollingUpdate' <<<"$many"
+          grep -q 'kind: PodDisruptionBudget' <<<"$many"
+          grep -qx '  DSP_DATABASE_PASSWORD_FILE: /etc/dsp/database/password' <<<"$many"
+          grep -qx '  SSO_OIDC_CLIENT_SECRET_FILE: /etc/dsp/sso-oidc/client-secret' <<<"$many"
+          grep -q 'port: 5432' <<<"$many"
+          echo "HA guards OK"
+
   image:
     # Builds both images on every push, checks the pair starts and answers through the web
     # tier, and publishes what it just checked. Nothing is published from a pull request: a

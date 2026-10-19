@@ -15,7 +15,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,17 +31,16 @@ public class AuthService {
   private static final Logger log = LoggerFactory.getLogger(AuthService.class);
   private static final Pattern USERNAME = Pattern.compile("^[\\p{L}\\p{N}._@+-]{1,128}$");
 
-  private record Failures(int count, long first) {}
-
   private final LdapDirectory directory;
   private final PortalProperties props;
   private final AuditLog audit;
-  private final Map<String, Failures> failures = new ConcurrentHashMap<>();
+  private final LoginThrottle throttle;
 
-  public AuthService(LdapDirectory directory, PortalProperties props, AuditLog audit) {
+  public AuthService(LdapDirectory directory, PortalProperties props, AuditLog audit, LoginThrottle throttle) {
     this.directory = directory;
     this.props = props;
     this.audit = audit;
+    this.throttle = throttle;
   }
 
   /** Substitute placeholders with filter-escaped values and parse. */
@@ -79,15 +77,25 @@ public class AuthService {
       throw ApiException.forbidden("Password sign-in is disabled");
     }
     String throttleKey = clientKey + "|" + username.toLowerCase();
-    Failures f = failures.get(throttleKey);
     int maxFailures = Math.max(1, props.getLogin().getMaxFailures());
-    if (f != null && System.currentTimeMillis() - f.first() < windowMs() && f.count() >= maxFailures) {
+    // Counted before the password is tried, in one atomic step: concurrent attempts can't all
+    // pass the check, so no more than LOGIN_MAX_FAILURES passwords are tried per window. A
+    // success clears the count; an attempt the directory couldn't answer is not counted.
+    int count = throttle.recordFailure(throttleKey, windowMs());
+    if (count > maxFailures) {
       event.anonymous(attempted).denied("Too many failed attempts");
       throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "Too many failed login attempts. Try again later.");
     }
-    String dn = USERNAME.matcher(username).matches() && !password.isEmpty() ? findUserDn(username) : null;
-    if (dn == null || !directory.authenticate(dn, password)) {
-      int count = recordFailure(throttleKey);
+    String dn;
+    boolean ok;
+    try {
+      dn = USERNAME.matcher(username).matches() && !password.isEmpty() ? findUserDn(username) : null;
+      ok = dn != null && directory.authenticate(dn, password);
+    } catch (RuntimeException e) {
+      throttle.undo(throttleKey);
+      throw e;
+    }
+    if (!ok) {
       event.anonymous(attempted).failed(dn == null ? "Unknown user" : "Wrong password");
       if (count == maxFailures) {
         long minutes = Math.max(1, windowMs() / 60_000);
@@ -97,7 +105,7 @@ public class AuthService {
       }
       throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
     }
-    failures.remove(throttleKey);
+    throttle.clear(throttleKey);
     SessionUser user = buildUser(dn, username, "password", null);
     event.by(user).target("user", user.dn(), user.displayName()).success();
     return user;
@@ -107,18 +115,9 @@ public class AuthService {
     return props.getLogin().getLockoutWindow().toMillis();
   }
 
-  private int recordFailure(String key) {
-    long now = System.currentTimeMillis();
-    long window = windowMs();
-    return failures.compute(key, (k, f) -> f == null || now - f.first() > window ? new Failures(1, now) : new Failures(f.count() + 1, f.first()))
-        .count();
-  }
-
   @Scheduled(fixedDelay = 60_000)
   void sweepFailures() {
-    long now = System.currentTimeMillis();
-    long window = windowMs();
-    failures.entrySet().removeIf(e -> now - e.getValue().first() > window);
+    throttle.sweep(windowMs());
   }
 
   public SessionUser buildUser(String dn, String username, String authMethod, String certificateSubject) {

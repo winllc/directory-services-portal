@@ -53,6 +53,11 @@ sudo systemctl restart directory-services-portal
   127.0.0.1:3001 too, which is why the address alone is not trusted. To change the secret, write a
   new value to `proxy-secret` and run `install.sh` again (it rewrites nginx's copy), then restart
   the API.
+- Single sign-on: set `PORTAL_PUBLIC_URL` (e.g. `https://portal.example.com`) and `PUBLIC_HOST`
+  (its host[:port]) in `portal.env` and run `install.sh` again: it writes `PUBLIC_HOST` into the
+  nginx site as `X-Forwarded-Host`, so a client's `Host` header can't change the redirect URI or
+  SAML entity id. Behind your own web server, send that fixed host as `X-Forwarded-Host` and drop
+  client `Forwarded`, `X-Forwarded-Prefix` and `X-Forwarded-Port` headers.
 - With SELinux enforcing, nginx needs `setsebool -P httpd_can_network_connect 1` to reach the API.
 - Upgrade: run the new package's `install.sh`; settings and data are kept. It generates the X.509
   proxy secret if there is none yet; restart the API afterwards

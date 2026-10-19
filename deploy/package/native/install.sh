@@ -98,6 +98,15 @@ if command -v nginx >/dev/null; then
   conf=/etc/nginx/conf.d/directory-services-portal.conf
   [ -d /etc/nginx/conf.d ] || conf=/etc/nginx/sites-enabled/directory-services-portal.conf
   install -m 644 nginx/directory-services-portal.conf "$conf"
+  # PUBLIC_HOST in portal.env: the host[:port] users open, sent to the API as X-Forwarded-Host
+  # (redirect URIs and the SAML entity id) instead of the client's Host header.
+  public_host=$(sed -n 's/^PUBLIC_HOST=//p' "$ETC/portal.env" | tail -n 1 | tr -d '"'"'"' ')
+  case "$public_host" in
+    "") ;;
+    *[!A-Za-z0-9.:-]*) say "PUBLIC_HOST in $ETC/portal.env must be a host name with an optional :port; ignored" ;;
+    *) sed -i "s|proxy_set_header X-Forwarded-Host \"\$http_host\";|proxy_set_header X-Forwarded-Host \"$public_host\";|" "$conf"
+       say "nginx sends X-Forwarded-Host $public_host (PUBLIC_HOST)" ;;
+  esac
   nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || say "Check the nginx configuration ($conf): nginx -t"
   say "nginx serves the portal on port 8080 ($conf)"
   if command -v getenforce >/dev/null && [ "$(getenforce)" = Enforcing ]; then

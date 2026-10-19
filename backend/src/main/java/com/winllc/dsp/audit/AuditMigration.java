@@ -44,7 +44,7 @@ final class AuditMigration {
     this.audit = audit;
   }
 
-  void run(AuditStore store) {
+  void run(FileAuditStore store) {
     Path legacy = store.dir().resolve(LEGACY_DIR);
     try {
       for (Path f : store.legacyFiles()) {
@@ -94,10 +94,10 @@ final class AuditMigration {
   }
 
   /** True when the store is empty, or holds only a previous, interrupted migration (removed here). */
-  private static boolean removePartialMigration(AuditStore store) throws IOException {
+  private static boolean removePartialMigration(FileAuditStore store) throws IOException {
     List<Path> files = store.storeFiles();
     for (Path f : files) {
-      for (String l : AuditStore.readLines(f)) {
+      for (String l : FileAuditStore.readLines(f)) {
         if (!l.isBlank() && !l.contains("\"migrated\":true")) return false;
       }
     }
