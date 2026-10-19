@@ -136,10 +136,13 @@ The portal is proprietary to ENS Solutions (`LicenseRef-ENS-Commercial`, see [LI
 using it requires a license.
 
 The portal runs under a license file issued by the **ENS licensing portal** (format
-`ens-license/1`, product id `directory-portal`) and checked offline against the ENS public key
+`ens-license/1`, product id `directory-portal`) and checked offline against the ENS public keys
 built into the API (`backend/src/main/java/com/winllc/dsp/license/EnsKeys.java`; never
-configurable). The verifier is the ENS library in `com.enssolutions.license`, copied unchanged
-from the products-page repository (`licensing/java`). For a trial or the demo, download an
+configurable): the Ed25519 key `dabdc531a28916c5` and, from this release, the ECDSA P-256 key
+`e0a2e4ff9c4f5bfc` (see [License verification under FIPS](#license-verification-under-fips)). The
+verifier is the ENS library `ens-license` 1.2.0 in `com.enssolutions.license`, copied unchanged
+from the products-page repository (`licensing/java`); the API keeps the license on its local
+volume as before. For a trial or the demo, download an
 evaluation license from your account on the ENS portal.
 
 **Modes** (from the license's state):
@@ -756,8 +759,21 @@ is on:
 
 ### License verification under FIPS
 
-Pending: the ENS license library verifies license signatures with the JDK's Ed25519; its results
-on a FIPS-enabled host will be recorded here.
+A Java runtime in FIPS mode has no Ed25519 (Red Hat's OpenJDK on a `fips=1` host, BouncyCastle
+FIPS in approved-only mode), so it cannot check an Ed25519 license signature. From this release
+the API also trusts the ENS production **ECDSA P-256** key (key id `e0a2e4ff9c4f5bfc`), which FIPS
+runtimes verify, and the license library (`ens-license` 1.2.0) accepts a license file carrying
+either signature or both:
+
+- A license file signed with both keys (what the ENS portal issues once P-256 signing is on for
+  your account) works on every host, FIPS or not.
+- A license file issued **before ENS enabled P-256 signing** carries only the Ed25519 signature.
+  It keeps working on hosts without FIPS mode; on a FIPS host the API refuses it (`UNSUPPORTED_ALGORITHM`: "signed only
+  with Ed25519, which this Java runtime does not provide"). Download the license again from
+  your account on the ENS portal (a re-signed copy with the P-256 signature) and install it as
+  usual (`./portal.sh license <file>`, the license screen, or the license volume/PVC).
+- Upgrading needs no other change: the Ed25519 key stays trusted and existing license files and
+  state are read as before.
 
 ## Security notes
 - LDAP filters are built with the UnboundID filter API, which escapes every user-supplied value.
