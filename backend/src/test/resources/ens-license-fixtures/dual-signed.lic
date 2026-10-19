@@ -1,0 +1,54 @@
+# ENS Solutions license file
+# This file is signed. Any change to the blocks below makes it invalid.
+#
+# Product:      CertAlert
+# Edition:      Subscription
+# Licensee:     Pat Rivera, Example Agency
+# Covers:       10,000 directory users
+# Valid from:   2026-10-14
+# Expires:      2027-10-14
+# License id:   lic_00000000000000000004 (revision 1)
+# Signatures:   Ed25519, ECDSA P-256 (one block each, same license).
+#               Java in FIPS mode uses the ECDSA P-256 one. Keep them all.
+-----BEGIN ENS LICENSE-----
+324be2dea8bc4446.eyJmb3JtYXQiOiJlbnMtbGljZW5zZS8xIiwiaWQiOiJsaWN
+fMDAwMDAwMDAwMDAwMDAwMDAwMDQiLCJyZXZpc2lvbiI6MSwiaXNzdWVyIjoiRU5
+TIFNvbHV0aW9ucywgTExDIiwicHJvZHVjdCI6ImNlcnRhbGVydCIsImVkaXRpb24
+iOiJzdWJzY3JpcHRpb24iLCJsaWNlbnNlZSI6eyJuYW1lIjoiUGF0IFJpdmVyYSI
+sIm9yZ2FuaXphdGlvbiI6IkV4YW1wbGUgQWdlbmN5IiwiZW1haWwiOiJwYXRAZXh
+hbXBsZS5nb3YifSwibGltaXQiOnsicXVhbnRpdHkiOjEwMDAwLCJ1bml0IjoiZGl
+yZWN0b3J5IHVzZXJzIn0sImZlYXR1cmVzIjpbImNlcnRhbGVydC5kaXJlY3Rvcnk
+tc3luYyIsImNlcnRhbGVydC5jaGFuZ2Vsb2ctc3luYyIsImNlcnRhbGVydC5ub3R
+pZmljYXRpb25zIiwiY2VydGFsZXJ0Lm1ldHJpY3MiLCJjZXJ0YWxlcnQucHJvamV
+jdHMiLCJjZXJ0YWxlcnQucmV2b2NhdGlvbi1jaGVja3MiLCJjZXJ0YWxlcnQuZW5
+kcG9pbnQtY2hlY2tzIiwiY2VydGFsZXJ0LnJpc2t5LW5hbWVzIiwiY2VydGFsZXJ
+0LmRpcmVjdG9yeS1jbGVhbnVwIiwiY2VydGFsZXJ0LmNsYXNzaWZpY2F0aW9uLWJ
+hbm5lcnMiXSwic3VwcG9ydCI6Im1pc3Npb24iLCJpc3N1ZWRBdCI6IjIwMjYtMTA
+tMTRUMDA6MDA6MDAuMDAwWiIsIm5vdEJlZm9yZSI6IjIwMjYtMTAtMTRUMDA6MDA
+6MDAuMDAwWiIsImV4cGlyZXNBdCI6IjIwMjctMTAtMTRUMDA6MDA6MDAuMDAwWiI
+sImdyYWNlRGF5cyI6MzAsIm1haW50ZW5hbmNlVW50aWwiOm51bGwsImluc3RhbGx
+hdGlvbklkIjpudWxsLCJ3YXRlcm1hcmsiOmZhbHNlfQ.oFElAWTZNhGzqbjrLG3z
+NB88uDAAp5jzPRKhiTiAiT8-9RrwLD4AdCDtf8xo9ldUjEOzQkybQXgBQjqaU3mL
+Cw
+-----END ENS LICENSE-----
+-----BEGIN ENS LICENSE-----
+ce97ec20d43661a1.eyJmb3JtYXQiOiJlbnMtbGljZW5zZS8xIiwiaWQiOiJsaWN
+fMDAwMDAwMDAwMDAwMDAwMDAwMDQiLCJyZXZpc2lvbiI6MSwiaXNzdWVyIjoiRU5
+TIFNvbHV0aW9ucywgTExDIiwicHJvZHVjdCI6ImNlcnRhbGVydCIsImVkaXRpb24
+iOiJzdWJzY3JpcHRpb24iLCJsaWNlbnNlZSI6eyJuYW1lIjoiUGF0IFJpdmVyYSI
+sIm9yZ2FuaXphdGlvbiI6IkV4YW1wbGUgQWdlbmN5IiwiZW1haWwiOiJwYXRAZXh
+hbXBsZS5nb3YifSwibGltaXQiOnsicXVhbnRpdHkiOjEwMDAwLCJ1bml0IjoiZGl
+yZWN0b3J5IHVzZXJzIn0sImZlYXR1cmVzIjpbImNlcnRhbGVydC5kaXJlY3Rvcnk
+tc3luYyIsImNlcnRhbGVydC5jaGFuZ2Vsb2ctc3luYyIsImNlcnRhbGVydC5ub3R
+pZmljYXRpb25zIiwiY2VydGFsZXJ0Lm1ldHJpY3MiLCJjZXJ0YWxlcnQucHJvamV
+jdHMiLCJjZXJ0YWxlcnQucmV2b2NhdGlvbi1jaGVja3MiLCJjZXJ0YWxlcnQuZW5
+kcG9pbnQtY2hlY2tzIiwiY2VydGFsZXJ0LnJpc2t5LW5hbWVzIiwiY2VydGFsZXJ
+0LmRpcmVjdG9yeS1jbGVhbnVwIiwiY2VydGFsZXJ0LmNsYXNzaWZpY2F0aW9uLWJ
+hbm5lcnMiXSwic3VwcG9ydCI6Im1pc3Npb24iLCJpc3N1ZWRBdCI6IjIwMjYtMTA
+tMTRUMDA6MDA6MDAuMDAwWiIsIm5vdEJlZm9yZSI6IjIwMjYtMTAtMTRUMDA6MDA
+6MDAuMDAwWiIsImV4cGlyZXNBdCI6IjIwMjctMTAtMTRUMDA6MDA6MDAuMDAwWiI
+sImdyYWNlRGF5cyI6MzAsIm1haW50ZW5hbmNlVW50aWwiOm51bGwsImluc3RhbGx
+hdGlvbklkIjpudWxsLCJ3YXRlcm1hcmsiOmZhbHNlfQ.MEQCICtg_kpA1xolpdK6
+GADg5WkWljK82bGFDsqB7HcAja_9AiBGKSEX9EMxa4tgktMbp5YtAOeupz09Oko4
+jbq4D92lBA
+-----END ENS LICENSE-----

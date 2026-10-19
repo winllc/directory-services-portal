@@ -1,4 +1,4 @@
-// Copied unchanged from products-page licensing/java (the ENS license verifier library).
+// Copied unchanged from products-page licensing/java 1.2.0 (the ENS license verifier library).
 package com.enssolutions.license;
 
 /** Where a license stands for this application, right now. */

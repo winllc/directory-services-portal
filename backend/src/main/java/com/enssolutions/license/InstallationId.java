@@ -1,15 +1,13 @@
-// Copied unchanged from products-page licensing/java (the ENS license verifier library).
+// Copied unchanged from products-page licensing/java 1.2.0 (the ENS license verifier library).
 package com.enssolutions.license;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Map;
 
 /**
- * This installation's id, made once and kept in the state directory: a
+ * This installation's id, made once and kept in the {@link LicenseStore}: a
  * product prefix and eight random characters, e.g. "CA-7F3K-29QD". The
  * application shows it on its license screen; a customer enters it in their
  * account to bind a license to this installation.
@@ -26,17 +24,12 @@ public final class InstallationId {
     private InstallationId() {}
 
     public static String loadOrCreate(Path stateDir, String product) throws IOException {
-        Path file = stateDir.resolve("installation-id");
-        if (Files.exists(file)) {
-            String id = Files.readString(file, StandardCharsets.UTF_8).trim();
-            if (!id.isEmpty()) return id;
-        }
-        Files.createDirectories(stateDir);
-        String id = generate(product, new SecureRandom());
-        Path tmp = Files.createTempFile(stateDir, "installation-id", ".tmp");
-        Files.writeString(tmp, id + "\n", StandardCharsets.UTF_8);
-        Files.move(tmp, file, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        return id;
+        return new FileLicenseStore(stateDir.resolve("unused.lic"), stateDir).installationId(generate(product, new SecureRandom()));
+    }
+
+    /** A new id for this product, e.g. "CA-7F3K-29QD". */
+    public static String generate(String product) {
+        return generate(product, new SecureRandom());
     }
 
     static String generate(String product, SecureRandom random) {
