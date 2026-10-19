@@ -1,5 +1,6 @@
 package com.winllc.dsp.audit;
 
+import com.winllc.dsp.cluster.Cluster;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.SessionUser;
@@ -70,7 +71,7 @@ public class AuditLog {
   private volatile String installationId;
 
   public AuditLog(JsonMapper mapper, PortalProperties props, ObjectProvider<BuildProperties> build, ObjectProvider<Licensing> licensing,
-      ObjectProvider<MeterRegistry> meters) {
+      ObjectProvider<MeterRegistry> meters, Cluster cluster) {
     this.mapper = mapper;
     this.licensing = licensing;
     this.meters = meters;
@@ -79,9 +80,18 @@ public class AuditLog {
     this.host = hostname();
     String configured = props.getAudit().getDir();
     Path dir = configured == null || configured.isBlank() ? Path.of(props.getDataDir()).resolve("audit") : Path.of(configured);
-    this.store = new AuditStore(dir);
-    new AuditMigration(mapper, this).run(store);
-    log.info("Audit store at {}; chain head seq {}", store.dir(), store.headSeq());
+    FileAuditStore files = new FileAuditStore(dir);
+    new AuditMigration(mapper, this).run(files);
+    if (cluster.shared()) {
+      // Replicas share one chain in the database; the files of a single-instance past are copied in once.
+      JdbcAuditStore shared = new JdbcAuditStore(cluster, dir);
+      shared.importFrom(files);
+      this.store = shared;
+      log.info("Audit store in the shared database; chain head seq {}", store.headSeq());
+    } else {
+      this.store = files;
+      log.info("Audit store at {}; chain head seq {}", store.dir(), store.headSeq());
+    }
   }
 
   public AuditStore store() {

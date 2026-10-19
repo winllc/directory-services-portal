@@ -24,9 +24,14 @@ public class RequestHeaderCsrfFilter extends OncePerRequestFilter {
     this.denials = denials;
   }
 
+  /**
+   * The SAML IdP's response is a cross-site form post (it can't carry the header); it is bound to
+   * this browser's sign-in request instead (its InResponseTo, RelayState and the DSP_SSO cookie).
+   */
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    return !request.getRequestURI().startsWith("/api/") || SAFE.contains(request.getMethod());
+    String uri = request.getRequestURI();
+    return !uri.startsWith("/api/") || SAFE.contains(request.getMethod()) || uri.startsWith(com.winllc.dsp.sso.SsoSecurity.SAML_ACS);
   }
 
   @Override

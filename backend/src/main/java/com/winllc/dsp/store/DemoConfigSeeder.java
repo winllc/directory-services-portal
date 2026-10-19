@@ -40,11 +40,13 @@ public class DemoConfigSeeder implements ApplicationRunner {
   public void run(ApplicationArguments args) throws IOException {
     if (!store.snapshot().isEmpty() || !props.shouldSeedDemoConfig()) return;
     DemoConfig demo = load(mapper);
-    store.update(d -> {
+    // Checked again inside the update: another replica sharing the database may have seeded it.
+    boolean seeded = store.update(d -> {
+      if (!d.isEmpty()) return false;
       apply(demo, d);
-      return null;
+      return true;
     });
-    log.info("Seeded demo forms, directories, permissions, dashboards and analyses");
+    if (seeded) log.info("Seeded demo forms, directories, permissions, dashboards and analyses");
   }
 
   public static DemoConfig load(JsonMapper mapper) throws IOException {

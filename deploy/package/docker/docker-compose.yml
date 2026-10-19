@@ -70,6 +70,8 @@ services:
       # (X509_EDGE_TERMINATION=true; then make sure nothing else can reach the web service).
       X509_HEADER: ${X509_HEADER:-X-SSL-Client-Cert}
       X509_EDGE_TERMINATION: ${X509_EDGE_TERMINATION:-false}
+      # The public host:port sent to the API as X-Forwarded-Host (empty: the client's Host).
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
     expose:
       - "8080"
     healthcheck:

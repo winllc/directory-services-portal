@@ -1,7 +1,8 @@
 #!/bin/sh
 # Renders ${NGINX_ENVSUBST_TEMPLATE_DIR}/*.template into /opt/app-root/etc/dsp.d/*.conf, then runs
 # the command (nginx). Only the variables below are substituted, so nginx's own $variables are
-# left alone. Settings: API_URL, HTTPS_PORT_SUFFIX, NGINX_LOCAL_RESOLVERS, ENS_CSP_REPORT_ONLY and,
+# left alone. Settings: API_URL, HTTPS_PORT_SUFFIX, NGINX_LOCAL_RESOLVERS, ENS_CSP_REPORT_ONLY,
+# PUBLIC_HOST and,
 # for X.509 sign-in, X509_PROXY_SECRET_FILE / X509_PROXY_SECRET, X509_HEADER and X509_EDGE_TERMINATION.
 set -eu
 
@@ -32,6 +33,18 @@ case "${ENS_CSP_REPORT_ONLY:-false}" in
         exit 1 ;;
 esac
 export DSP_CSP_HEADER
+
+# The host (and port) users reach the portal at, sent to the API as X-Forwarded-Host (redirect
+# URIs and the SAML entity id are built from it). Set PUBLIC_HOST (e.g. portal.example.com) so a
+# client's Host header can't choose it; empty: the Host the client sent, as before.
+case "${PUBLIC_HOST:-}" in
+    "") DSP_FORWARDED_HOST='$http_host' ;;
+    *[!A-Za-z0-9.:-]*)
+        echo "dsp-entrypoint: PUBLIC_HOST must be a host name with an optional :port" >&2
+        exit 1 ;;
+    *) DSP_FORWARDED_HOST="$PUBLIC_HOST" ;;
+esac
+export DSP_FORWARDED_HOST
 
 # The proxy secret, sent to the API in X-DSP-Proxy-Secret with every request in place of any
 # value a client sent: from X509_PROXY_SECRET_FILE (preferred) or X509_PROXY_SECRET. The API
@@ -96,7 +109,7 @@ for template in "$template_dir"/*.template; do
     name=$(basename "$template" .template)
     # Owner-only: the rendered config holds the proxy secret.
     # shellcheck disable=SC2016 # the variables envsubst may replace
-    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS}' \
+    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS} ${DSP_FORWARDED_HOST}' \
         < "$template" > "$output_dir/$name")
     echo "dsp-entrypoint: rendered $template -> $output_dir/$name" >&2
     found=1

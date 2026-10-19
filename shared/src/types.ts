@@ -254,7 +254,7 @@ export interface SessionUser {
   groups: string[];
   isAdmin: boolean;
   /** How the user signed in. */
-  authMethod?: 'password' | 'x509';
+  authMethod?: 'password' | 'x509' | 'oidc' | 'saml';
   /** Subject DN of the client certificate, for certificate sign-ins. */
   certificateSubject?: string;
 }
@@ -274,6 +274,13 @@ export interface SelfEntryResult {
   error?: string;
 }
 
+/** A single sign-on provider offered on the login page; the browser navigates to {@link url}. */
+export interface SsoOption {
+  id: string;
+  label: string;
+  url: string;
+}
+
 export interface ServerInfo {
   mode: 'ldap' | 'memory';
   /** Administrators only. */
@@ -285,7 +292,7 @@ export interface ServerInfo {
   error?: string;
   version: string;
   /** Sign-in methods offered by the server. */
-  auth?: { password: boolean; x509: boolean; x509AutoLogin: boolean };
+  auth?: { password: boolean; x509: boolean; x509AutoLogin: boolean; sso?: SsoOption[] };
   /** Text shown on the login page, e.g. demo credentials. */
   loginHint?: string;
   /** Fixed banner shown at the top and bottom of every page (absent when disabled). */

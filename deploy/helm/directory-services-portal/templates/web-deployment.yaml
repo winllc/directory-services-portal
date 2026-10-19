@@ -63,6 +63,11 @@ spec:
             # Fully qualified: nginx resolves it at request time without DNS search domains.
             - name: API_URL
               value: {{ printf "http://%s.%s.svc.%s:%v" (include "dsp.apiName" .) .Release.Namespace $v.clusterDomain (include "dsp.str" $v.api.service.port) | quote }}
+            {{- if $v.server.publicUrl }}
+            # X-Forwarded-Host for the API: the configured public host, not the client's Host.
+            - name: PUBLIC_HOST
+              value: {{ regexReplaceAll "^[a-zA-Z]+://([^/]+).*$" $v.server.publicUrl "${1}" | quote }}
+            {{- end }}
             {{- if $v.tls.enabled }}
             # HTTPS on 8443 with optional client certificates; 8080 redirects to HTTPS.
             - name: NGINX_ENVSUBST_TEMPLATE_DIR

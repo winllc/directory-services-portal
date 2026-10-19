@@ -19,8 +19,11 @@ public class InfoController {
   private final PortalProperties props;
   private final X509AuthService x509;
   private final ConsentService consent;
+  private final com.winllc.dsp.sso.SsoSecurity sso;
 
-  public InfoController(LdapDirectory directory, PortalProperties props, X509AuthService x509, ConsentService consent) {
+  public InfoController(LdapDirectory directory, PortalProperties props, X509AuthService x509, ConsentService consent,
+      com.winllc.dsp.sso.SsoSecurity sso) {
+    this.sso = sso;
     this.directory = directory;
     this.props = props;
     this.x509 = x509;
@@ -56,7 +59,8 @@ public class InfoController {
     String hint = props.getLoginHint() == null || props.getLoginHint().isBlank() ? null : props.getLoginHint();
     ServerInfo.AuthOptions auth = new ServerInfo.AuthOptions(
         // Certificate sign-in is offered only when the license includes it (smart-card-sign-in).
-        props.isPasswordLoginEnabled(), x509.available(), x509.available() && props.getX509().isAutoLogin());
+        props.isPasswordLoginEnabled(), x509.available(), x509.available() && props.getX509().isAutoLogin(),
+        sso.options().stream().map(o -> new ServerInfo.Sso(o.id(), o.label(), o.url())).toList());
     ServerInfo.Consent notice = consent.enabled() ? new ServerInfo.Consent(consent.title(), consent.text()) : null;
     try {
       directory.ping();
