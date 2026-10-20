@@ -178,9 +178,9 @@ jobs:
     needs: [api-test, web-test, helm]
 
     permissions:
-      contents: read
+      contents: write
       packages: write
-      # Keyless signing of release images and the chart (cosign, GitHub OIDC).
+      # Attach bundle assets to GitHub Releases and keylessly sign images and the chart.
       id-token: write
 
     env:
@@ -369,6 +369,7 @@ jobs:
           echo "file=$RUNNER_TEMP/chart/directory-services-portal-$VERSION.tgz" >> "$GITHUB_OUTPUT"
 
       - name: Build the release bundle
+        id: release-bundle
         if: steps.bundle.outputs.enabled == 'true'
         env:
           VERSION: ${{ steps.bundle.outputs.version }}
@@ -458,9 +459,22 @@ jobs:
           compression-level: 0
           retention-days: ${{ steps.bundle.outputs.release == 'true' && 30 || 3 }}
 
+      - name: Publish bundle assets to the GitHub Release
+        id: github-release
+        if: always() && steps.bundle.outputs.release == 'true' && steps.release-bundle.outcome == 'success' && steps.sign.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          OUT: ${{ steps.bundle.outputs.dir }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$TAG"
+          fi
+          gh release upload "$TAG" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
+
       - name: Upload the bundle to the release bucket
         id: upload
-        if: steps.bundle.outputs.release == 'true' && env.S3_BUCKET != '' && env.HAS_AWS == 'true'
+        if: always() && steps.bundle.outputs.release == 'true' && steps.release-bundle.outcome == 'success' && steps.sign.outcome != 'failure' && env.S3_BUCKET != '' && env.HAS_AWS == 'true'
         env:
           VERSION: ${{ steps.bundle.outputs.version }}
           OUT: ${{ steps.bundle.outputs.dir }}
@@ -483,9 +497,11 @@ jobs:
         if: always() && steps.bundle.outputs.enabled == 'true'
         env:
           VERSION: ${{ steps.bundle.outputs.version }}
+          TAG: ${{ github.ref_name }}
           RELEASE: ${{ steps.bundle.outputs.release }}
           OUT: ${{ steps.bundle.outputs.dir }}
           SIGN_OUTCOME: ${{ steps.sign.outcome }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.github-release.outcome }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           {
@@ -502,6 +518,8 @@ jobs:
             if [ "$SIGN_OUTCOME" = success ]; then echo "- Signed: yes (\`SHA256SUMS.asc\`)"
             elif [ "$HAS_GPG" != true ]; then echo "- Signed: **no**, the \`RELEASE_GPG_PRIVATE_KEY\` secret is not set"
             else echo "- Signed: **no**, signing $SIGN_OUTCOME"; fi
+            if [ "$GITHUB_RELEASE_OUTCOME" = success ]; then echo "- GitHub Release: assets uploaded to \`$TAG\`"
+            elif [ "$RELEASE" = true ]; then echo "- GitHub Release: upload $GITHUB_RELEASE_OUTCOME"; fi
             if [ "$UPLOAD_OUTCOME" = success ]; then
               echo "- Uploaded to \`s3://$S3_BUCKET/directory-services-portal/$VERSION/\`"
               if [[ "$VERSION" != *-* ]]; then echo "  and \`latest.txt\` set to $VERSION"; fi
