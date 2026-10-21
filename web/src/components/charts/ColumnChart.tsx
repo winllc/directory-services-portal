@@ -66,6 +66,7 @@ export function ColumnChart({ rows, label, valueLabel = 'entries', xLabel }: { r
               <g
                 key={r.key + i}
                 tabIndex={0}
+                role="img"
                 aria-label={`${r.label}: ${exact(r.value)}`}
                 className={active !== null && active !== i ? 'viz-dim' : undefined}
                 onPointerMove={(e) => {

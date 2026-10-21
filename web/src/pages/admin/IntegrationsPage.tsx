@@ -170,60 +170,62 @@ function TokensTab() {
       </form>
       <ErrorAlert error={create.error ?? tokens.error ?? revoke.error} />
 
-      <div className="table-wrap">
-        <table className="table" aria-label="Integration API tokens">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Token</th>
-              <th scope="col">Scopes</th>
-              <th scope="col">Created</th>
-              <th scope="col">Expires</th>
-              <th scope="col">Last used</th>
-              <th scope="col">Status</th>
-              <th scope="col">
-                <span className="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {tokens.data?.map((t) => (
-              <tr key={t.id}>
-                <td>{t.name}</td>
-                <td>
-                  <code>{t.prefix}…</code>
-                </td>
-                <td className="small">{t.scopes.join(', ')}</td>
-                <td className="small">
-                  <Time iso={t.createdAt} /> <span className="muted">by {t.createdBy}</span>
-                </td>
-                <td className="small">
-                  <Time iso={t.expiresAt} />
-                </td>
-                <td className="small">{t.lastUsedAt ? <Time iso={t.lastUsedAt} /> : <span className="muted">Never</span>}</td>
-                <td>
-                  <Badge tone={tokenTone(t)} title={t.revokedAt ? `Revoked ${t.revokedAt} by ${t.revokedBy}` : undefined}>
-                    {t.status === 'active' ? 'Active' : t.status === 'expired' ? 'Expired' : 'Revoked'}
-                  </Badge>
-                </td>
-                <td className="cell-actions">
-                  {t.status !== 'revoked' && (
-                    <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={() => setRevoking(t)} aria-label={`Revoke ${t.name}`}>
-                      Revoke
-                    </Button>
-                  )}
-                </td>
+      {!!tokens.data?.length && (
+        <div className="table-wrap">
+          <table className="table" aria-label="Integration API tokens">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Token</th>
+                <th scope="col">Scopes</th>
+                <th scope="col">Created</th>
+                <th scope="col">Expires</th>
+                <th scope="col">Last used</th>
+                <th scope="col">Status</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {tokens.isLoading && <Spinner />}
-        {tokens.data?.length === 0 && (
-          <EmptyState icon={<KeyRound size={28} />} title="No API tokens">
-            Create one for each system that reads or changes the directory through the API.
-          </EmptyState>
-        )}
-      </div>
+            </thead>
+            <tbody>
+              {tokens.data?.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.name}</td>
+                  <td>
+                    <code>{t.prefix}…</code>
+                  </td>
+                  <td className="small">{t.scopes.join(', ')}</td>
+                  <td className="small">
+                    <Time iso={t.createdAt} /> <span className="muted">by {t.createdBy}</span>
+                  </td>
+                  <td className="small">
+                    <Time iso={t.expiresAt} />
+                  </td>
+                  <td className="small">{t.lastUsedAt ? <Time iso={t.lastUsedAt} /> : <span className="muted">Never</span>}</td>
+                  <td>
+                    <Badge tone={tokenTone(t)} title={t.revokedAt ? `Revoked ${t.revokedAt} by ${t.revokedBy}` : undefined}>
+                      {t.status === 'active' ? 'Active' : t.status === 'expired' ? 'Expired' : 'Revoked'}
+                    </Badge>
+                  </td>
+                  <td className="cell-actions">
+                    {t.status !== 'revoked' && (
+                      <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={() => setRevoking(t)} aria-label={`Revoke ${t.name}`}>
+                        Revoke
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {tokens.isLoading && <Spinner />}
+      {tokens.data?.length === 0 && (
+        <EmptyState icon={<KeyRound size={28} />} title="No API tokens">
+          Create one for each system that reads or changes the directory through the API.
+        </EmptyState>
+      )}
 
       <SecretModal title="Token created" what="token" secret={secret} onClose={() => setSecret(null)} />
       <ConfirmDialog

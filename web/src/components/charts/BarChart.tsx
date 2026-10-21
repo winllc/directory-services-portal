@@ -64,6 +64,7 @@ export function BarChart({ rows, percent, label }: { rows: BarDatum[]; percent?:
               <g
                 key={r.key + i}
                 tabIndex={0}
+                role="img"
                 className={active && active !== r.key ? 'viz-dim' : undefined}
                 aria-label={`${r.label}: ${text(r)}`}
                 onPointerMove={(e) => {
