@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.core.type.TypeReference;
@@ -91,11 +92,11 @@ public class FileDeliveries implements Deliveries {
   }
 
   @Override
-  public synchronized List<Delivery> claim(Instant now, int limit, Duration lease) {
+  public synchronized List<Delivery> claim(Instant now, int limit, Duration lease, Set<String> skip) {
     List<Delivery> out = new ArrayList<>();
     for (int i = 0; i < all.size() && out.size() < limit; i++) {
       Delivery d = all.get(i);
-      if (!PENDING.equals(d.status()) || d.nextAttemptAt().isAfter(now)) continue;
+      if (!PENDING.equals(d.status()) || d.nextAttemptAt().isAfter(now) || skip.contains(d.webhookId())) continue;
       Delivery claimed = new Delivery(d.id(), d.webhookId(), d.eventId(), d.eventType(), d.payload(), d.status(), d.attempts() + 1,
           now.plus(lease), d.createdAt(), d.lastAttemptAt(), d.lastStatus(), d.lastError(), d.deliveredAt());
       all.set(i, claimed);
@@ -103,6 +104,21 @@ public class FileDeliveries implements Deliveries {
     }
     if (!out.isEmpty()) save();
     return out;
+  }
+
+  @Override
+  public synchronized int postpone(String webhookId, Instant until) {
+    int moved = 0;
+    for (int i = 0; i < all.size(); i++) {
+      Delivery d = all.get(i);
+      if (d.webhookId().equals(webhookId) && PENDING.equals(d.status()) && d.nextAttemptAt().isBefore(until)) {
+        all.set(i, new Delivery(d.id(), d.webhookId(), d.eventId(), d.eventType(), d.payload(), d.status(), d.attempts(), until, d.createdAt(),
+            d.lastAttemptAt(), d.lastStatus(), d.lastError(), d.deliveredAt()));
+        moved++;
+      }
+    }
+    if (moved > 0) save();
+    return moved;
   }
 
   @Override

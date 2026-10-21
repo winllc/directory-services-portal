@@ -55,6 +55,7 @@ data:
   WEBHOOKS_ENABLED: {{ $v.integrations.webhooks.enabled | quote }}
   WEBHOOK_ALLOWED_HOSTS: {{ include "dsp.joinSemi" $v.integrations.webhooks.allowedHosts | quote }}
   WEBHOOK_MAX_ATTEMPTS: {{ include "dsp.str" $v.integrations.webhooks.maxAttempts | quote }}
+  WEBHOOK_RUN_BUDGET: {{ $v.integrations.webhooks.runBudget | quote }}
   EXPORT_MAX_ENTRIES: {{ include "dsp.str" $v.integrations.transfer.exportMaxEntries | quote }}
   IMPORT_MAX_BYTES: {{ include "dsp.str" $v.integrations.transfer.importMaxBytes | quote }}
   IMPORT_MAX_ROWS: {{ include "dsp.str" $v.integrations.transfer.importMaxRows | quote }}

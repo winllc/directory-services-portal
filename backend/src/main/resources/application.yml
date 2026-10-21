@@ -183,6 +183,8 @@ portal:
       read-timeout: ${WEBHOOK_READ_TIMEOUT:10s}
       # The most one delivery attempt may take in all.
       send-timeout: ${WEBHOOK_SEND_TIMEOUT:20s}
+      # How long one delivery run starts attempts for (none starts after it).
+      run-budget: ${WEBHOOK_RUN_BUDGET:40s}
       log-retention: ${WEBHOOK_LOG_RETENTION:30d}
     transfer:
       export-max-entries: ${EXPORT_MAX_ENTRIES:10000}

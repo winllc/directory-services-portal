@@ -55,6 +55,11 @@ public class IntegrationProperties {
     private Duration readTimeout = Duration.ofSeconds(10);
     /** The most one delivery attempt may take in all (connect, handshake, request, answer). */
     private Duration sendTimeout = Duration.ofSeconds(20);
+    /**
+     * How long one delivery run (every couple of seconds) starts attempts for: none starts after
+     * it, so a run ends within this plus one send-timeout.
+     */
+    private Duration runBudget = Duration.ofSeconds(40);
     /** How long finished deliveries stay in the delivery log. */
     private Duration logRetention = Duration.ofDays(30);
 
@@ -71,6 +76,8 @@ public class IntegrationProperties {
     public Duration getLogRetention() { return logRetention; }
     public Duration getSendTimeout() { return sendTimeout; }
     public void setSendTimeout(Duration sendTimeout) { this.sendTimeout = sendTimeout; }
+    public Duration getRunBudget() { return runBudget; }
+    public void setRunBudget(Duration runBudget) { this.runBudget = runBudget; }
     public void setLogRetention(Duration logRetention) { this.logRetention = logRetention; }
 
     public List<String> allowedHostList() {

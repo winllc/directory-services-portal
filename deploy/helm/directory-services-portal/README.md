@@ -551,6 +551,7 @@ Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `SERVER_FORWARD_HEADERS_STRAT
 | `integrations.webhooks.enabled` | `WEBHOOKS_ENABLED` | `true` |
 | `integrations.webhooks.allowedHosts` | `WEBHOOK_ALLOWED_HOSTS` | `[]` (public addresses only; metadata addresses never) |
 | `integrations.webhooks.maxAttempts` | `WEBHOOK_MAX_ATTEMPTS` | `8` |
+| `integrations.webhooks.runBudget` | `WEBHOOK_RUN_BUDGET` | `40s` (no attempt starts later in a delivery run) |
 | `integrations.transfer.exportMaxEntries` | `EXPORT_MAX_ENTRIES` | `10000` |
 | `integrations.transfer.importMaxBytes` | `IMPORT_MAX_BYTES` (and the web tier's `MAX_BODY_SIZE`) | `5242880` |
 | `integrations.transfer.importMaxRows` / `.bulkMaxMembers` | `IMPORT_MAX_ROWS` / `BULK_MAX_MEMBERS` | `5000` / `5000` |

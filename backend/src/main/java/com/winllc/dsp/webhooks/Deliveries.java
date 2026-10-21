@@ -3,6 +3,7 @@ package com.winllc.dsp.webhooks;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The webhook outbox and delivery log. Alone, {@link FileDeliveries} (the data directory); with the
@@ -33,7 +34,22 @@ public interface Deliveries {
    * Due pending deliveries, each counted as an attempt and leased until {@code now + lease} (another
    * replica, or this one after a restart, retries it after that if no outcome was recorded).
    */
-  List<Delivery> claim(Instant now, int limit, Duration lease);
+  default List<Delivery> claim(Instant now, int limit, Duration lease) {
+    return claim(now, limit, lease, Set.of());
+  }
+
+  /**
+   * As {@link #claim(Instant, int, Duration)}, oldest due first, leaving the deliveries of the
+   * webhooks in {@code skip} alone (not claimed, not counted): those a delivery run is done with.
+   */
+  List<Delivery> claim(Instant now, int limit, Duration lease, Set<String> skip);
+
+  /**
+   * Moves a webhook's pending deliveries that are due before {@code until} to {@code until} (never
+   * earlier): its receiver gave no answer, so the whole webhook waits out the backoff, not one
+   * delivery at a time. Returns how many were moved.
+   */
+  int postpone(String webhookId, Instant until);
 
   /** Records an attempt's outcome. */
   void record(Delivery delivery);

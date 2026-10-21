@@ -6,7 +6,10 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -33,10 +36,12 @@ public class JdbcDeliveries implements Deliveries {
   }
 
   private static Delivery row(ResultSet rs, int i) throws SQLException {
+    // wasNull() is about the column read last, so it is asked here, not after the other columns.
     int status = rs.getInt("last_status");
+    Integer lastStatus = rs.wasNull() ? null : status;
     return new Delivery(rs.getString("id"), rs.getString("webhook_id"), rs.getString("event_id"), rs.getString("event_type"),
         rs.getString("payload"), rs.getString("status"), rs.getInt("attempts"), instant(rs, "next_attempt_at"), instant(rs, "created_at"),
-        instant(rs, "last_attempt_at"), rs.wasNull() ? null : status, rs.getString("last_error"), instant(rs, "delivered_at"));
+        instant(rs, "last_attempt_at"), lastStatus, rs.getString("last_error"), instant(rs, "delivered_at"));
   }
 
   @Override
@@ -50,10 +55,22 @@ public class JdbcDeliveries implements Deliveries {
   }
 
   @Override
-  public List<Delivery> claim(Instant now, int limit, Duration lease) {
+  public List<Delivery> claim(Instant now, int limit, Duration lease, Set<String> skip) {
+    // Ties (a webhook's deliveries postponed to one time) go to the oldest, so it is the one
+    // retried, and its backoff grows.
+    List<Object> args = new ArrayList<>(List.of(ts(now.plus(lease)), ts(now)));
+    args.addAll(skip);
+    args.add(limit);
+    String skipped = skip.isEmpty() ? "" : "AND webhook_id NOT IN (" + String.join(", ", Collections.nCopies(skip.size(), "?")) + ") ";
     return jdbc.query("UPDATE dsp_webhook_delivery SET attempts = attempts + 1, next_attempt_at = ? WHERE id IN ("
-        + "SELECT id FROM dsp_webhook_delivery WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at LIMIT ? "
-        + "FOR UPDATE SKIP LOCKED) RETURNING " + COLUMNS, JdbcDeliveries::row, ts(now.plus(lease)), ts(now), limit);
+        + "SELECT id FROM dsp_webhook_delivery WHERE status = 'pending' AND next_attempt_at <= ? " + skipped
+        + "ORDER BY next_attempt_at, created_at, id LIMIT ? FOR UPDATE SKIP LOCKED) RETURNING " + COLUMNS, JdbcDeliveries::row, args.toArray());
+  }
+
+  @Override
+  public int postpone(String webhookId, Instant until) {
+    return jdbc.update("UPDATE dsp_webhook_delivery SET next_attempt_at = ? WHERE webhook_id = ? AND status = 'pending' AND next_attempt_at < ?",
+        ts(until), webhookId, ts(until));
   }
 
   @Override

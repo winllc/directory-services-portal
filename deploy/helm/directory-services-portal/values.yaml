@@ -630,6 +630,10 @@ integrations:
     # regardless. Empty: public addresses only.
     allowedHosts: []
     maxAttempts: 8
+    # WEBHOOK_RUN_BUDGET: how long one delivery run (every couple of seconds) starts attempts for;
+    # a run ends within this plus one send timeout (20 s). A receiver that gives no answer is backed
+    # off as a whole, and one webhook gets at most 10 attempts and 20 s of a run.
+    runBudget: 40s
   transfer:
     exportMaxEntries: 10000
     # IMPORT_MAX_BYTES: the largest import file. The web tier's upload limit (MAX_BODY_SIZE) follows

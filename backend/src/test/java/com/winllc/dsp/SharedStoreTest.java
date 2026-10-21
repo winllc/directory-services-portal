@@ -210,6 +210,42 @@ class SharedStoreTest extends ApiTestSupport {
     }
   }
 
+  /** Puts the service's guard and sender back as configured (a test points them at local receivers). */
+  private void restoreWebhookSending() throws Exception {
+    var w = integration.getWebhooks();
+    webhookService.use(new com.winllc.dsp.webhooks.UrlGuard(w.allowedHostList(), java.net.InetAddress::getAllByName),
+        new com.winllc.dsp.webhooks.WebhookSender(javax.net.ssl.SSLContext.getDefault(), w.getConnectTimeout(), w.getReadTimeout(),
+            w.getSendTimeout()));
+  }
+
+  @Test
+  void theDeliveryTableSkipsWebhooksWhenClaimingAndPostponesAWebhookAsAWhole() {
+    webhookService.pauseBackground(true);
+    try {
+      WebhookRuns.claimSkipsAndPostponeMoves(new com.winllc.dsp.webhooks.JdbcDeliveries(otherReplica()));
+    } finally {
+      webhookService.pauseBackground(false);
+    }
+  }
+
+  @Test
+  void aDeadReceiverIsBackedOffAsAWholeWithTheSharedOutbox() throws Exception {
+    try {
+      WebhookRuns.aDeadReceiverIsBackedOffAsAWhole(webhookService, webhooks, integration);
+    } finally {
+      restoreWebhookSending();
+    }
+  }
+
+  @Test
+  void aWebhookGetsAtMostTenAttemptsARunWithTheSharedOutbox() throws Exception {
+    try {
+      WebhookRuns.aWebhookGetsAtMostTenAttemptsARun(webhookService, webhooks);
+    } finally {
+      restoreWebhookSending();
+    }
+  }
+
   @Test
   void configurationChangesReachEveryReplicaWithoutLosingAny() {
     ConfigStore other = new ConfigStore(mapper, props, otherReplica(), database);

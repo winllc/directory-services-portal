@@ -10,22 +10,17 @@ import com.winllc.dsp.webhooks.Deliveries;
 import com.winllc.dsp.webhooks.UrlGuard;
 import com.winllc.dsp.webhooks.WebhookSender;
 import com.winllc.dsp.webhooks.WebhookService;
-import java.math.BigInteger;
+import com.winllc.dsp.webhooks.Webhooks;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.KeyStore;
 import java.security.MessageDigest;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -33,16 +28,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.Extension;
-import org.bouncycastle.asn1.x509.GeneralName;
-import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
-import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +47,7 @@ class WebhooksTest extends ApiTestSupport {
 
   @Autowired WebhookService service;
   @Autowired IntegrationProperties props;
+  @Autowired Webhooks webhooks;
 
   /** A received request. */
   record Received(String path, Map<String, List<String>> headers, String body) {
@@ -81,31 +68,9 @@ class WebhooksTest extends ApiTestSupport {
 
   @BeforeEach
   void startReceiver() throws Exception {
-    KeyPairGenerator gen = KeyPairGenerator.getInstance("EC");
-    gen.initialize(256);
-    KeyPair keys = gen.generateKeyPair();
-    X500Name name = new X500Name("CN=localhost");
-    Instant now = Instant.now();
-    var builder = new JcaX509v3CertificateBuilder(name, BigInteger.valueOf(now.toEpochMilli()), Date.from(now.minusSeconds(60)),
-        Date.from(now.plus(Duration.ofDays(1))), name, keys.getPublic());
-    builder.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName[] {
-        new GeneralName(GeneralName.dNSName, "localhost"), new GeneralName(GeneralName.dNSName, "hooks.example")}));
-    X509Certificate cert = new JcaX509CertificateConverter()
-        .getCertificate(builder.build(new JcaContentSignerBuilder("SHA256withECDSA").build(keys.getPrivate())));
-    KeyStore ks = KeyStore.getInstance("PKCS12");
-    ks.load(null, null);
-    ks.setKeyEntry("server", keys.getPrivate(), "pw".toCharArray(), new X509Certificate[] {cert});
-    KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-    kmf.init(ks, "pw".toCharArray());
-    SSLContext serverTls = SSLContext.getInstance("TLS");
-    serverTls.init(kmf.getKeyManagers(), null, null);
-    KeyStore trust = KeyStore.getInstance("PKCS12");
-    trust.load(null, null);
-    trust.setCertificateEntry("server", cert);
-    TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    tmf.init(trust);
-    clientTls = SSLContext.getInstance("TLS");
-    clientTls.init(null, tmf.getTrustManagers(), null);
+    WebhookRuns.Tls tls = WebhookRuns.localhostTls();
+    SSLContext serverTls = tls.server();
+    clientTls = tls.client();
 
     server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
     server.setHttpsConfigurator(new HttpsConfigurator(serverTls));
@@ -348,6 +313,26 @@ class WebhooksTest extends ApiTestSupport {
     String auditText = Files.readString(AUDIT_FILE);
     assertThat(auditText).doesNotContain(h.secret()).doesNotContain(secret);
     assertThat(service.deliveries().recent(h.id(), 10)).allMatch(d -> !Deliveries.PENDING.equals(d.status()));
+  }
+
+  @Test
+  void aDeadReceiverIsBackedOffAsAWholeAndLiveOnesStillGetTheirDeliveries() throws Exception {
+    WebhookRuns.aDeadReceiverIsBackedOffAsAWhole(service, webhooks, props);
+  }
+
+  @Test
+  void aWebhookGetsAtMostTenAttemptsARun() throws Exception {
+    WebhookRuns.aWebhookGetsAtMostTenAttemptsARun(service, webhooks);
+  }
+
+  @Test
+  void aSlowReceiverGetsNoMoreThanItsTimeShareOfARun() throws Exception {
+    WebhookRuns.aSlowReceiverGetsNoMoreThanItsTimeShare(service, webhooks);
+  }
+
+  @Test
+  void noAttemptStartsAfterTheRunBudget() throws Exception {
+    WebhookRuns.noAttemptStartsAfterTheRunBudget(service, webhooks, props);
   }
 
   @Test

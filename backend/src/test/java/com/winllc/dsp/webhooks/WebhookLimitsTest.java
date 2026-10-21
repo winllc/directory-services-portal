@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.json.JsonMapper;
 
-/** The send deadline, the outbox cap and batched writes of the file store. */
+/** The send deadline, and the file store's outbox cap, batched writes, skipping claims and postponing. */
 class WebhookLimitsTest {
   @TempDir Path dir;
 
@@ -92,5 +92,14 @@ class WebhookLimitsTest {
     Deliveries.Delivery claimed = store.claim(Instant.now(), 1, Duration.ofMinutes(1)).get(0);
     store.record(claimed.attempted(Instant.now(), 204, null, Deliveries.DELIVERED, claimed.nextAttemptAt()));
     assertThat(store.enqueue(List.of(delivery("w1")))).isEqualTo(1);
+  }
+
+  @Test
+  void theFileOutboxSkipsWebhooksWhenClaimingAndPostponesAWebhookAsAWhole() {
+    FileDeliveries store = new FileDeliveries(dir.resolve(FileDeliveries.FILE), JsonMapper.builder().build());
+    com.winllc.dsp.WebhookRuns.claimSkipsAndPostponeMoves(store);
+    // Postponing is written at the next flush, like any change.
+    store.flush();
+    assertThat(Files.exists(dir.resolve(FileDeliveries.FILE))).isTrue();
   }
 }

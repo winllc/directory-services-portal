@@ -530,6 +530,15 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   (default 8); then the delivery fails and `webhook.delivery-failed` is audited. Each attempt has
   an overall deadline, `WEBHOOK_SEND_TIMEOUT` (20 s: name lookup, connect, TLS, request and answer
   together).
+  A receiver that gives **no answer at all** (connection refused or timed out, TLS failure, no
+  answer within the deadline, or its address refused by the guard below) is backed off as a whole:
+  all of that webhook's due deliveries wait as long as the one just tried, so a dead receiver
+  costs one attempt per backoff step however many deliveries wait for it, and doesn't hold up the
+  others. A receiver that answers with an error status is retried per delivery, as above.
+  Deliveries go out every couple of seconds, oldest first, at most 20 attempts per run; one
+  webhook gets at most 10 attempts and 20 s of a run (so a slow receiver can't take every run),
+  and no attempt starts after `WEBHOOK_RUN_BUDGET` (40 s), so a run ends within that plus one
+  `WEBHOOK_SEND_TIMEOUT`.
   Delivery is **at least once**: an attempt whose answer was lost is made again with the same
   `X-DSP-Event-Id`, so receivers should drop events they have already handled. The delivery log
   (per webhook, with each payload) keeps finished deliveries for `WEBHOOK_LOG_RETENTION` (30 days;
