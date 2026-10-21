@@ -94,4 +94,54 @@ class LicenseDatabaseTest {
       LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", none.toString()));
     }
   }
+
+  static final String EXPECT = LicenseStateGuard.EXPECT;
+
+  @Test
+  void aFreshDatabaseBehindPodsWithoutTheVolumeNeverMakesAnId() throws Exception {
+    Path none = dir.resolve("none");
+    // An existing install going straight to the database and three replicas (no volume in any pod),
+    // or a rebuilt PostgreSQL behind one: V1 and V2 on an empty database, so no "upgraded" marker.
+    try (HikariDataSource ds = database(null)) {
+      assertThatThrownBy(() -> LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true")))
+          .isInstanceOf(IllegalStateException.class).hasMessageContaining("one replica first");
+      // A one-replica start with the volume imports the id; then the pods without it start and share it.
+      Path state = dir.resolve("state");
+      String fileId = new LicenseManager(PRODUCT, VERIFIER, dir.resolve("license.lic"), state, Optional.empty(), Clock.systemUTC()).installationId();
+      LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", state.toString()));
+      assertThat(shared(ds, dir.resolve("license.lic"), state).installationId()).isEqualTo(fileId);
+      LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true"));
+      assertThat(shared(ds, none.resolve("license.lic"), none).installationId()).isEqualTo(fileId);
+    }
+  }
+
+  @Test
+  void aPodWithoutTheIdFileNeverWinsTheImportRace() throws Exception {
+    Path none = dir.resolve("none");
+    Path state = dir.resolve("state");
+    String fileId = new LicenseManager(PRODUCT, VERIFIER, dir.resolve("license.lic"), state, Optional.empty(), Clock.systemUTC()).installationId();
+    try (HikariDataSource ds = database(null)) {
+      // Both start at once: the one without the id file is refused (and restarts), instead of
+      // inserting a random id before the other imports the real one.
+      assertThatThrownBy(() -> LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true")))
+          .isInstanceOf(IllegalStateException.class);
+      LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", state.toString()));
+      assertThat(shared(ds, dir.resolve("license.lic"), state).installationId()).isEqualTo(fileId);
+      LicenseStateGuard.check(ds, PRODUCT, Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true"));
+    }
+  }
+
+  @Test
+  void theOverrideIsHonouredOnlyWhileTheDatabaseHoldsNoLicenseState() {
+    Path none = dir.resolve("none");
+    try (HikariDataSource ds = database(null)) {
+      Map<String, String> env = Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true", LicenseStateGuard.OVERRIDE, "true");
+      // Partial loss: revisions remain but the id is gone. The override must not mint a new id.
+      new JdbcTemplate(ds).update("INSERT INTO ens_license_revision (product, license_id, revision) VALUES (?, 'L-1', 2)", PRODUCT);
+      assertThatThrownBy(() -> LicenseStateGuard.check(ds, PRODUCT, env))
+          .isInstanceOf(IllegalStateException.class).hasMessageContaining("not honoured");
+      new JdbcTemplate(ds).update("DELETE FROM ens_license_revision");
+      LicenseStateGuard.check(ds, PRODUCT, env);
+    }
+  }
 }

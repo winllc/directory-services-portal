@@ -123,6 +123,12 @@ spec:
               value: /var/lib/ens/directory-portal
             - name: ENS_LICENSE_FILE
               value: /var/lib/ens/directory-portal/license.lic
+            {{- if and $v.database.url $v.persistence.license.enabled (not (include "dsp.licensePvcMounted" .)) }}
+            # The license volume is replaced by an empty directory here: the installation id must
+            # already be in the database (imported by a one-replica start), never made anew.
+            - name: ENS_LICENSE_EXPECT_INSTALLATION_ID
+              value: "true"
+            {{- end }}
             {{- if and $licenseGiven (not (include "dsp.licensePvcMounted" .)) }}
             # No license volume (state in the shared database): the given license is installed
             # into the database when none usable is there yet, as license-init does on the volume.

@@ -269,9 +269,18 @@ same first start, from the license volume, which must therefore be mounted then 
 replica). With several replicas a ReadWriteOnce license volume is no longer mounted (the pods get
 an emptyDir and a license given with `license.*` reaches them as `ENS_LICENSE`); its PVC carries
 `helm.sh/resource-policy: keep`, so Helm never deletes it. A ReadWriteMany license volume stays
-mounted. If the database has no installation id and there is none to import, the API refuses to
-start rather than make a new one (`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` via
-`api.extraEnv` overrides it, for an installation that never had a license).
+mounted. Pods without the license volume get `ENS_LICENSE_EXPECT_INSTALLATION_ID=true`: while
+the database has no installation id they refuse to start rather than make one, so going straight
+from one replica without the database to several replicas with it (or rebuilding PostgreSQL behind
+several replicas) stops with a message instead of breaking the license; start with one replica
+(which mounts the volume and imports the id), then scale out.
+`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` (via `api.extraEnv`) accepts a new id only while the
+database holds no license state, for an installation that never had a license; remove it after.
+
+After the move the license volume is a frozen copy of the state at that first start. Scaling back
+to one replica mounts it again, but the API reads the database, not the volume; turning the
+database off (`database.url` empty) would bring back the volume's old license, so don't, or
+upload the current license again if you must.
 
 With more than one replica the chart renders a PodDisruptionBudget (`api.podDisruptionBudget`)
 and, with the database and no ReadWriteOnce volume mounted, a `RollingUpdate` strategy
