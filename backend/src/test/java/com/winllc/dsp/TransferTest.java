@@ -23,6 +23,7 @@ class TransferTest extends ApiTestSupport {
   static final String ENGINEERING = "cn=engineering,ou=groups," + B;
 
   @Autowired IntegrationProperties props;
+  @Autowired com.winllc.dsp.ldap.LdapDirectory directory;
 
   @AfterEach
   void limits() {
@@ -109,6 +110,7 @@ class TransferTest extends ApiTestSupport {
     lines.forEach(l -> Csv.row(out, l));
     String file = out.toString();
 
+    int importsBefore = actions(admin, "data.imported").size();
     JsonNode dry = imported(admin, "/api/directories/devices/import?dryRun=true", "text/csv", file);
     assertThat(dry.get("dryRun").asBoolean()).isTrue();
     assertThat(dry.get("created").asInt()).isEqualTo(1);
@@ -121,7 +123,7 @@ class TransferTest extends ApiTestSupport {
     assertThat(dry.get("rows").get(0).get("attributes").toString()).contains("acmeAssetTag");
     // Nothing was written.
     assertThat(status(admin.get("/api/directories/devices/entry" + q("cn=LT-7777,ou=devices," + B)))).isEqualTo(404);
-    assertThat(actions(admin, "data.imported")).isEmpty();
+    assertThat(actions(admin, "data.imported")).hasSize(importsBefore);
 
     JsonNode run = imported(admin, "/api/directories/devices/import", "text/csv", file);
     assertThat(run.get("created").asInt()).isEqualTo(1);
@@ -133,7 +135,7 @@ class TransferTest extends ApiTestSupport {
     // Audited per entry, and the import as a whole.
     assertThat(actions(admin, "entry.create")).contains("cn=LT-7777,ou=devices," + B);
     assertThat(actions(admin, "entry.update")).contains(changedDn);
-    assertThat(actions(admin, "data.imported")).containsExactly("def-devices");
+    assertThat(actions(admin, "data.imported")).hasSize(importsBefore + 1).first().isEqualTo("def-devices");
     // An exported file imports unchanged.
     String again = admin.get("/api/directories/devices/export").getResponse().getContentAsString(StandardCharsets.UTF_8);
     JsonNode same = imported(admin, "/api/directories/devices/import?dryRun=true", "text/csv", again);
@@ -194,6 +196,46 @@ class TransferTest extends ApiTestSupport {
   }
 
   @Test
+  void refusesLdifValuesGivenAsUrls() throws Exception {
+    Client admin = login("admin");
+    int importsBefore = actions(admin, "data.imported").size();
+    java.nio.file.Path secret = java.nio.file.Files.createTempFile("dsp-secret", ".txt");
+    java.nio.file.Files.writeString(secret, "TOP-SECRET-CONTENT");
+    for (String value : List.of("description:< " + secret.toUri(), "description:\n < " + secret.toUri(), "description:< https://example.com/x")) {
+      String ldif = "dn: cn=LT-6666,ou=devices,dc=example,dc=com\ncn: LT-6666\nacmeDeviceSerial: SN-6666\nacmeDeviceType: Laptop\n"
+          + "acmeDeviceStatus: In stock\n" + value + "\n";
+      MvcResult r = importFile(admin, "/api/directories/devices/import?format=ldif&dryRun=true", "text/plain", ldif);
+      assertThat(status(r)).as(value).isEqualTo(400);
+      assertThat(body(r).get("error").asString()).contains("URL");
+      MvcResult run = importFile(admin, "/api/directories/devices/import?format=ldif", "text/plain", ldif);
+      assertThat(status(run)).isEqualTo(400);
+    }
+    assertThat(status(admin.get("/api/directories/devices/entry" + q("cn=LT-6666,ou=devices," + B)))).isEqualTo(404);
+    assertThat(actions(admin, "data.imported")).hasSize(importsBefore);
+  }
+
+  @Test
+  void changesMembersOfALargeGroupValueByValue() throws Exception {
+    Client admin = login("admin");
+    // A group of 2,000 members (more than Active Directory returns without ranges).
+    List<String> many = new ArrayList<>();
+    for (int i = 0; i < 2000; i++) many.add("uid=user" + i + ",ou=people," + B);
+    many.add(ALICE);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member",
+        many.toArray(String[]::new))));
+    MvcResult r = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", List.of("uid=bob,ou=people," + B), "remove", List.of(ALICE)));
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(r).get("added").size()).isEqualTo(1);
+    assertThat(body(r).get("removed").size()).isEqualTo(1);
+    List<String> after = directory.get(ENGINEERING, List.of("member")).values("member");
+    assertThat(after).hasSize(2001).contains("uid=bob,ou=people," + B).doesNotContain(ALICE).contains("uid=user1999,ou=people," + B);
+    // Audited as values added and removed, not the whole list.
+    JsonNode event = body(admin.get("/api/admin/audit?action=entry.update&pageSize=5")).get("events").get(0);
+    assertThat(event.get("details").get("change").asString()).isEqualTo("values");
+    assertThat(event.get("details").get("member.new").asString()).isEqualTo("uid=bob,ou=people," + B);
+  }
+
+  @Test
   void changesAndExportsGroupMembersInBulk() throws Exception {
     Client admin = login("admin");
     List<String> add = List.of("uid=bob,ou=people," + B, "uid=dave,ou=people," + B, "uid=erin,ou=people," + B);
@@ -222,15 +264,21 @@ class TransferTest extends ApiTestSupport {
 
   @Test
   void csvCellsRoundTrip() {
-    for (String v : List.of("plain", "=1+1", "+44 20 7946 0000", "-5", "@user", "a,b", "say \"hi\"", "two\nlines", "'quoted")) {
+    for (String v : List.of("plain", "=1+1", "+44 20 7946 0000", "-5", "@user", "a,b", "say \"hi\"", "two\nlines", "'quoted", " =1+1",
+        "\t=cmd", "\n@x", "  -2+3")) {
       StringBuilder sb = new StringBuilder();
       Csv.row(sb, List.of(v));
       boolean[] over = {false};
       String parsed = Csv.parse(sb.toString(), 10, over).get(0).cells().get(0);
       assertThat(Csv.unguard(parsed)).as(v).isEqualTo(v);
-      if (v.startsWith("=") || v.startsWith("+") || v.startsWith("@")) assertThat(parsed).startsWith("'");
+      if (v.strip().startsWith("=") || v.startsWith("+") || v.strip().startsWith("@") || v.startsWith("\t") || v.equals("  -2+3")) {
+        assertThat(parsed).as(v).startsWith("'");
+      }
     }
     assertThat(Csv.cell("-5")).isEqualTo("-5");
+    // Only an apostrophe the guard could have added is removed.
+    assertThat(Csv.unguard("'plain")).isEqualTo("'plain");
+    assertThat(Csv.unguard("'=x")).isEqualTo("=x");
     List<String> values = List.of("a|b", "c\\d", "e");
     assertThat(Csv.split(Csv.join(values))).isEqualTo(values);
   }

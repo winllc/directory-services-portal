@@ -20,10 +20,20 @@ public final class Csv {
 
   private Csv() {}
 
-  private static boolean risky(String s) {
+  /**
+   * True when a spreadsheet might run the cell as a formula: it starts with a tab or CR, or with
+   * {@code = + - @} after any leading spaces, tabs or line breaks (spreadsheets trim those), and is
+   * not a plain number.
+   */
+  static boolean risky(String s) {
     if (s.isEmpty()) return false;
-    char c = s.charAt(0);
-    return (c == '=' || c == '+' || c == '-' || c == '@' || c == '\t' || c == '\r') && !s.matches("-?\\d+(\\.\\d+)?");
+    char first = s.charAt(0);
+    if (first == '\t' || first == '\r') return true;
+    int i = 0;
+    while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t' || s.charAt(i) == '\r' || s.charAt(i) == '\n')) i++;
+    if (i == s.length()) return false;
+    char c = s.charAt(i);
+    return (c == '=' || c == '+' || c == '-' || c == '@') && !s.trim().matches("-?\\d+(\\.\\d+)?");
   }
 
   /** One cell, guarded and quoted as needed. */
@@ -71,7 +81,12 @@ public final class Csv {
     return out;
   }
 
-  /** Removes the formula guard an export added. */
+  /**
+   * Removes the formula guard an export added: a {@code '} followed by text the guard protects
+   * ({@link #risky}). Only then: an apostrophe before anything else is part of the value. Ambiguous
+   * by nature: a value that itself starts with {@code '} followed by such text (e.g. {@code '=x})
+   * is read back without its apostrophe.
+   */
   public static String unguard(String cell) {
     return cell.length() > 1 && cell.charAt(0) == '\'' && risky(cell.substring(1)) ? cell.substring(1) : cell;
   }
