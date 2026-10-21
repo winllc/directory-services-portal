@@ -75,8 +75,8 @@ export const api = {
   post: <T>(url: string, body?: unknown, options?: RequestOptions) => request<T>('POST', url, body ?? {}, undefined, options),
   put: <T>(url: string, body?: unknown) => request<T>('PUT', url, body ?? {}),
   del: <T = void>(url: string) => request<T>('DELETE', url),
-  /** POST a text body (e.g. a license file) as text/plain. */
-  postText: <T>(url: string, text: string) => request<T>('POST', url, text, 'text/plain; charset=utf-8'),
+  /** POST a text body (e.g. a license file) as text/plain, or another text type. */
+  postText: <T>(url: string, text: string, contentType = 'text/plain; charset=utf-8') => request<T>('POST', url, text, contentType),
 };
 
 export const dnParam = (dn: string) => `dn=${encodeURIComponent(dn)}`;

@@ -16,6 +16,7 @@ import { DefinitionEditorPage } from './pages/admin/DefinitionEditorPage';
 import { PermissionsPage } from './pages/admin/PermissionsPage';
 import { AuditPage } from './pages/admin/AuditPage';
 import { LicensePage } from './pages/admin/LicensePage';
+import { IntegrationsPage } from './pages/admin/IntegrationsPage';
 import { NotLicensedPage } from './pages/NotLicensedPage';
 import { AnalysisListPage } from './pages/admin/AnalysisListPage';
 import { AnalysisEditorPage } from './pages/admin/AnalysisEditorPage';
@@ -76,6 +77,7 @@ export function App() {
           <Route path="admin/definitions/:id" element={forms(<DefinitionEditorPage />)} />
           <Route path="admin/permissions" element={admin(<PermissionsPage />)} />
           <Route path="admin/audit" element={admin(<AuditPage />)} />
+          <Route path="admin/integrations" element={admin(<IntegrationsPage />)} />
           <Route path="admin/license" element={admin(<LicensePage />)} />
           <Route path="unlicensed" element={<NotLicensedPage />} />
           <Route path="admin/analysis" element={analysis(<AnalysisListPage />)} />

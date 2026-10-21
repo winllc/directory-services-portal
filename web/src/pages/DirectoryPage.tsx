@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus, Search, SearchX } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Plus, Search, SearchX, Upload } from 'lucide-react';
 import type { DirectoryEntry, FormDefinition, FormField } from '@dsp/shared';
 import { getAttr, rdnValue } from '@dsp/shared';
-import { useDefinition, useEntries } from '../api/hooks';
+import { downloadEntries, useDefinition, useEntries } from '../api/hooks';
+import { ImportDialog } from '../components/ImportDialog';
 import { DefinitionIcon } from '../components/Layout';
 import { DirectoryNotFound } from '../components/DirectoryNotFound';
 import { FieldValue } from '../components/EntryDetails';
-import { Alert, Button, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced } from '../components/ui';
+import { Alert, Button, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
 import { AccessBadge } from './HomePage';
 
 const PAGE_SIZE = 25;
@@ -38,6 +39,9 @@ function DirectoryView({ slug }: { slug: string }) {
   const order = (params.get('order') as 'asc' | 'desc' | null) ?? 'asc';
   const [search, setSearch] = useState(q);
   const debounced = useDebounced(search, 300);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState<'csv' | 'ldif' | null>(null);
+  const toast = useToast();
 
   const def = useDefinition(slug);
   const definition = def.data?.definition;
@@ -83,6 +87,18 @@ function DirectoryView({ slug }: { slug: string }) {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const entryLink = (dn: string) => `/d/${definition.slug}/entry?dn=${encodeURIComponent(dn)}`;
   const activeSort = (sort ?? definition.titleAttribute).toLowerCase();
+  const exportAs = async (format: 'csv' | 'ldif') => {
+    setExporting(format);
+    try {
+      const r = await downloadEntries(definition.id, format, q || undefined);
+      if (r.truncated) toast.info(`Exported the first ${r.count} matches: refine the search to export the rest.`);
+      else toast.success(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'}.`);
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   return (
     <div className="page">
@@ -96,13 +112,29 @@ function DirectoryView({ slug }: { slug: string }) {
           </>
         }
         actions={
-          definition.access === 'write' && (
-            <Button variant="primary" icon={<Plus size={16} />} onClick={() => navigate(`/d/${definition.slug}/new`)}>
-              New {form.name.toLowerCase()}
+          <div className="toolbar-actions">
+            <Button icon={<Download size={16} />} loading={exporting === 'csv'} onClick={() => exportAs('csv')} title={q ? 'Export the matching entries' : 'Export every entry'}>
+              Export CSV
             </Button>
-          )
+            <Button icon={<Download size={16} />} loading={exporting === 'ldif'} onClick={() => exportAs('ldif')} title={q ? 'Export the matching entries' : 'Export every entry'}>
+              Export LDIF
+            </Button>
+            {definition.access === 'write' && (
+              <>
+                <Button icon={<Upload size={16} />} onClick={() => setImporting(true)}>
+                  Import
+                </Button>
+                <Button variant="primary" icon={<Plus size={16} />} onClick={() => navigate(`/d/${definition.slug}/new`)}>
+                  New {form.name.toLowerCase()}
+                </Button>
+              </>
+            )}
+          </div>
         }
       />
+      {definition.access === 'write' && (
+        <ImportDialog open={importing} onClose={() => setImporting(false)} definitionId={definition.id} name={definition.name} />
+      )}
 
       <div className="toolbar">
         <div className="search-box">

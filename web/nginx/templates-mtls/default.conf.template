@@ -32,7 +32,7 @@ server {
     ssl_protocols           TLSv1.2 TLSv1.3;
     root /usr/share/nginx/html;
 
-    # Schema imports can be large.
+    # Schema and entry imports can be large (IMPORT_MAX_BYTES, 5 MiB by default: raise both together).
     client_max_body_size 5m;
 
     gzip on;

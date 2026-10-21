@@ -25,6 +25,7 @@ import {
   UserCircle2,
   Users,
   UsersRound,
+  Workflow,
   X,
 } from 'lucide-react';
 import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
@@ -154,6 +155,9 @@ export function Layout() {
               )}
               <NavItem to="/admin/audit" icon={<History size={18} />}>
                 Audit log
+              </NavItem>
+              <NavItem to="/admin/integrations" icon={<Workflow size={18} />}>
+                Integrations
               </NavItem>
               <NavItem to={LICENSE_PATH} icon={<BadgeCheck size={18} />}>
                 License
