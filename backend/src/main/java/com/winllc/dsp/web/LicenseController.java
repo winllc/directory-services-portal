@@ -87,7 +87,7 @@ public class LicenseController {
       rejected(String.valueOf(e.reason()), why);
       return refused(why, null);
     } catch (IOException e) {
-      String why = "The license could not be saved to " + licensing.manager().licenseFile() + ": " + e.getMessage();
+      String why = "The license could not be saved to " + licensing.manager().licenseLocation() + ": " + e.getMessage();
       audit.event("license.installed").target("license", Licensing.PRODUCT, "License").failed(why);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", why));
     }
@@ -153,7 +153,8 @@ public class LicenseController {
     } catch (IllegalStateException e) {
       installationIdError = e.getMessage();
     }
-    String file = manager.licenseFile().toAbsolutePath().toString();
+    // The license file's path, or "the database" with the shared store.
+    String file = manager.licenseFile() != null ? manager.licenseFile().toAbsolutePath().toString() : manager.licenseLocation();
     EnsLicense l = check.license().orElse(null);
     if (l == null) {
       return new LicenseStatus.Details(installationId, installationIdError, file,
