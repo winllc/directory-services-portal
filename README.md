@@ -482,7 +482,10 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   `api.token-revoked`).
 - **Never more than its creator**: a token acts as the administrator who created it, with their
   rights *as the directory has them at the time of the call* (read again at most once a minute), narrowed by
-  its scopes and directories. If they lose a permission or their entry, so does the token.
+  its scopes and directories. If they lose a permission or their entry, so does the token, and a
+  creator whose account the directory marks disabled or locked (`nsAccountLock: true`, Active
+  Directory's ACCOUNTDISABLE flag in `userAccountControl`, or `pwdAccountLockedTime`) makes every
+  call fail with 401 `token_owner_disabled` until the account is enabled again.
   Rights a single sign-on provider asserted at their sign-in don't carry over. Every call goes
   through the same checks, namespace, form validation and audit trail as the portal's pages; the
   audit events of a token's changes name it (`details.apiClientId`, `authMethod: api-token`).
@@ -491,7 +494,10 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   never logged. Missing, unknown, expired or revoked tokens get 401 (and an `access.denied` audit
   event, collapsed like other denials); a missing scope 403 `insufficient_scope`.
 - **Rate limit**: `API_RATE_LIMIT_PER_MINUTE` (default 120) per token unless the token sets its
-  own, counted per API replica; over it, 429 with `Retry-After`.
+  own; over it, 429 with `Retry-After`. The count is kept in each API replica's memory, so with
+  several replicas a token can make up to the limit on each. An address that presents more than
+  `API_FAILED_TOKEN_LIMIT_PER_MINUTE` (30) unknown, expired or revoked tokens a minute gets 429
+  before any token is looked up.
 
 ### Webhooks
 *Administration → Integrations → Webhooks*
@@ -519,7 +525,10 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
 
 - **Delivery**: a 2xx answer delivers; anything else, including a redirect (never followed), is
   retried after 30 s, 2 min, 10 min, 30 min, 1 h, 3 h and 6 h, up to `WEBHOOK_MAX_ATTEMPTS`
-  (default 8); then the delivery fails and `webhook.delivery-failed` is audited. The delivery log
+  (default 8); then the delivery fails and `webhook.delivery-failed` is audited. Each attempt has
+  an overall deadline, `WEBHOOK_SEND_TIMEOUT` (20 s: connect, TLS, request and answer together).
+  Delivery is **at least once**: an attempt whose answer was lost is made again with the same
+  `X-DSP-Event-Id`, so receivers should drop events they have already handled. The delivery log
   (per webhook, with each payload) keeps finished deliveries for `WEBHOOK_LOG_RETENTION` (30 days;
   alone, also at most the last 2,000). Timeouts: `WEBHOOK_CONNECT_TIMEOUT` (5 s),
   `WEBHOOK_READ_TIMEOUT` (10 s). Webhooks connect directly (no HTTP proxy).
@@ -532,7 +541,9 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   internal addresses; cloud metadata addresses (169.254.169.254, fd00:ec2::254, 169.254.170.2,
   100.100.100.200, 192.0.0.192) are refused regardless.
 - **Storage**: alone, `DATA_DIR/webhooks.json` and `webhook-deliveries.json` (pending deliveries
-  survive a restart); with the shared database, the `webhooks` document and the
+  survive a restart; the outbox file is written every couple of seconds, not per change, so a
+  crash loses at most the deliveries queued in those seconds, and it holds at most 10,000 waiting
+  deliveries: beyond that new ones are dropped, logged and audited as `webhook.delivery-dropped`); with the shared database, the `webhooks` document and the
   `dsp_webhook_delivery` table, where each due delivery is sent by one replica. Signing secrets
   are stored as they are (they sign every request), readable only by the portal's user; they are
   never returned by the API again, logged or audited. Changes to webhooks are audited
@@ -545,12 +556,15 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   `EXPORT_MAX_ENTRIES` (10,000; the toast says when there were more). Only the attributes of the
   directory's form, never passwords. CSV: a `dn` column, then one column per field; several
   values in one cell separated by `|` (`\|` and `\\` inside a value). Cells a spreadsheet would
-  run as a formula (`=`, `+`, `-`, `@`, tab, CR first) get a leading `'`. Audited as
+  run as a formula (`=`, `+`, `-` or `@` first, also after leading spaces, tabs or line breaks, or a
+  tab or CR first) get a leading `'`, which an import removes again. An apostrophe is removed only
+  before such text, so a value that really starts with `'=` comes back without its apostrophe. Audited as
   `data.exported`. A group's page exports its members (CSV or LDIF).
 - **Import** (users with write access): *Import* takes a CSV in the export's layout (a `dn` column
   is optional: without it, entries are named by the form's naming attribute in the first create
   container) or LDIF entries (`changetype: add` too; modify, delete and moddn records are
-  refused). *Check file* runs every row without writing and shows what would be created,
+  refused, and so is any file with a value given as a URL, `attr:< file:///…` or `http://…`, which
+  would make the server read a file or fetch a URL). *Check file* runs every row without writing and shows what would be created,
   updated, left unchanged or refused, with the field messages; *Import* then writes. Existing
   entries get the values given (an empty cell leaves an attribute alone); others are created;
   the import can be limited to only creating or only updating. Each entry goes through the same
@@ -559,7 +573,10 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   raise the web tier's `MAX_BODY_SIZE` with it) and `IMPORT_MAX_ROWS` (5,000). A long import runs
   as a background task.
 - **Bulk membership**: on an entry with a member field, *Change members in bulk* adds and removes
-  many members (one per line) in one audited change, up to `BULK_MAX_MEMBERS` (5,000).
+  many members (one per line) in one audited change, up to `BULK_MAX_MEMBERS` (5,000). Sent as
+  value-level adds and deletes with the permissive modify control (never a replace of the list),
+  so another change made at the same time is kept, and so is an Active Directory group of more
+  than 1,500 members, whose members come back in ranges. The same applies to the API.
 - Not yet (Wave 4): import as an unattended scheduled job, LDIF modify and delete records,
   multi-select bulk edit and delete in the list, clearing attributes by import, and lifting the
   1,000-entry cap of the list view.
