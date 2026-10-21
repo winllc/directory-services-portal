@@ -210,22 +210,40 @@ public class EntryService {
   // Read
   // ---------------------------------------------------------------------------
 
+  /** The definition's entries matching the search text {@code q} (as the directory page searches). */
+  public Filter searchFilter(DirectoryDefinition def, FormDefinition form, String query) {
+    Filter filter = baseFilter(def, form);
+    String q = query == null ? "" : query.trim();
+    if (q.isEmpty()) return filter;
+    List<String> attrs = def.searchAttributes().isEmpty() ? List.of(def.titleAttribute()) : def.searchAttributes();
+    List<Filter> terms = new ArrayList<>(List.of(filter));
+    // Every term must match at least one searchable attribute (substring match).
+    for (String term : Arrays.stream(q.split("\\s+")).limit(5).toList()) {
+      terms.add(Filter.createORFilter(attrs.stream()
+          .map(a -> Filter.createSubstringFilter(a, null, new String[] {term}, null))
+          .toList()));
+    }
+    return Filter.createANDFilter(terms);
+  }
+
+  /**
+   * Streams the entries a reader of the definition may see that match {@code q}, with the
+   * attributes they may see (never secrets), up to {@code max}; for exports. Returns true when more
+   * entries matched than {@code max}.
+   */
+  public boolean scan(SessionUser user, DirectoryDefinition def, String q, int max, java.util.function.Consumer<DirectoryEntry> consumer) {
+    require(user, def, AccessLevel.READ);
+    FormDefinition form = form(def);
+    List<String> attrs = returnAttributes(def, form).stream().filter(a -> !isHidden(a)).toList();
+    return directory.scan(def.baseDn(), scope(def.scope()), searchFilter(def, form, q), attrs, max, e -> {
+      if (!Dns.equal(e.dn(), def.baseDn())) consumer.accept(sanitize(e));
+    }).truncated();
+  }
+
   public EntryListResponse list(SessionUser user, DirectoryDefinition def, ListQuery query) {
     require(user, def, AccessLevel.READ);
     FormDefinition form = form(def);
-    Filter filter = baseFilter(def, form);
-    String q = query.q() == null ? "" : query.q().trim();
-    if (!q.isEmpty()) {
-      List<String> attrs = def.searchAttributes().isEmpty() ? List.of(def.titleAttribute()) : def.searchAttributes();
-      List<Filter> terms = new ArrayList<>(List.of(filter));
-      // Every term must match at least one searchable attribute (substring match).
-      for (String term : Arrays.stream(q.split("\\s+")).limit(5).toList()) {
-        terms.add(Filter.createORFilter(attrs.stream()
-            .map(a -> Filter.createSubstringFilter(a, null, new String[] {term}, null))
-            .toList()));
-      }
-      filter = Filter.createANDFilter(terms);
-    }
+    Filter filter = searchFilter(def, form, query.q());
     Set<String> attrs = new LinkedHashSet<>(List.of("objectClass", def.titleAttribute()));
     attrs.addAll(def.listAttributes());
     LdapDirectory.Result result = directory.search(def.baseDn(), scope(def.scope()), filter, LIST_LIMIT, new ArrayList<>(attrs));
@@ -314,12 +332,46 @@ public class EntryService {
   // Write
   // ---------------------------------------------------------------------------
 
-  public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
-    AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).target("entry", parentDn, null);
-    return audited("create", event, () -> doCreate(event, user, def, parentDn, input));
+  /** What a write would do, without doing it (an import's dry run). */
+  public record Preview(String operation, String dn, List<String> attributes) {}
+
+  /** Filled in by a write run as a preview: it then checks everything and stops before the directory. */
+  private static final class PreviewHolder {
+    Preview result;
   }
 
-  private DirectoryEntry doCreate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
+  public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
+    AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).target("entry", parentDn, null);
+    return audited("create", event, () -> doCreate(event, user, def, parentDn, input, null));
+  }
+
+  /** Checks a create as {@link #create} would (permission, container, validation, existing entry), writing nothing. */
+  public Preview previewCreate(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
+    PreviewHolder p = new PreviewHolder();
+    doCreate(audit.event("entry.create"), user, def, parentDn, input, p);
+    return p.result;
+  }
+
+  /** Checks an update as {@link #update} would, writing nothing; operation "unchanged" when it would change nothing. */
+  public Preview previewUpdate(SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input) {
+    PreviewHolder p = new PreviewHolder();
+    doUpdate(audit.event("entry.update"), user, def, dn, input, false, p);
+    return p.result;
+  }
+
+  /** True when the entry exists in the definition (namespace and filter); no permission check. */
+  public boolean exists(DirectoryDefinition def, String dn) {
+    try {
+      loadEntry(def, form(def), dn);
+      return true;
+    } catch (ApiException e) {
+      if (e.status() == HttpStatus.NOT_FOUND) return false;
+      throw e;
+    }
+  }
+
+  private DirectoryEntry doCreate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input,
+      PreviewHolder preview) {
     require(user, def, AccessLevel.WRITE);
     FormDefinition form = form(def);
     List<String> allowed = def.createContainers().isEmpty() ? List.of(def.baseDn()) : def.createContainers();
@@ -345,6 +397,11 @@ public class EntryService {
     List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), List.of());
     event.target("entry", dn, titles.isEmpty() ? rdnValues.get(0) : titles.get(0));
     event.changes(attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList());
+    if (preview != null) {
+      if (directory.get(dn, List.of("1.1")) != null) throw ApiException.conflict("An entry named " + dn + " already exists");
+      preview.result = new Preview(EntryChanged.CREATE, dn, attributes.keySet().stream().filter(a -> !a.equalsIgnoreCase("objectClass")).toList());
+      return null;
+    }
     // Never change the directory unaudited: a full or unwritable audit disk refuses the write (503).
     audit.requireWritable();
     directory.add(dn, attributes);
@@ -361,10 +418,11 @@ public class EntryService {
 
   public DirectoryEntry update(SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
     AuditLog.Draft event = audit.event(self ? "entry.self_update" : "entry.update").by(user).definition(def.id()).target("entry", dn, null);
-    return audited("update", event, () -> doUpdate(event, user, def, dn, input, self));
+    return audited("update", event, () -> doUpdate(event, user, def, dn, input, self, null));
   }
 
-  private DirectoryEntry doUpdate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
+  private DirectoryEntry doUpdate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self,
+      PreviewHolder preview) {
     if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
     if (!self) require(user, def, AccessLevel.WRITE);
     FormDefinition form = form(def);
@@ -390,8 +448,12 @@ public class EntryService {
       String currentValue = currentRdn.getAttributeValues()[rdnPos];
       if (newRdnValues.stream().noneMatch(v -> v.equalsIgnoreCase(currentValue))) {
         if (rdnNames.length > 1) throw ApiException.badRequest("Entries with multi-valued RDNs cannot be renamed here");
-        audit.requireWritable();
-        targetDn = directory.rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
+        if (preview != null) {
+          targetDn = Dns.build(rdnNames[0], newRdnValues.get(0), Dns.parse(current.dn()).getParentString());
+        } else {
+          audit.requireWritable();
+          targetDn = directory.rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
+        }
         event.detail("previousDn", current.dn()).target("entry", targetDn, title(def, current));
       }
     }
@@ -423,6 +485,11 @@ public class EntryService {
       }
     }
     event.changes(recorded);
+    if (preview != null) {
+      List<String> attrs = recorded.stream().map(AuditEvent.Change::attribute).toList();
+      preview.result = new Preview(attrs.isEmpty() && Dns.equal(targetDn, current.dn()) ? "unchanged" : EntryChanged.UPDATE, targetDn, attrs);
+      return null;
+    }
     if (!changes.isEmpty()) audit.requireWritable();
     directory.modify(targetDn, changes);
     // A save that changed nothing is not worth a line in the audit log.
