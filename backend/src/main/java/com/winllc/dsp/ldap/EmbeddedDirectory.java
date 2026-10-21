@@ -38,6 +38,7 @@ public class EmbeddedDirectory implements AutoCloseable {
       config.setSchema(Schema.mergeSchemas(Schema.getDefaultStandardSchema(), readSchema("demo/acme-schema.ldif")));
       config.setListenerConfigs(InMemoryListenerConfig.createLDAPConfig("default", InetAddress.getLoopbackAddress(), 0, null));
       config.setEnforceAttributeSyntaxCompliance(true);
+      config.addInMemoryOperationInterceptor(new Hook());
       server = new InMemoryDirectoryServer(config);
       try (InputStream in = new ClassPathResource("demo/demo-data.ldif").getInputStream()) {
         server.importFromLDIF(true, new LDIFReader(in));
@@ -47,6 +48,30 @@ public class EmbeddedDirectory implements AutoCloseable {
       log.info("Embedded demo directory listening on {} (sign in as admin / password)", url());
     } catch (LDAPException | IOException e) {
       throw new IllegalStateException("Could not start the embedded demo directory", e);
+    }
+  }
+
+  private volatile com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor interceptor;
+
+  /**
+   * Lets tests see and change requests and results (e.g. return a group's members in ranges as
+   * Active Directory does); null removes it. The demo directory never sets one.
+   */
+  public void intercept(com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor interceptor) {
+    this.interceptor = interceptor;
+  }
+
+  private final class Hook extends com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor {
+    @Override
+    public void processModifyRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyRequest request) throws LDAPException {
+      var i = interceptor;
+      if (i != null) i.processModifyRequest(request);
+    }
+
+    @Override
+    public void processSearchEntry(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchEntry entry) {
+      var i = interceptor;
+      if (i != null) i.processSearchEntry(entry);
     }
   }
 
@@ -67,6 +92,7 @@ public class EmbeddedDirectory implements AutoCloseable {
 
   /** Restore the seeded data (used by tests). */
   public void reset() {
+    interceptor = null;
     server.restoreSnapshot(initialState);
   }
 

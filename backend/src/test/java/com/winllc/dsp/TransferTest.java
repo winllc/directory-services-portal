@@ -235,6 +235,68 @@ class TransferTest extends ApiTestSupport {
     assertThat(event.get("details").get("member.new").asString()).isEqualTo("uid=bob,ou=people," + B);
   }
 
+  /** Returns engineering's members in ranges of two, as Active Directory does past 1,500 values. */
+  private void rangedEngineering() {
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processSearchEntry(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchEntry entry) {
+        var e = entry.getSearchEntry();
+        if (!com.winllc.dsp.ldap.Dns.equal(e.getDN(), ENGINEERING) || !e.hasAttribute("member")) return;
+        String[] values = e.getAttributeValues("member");
+        com.unboundid.ldap.sdk.Entry copy = e.duplicate();
+        copy.removeAttribute("member");
+        copy.addAttribute("member;range=0-1", java.util.Arrays.copyOf(values, Math.min(2, values.length)));
+        entry.setSearchEntry(copy);
+      }
+    });
+  }
+
+  @Test
+  void editingAGroupInTheFormSendsOnlyTheMembersThatChanged() throws Exception {
+    Client admin = login("admin");
+    List<com.unboundid.ldap.sdk.Modification> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyRequest request) {
+        if (com.winllc.dsp.ldap.Dns.equal(request.getRequest().getDN(), ENGINEERING)) seen.addAll(request.getRequest().getModifications());
+      }
+    });
+    String bob = "uid=bob,ou=people," + B;
+    String carol = "uid=carol,ou=people," + B;
+    MvcResult r = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", List.of(ALICE, carol, bob))));
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(seen).extracting(m -> m.getModificationType()).containsExactlyInAnyOrder(com.unboundid.ldap.sdk.ModificationType.ADD,
+        com.unboundid.ldap.sdk.ModificationType.DELETE);
+    assertThat(seen).allMatch(m -> m.getAttributeName().equals("member"));
+    assertThat(seen.stream().filter(m -> m.getModificationType() == com.unboundid.ldap.sdk.ModificationType.ADD).findFirst().orElseThrow().getValues())
+        .containsExactly(bob);
+    assertThat(seen.stream().filter(m -> m.getModificationType() == com.unboundid.ldap.sdk.ModificationType.DELETE).findFirst().orElseThrow().getValues())
+        .containsExactly("uid=fatima,ou=people," + B);
+  }
+
+  @Test
+  void aGroupReadInRangesIsNeverReplacedByTheFormOrAnImport() throws Exception {
+    Client admin = login("admin");
+    List<String> before = directory.get(ENGINEERING, List.of("member")).values("member");
+    rangedEngineering();
+    String bob = "uid=bob,ou=people," + B;
+    MvcResult form = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", List.of(bob))));
+    assertThat(status(form)).isEqualTo(409);
+    assertThat(body(form).get("code").asString()).isEqualTo("ranged_values");
+    StringBuilder csv = new StringBuilder();
+    Csv.row(csv, List.of("dn", "member"));
+    Csv.row(csv, List.of(ENGINEERING, bob));
+    JsonNode run = imported(admin, "/api/directories/groups/import", "text/csv", csv.toString());
+    assertThat(run.get("failed").asInt()).isEqualTo(1);
+    assertThat(run.get("rows").get(0).get("error").asString()).contains("too many values");
+    // The bulk change still works: it sends just the new value.
+    MvcResult bulk = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", List.of(bob)));
+    assertThat(status(bulk)).as(bulk.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(bulk).get("partial").asBoolean()).isTrue();
+    embedded.intercept(null);
+    assertThat(directory.get(ENGINEERING, List.of("member")).values("member")).containsAll(before).contains(bob).hasSize(before.size() + 1);
+  }
+
   @Test
   void changesAndExportsGroupMembersInBulk() throws Exception {
     Client admin = login("admin");

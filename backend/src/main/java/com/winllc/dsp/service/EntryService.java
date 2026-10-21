@@ -62,6 +62,8 @@ public class EntryService {
   /** Attributes that are never returned to clients. */
   private static final Set<String> HIDDEN = Set.of("userpassword", "unicodepwd", "sambantpassword", "sambalmpassword", "krbprincipalkey");
   private static final int LIST_LIMIT = 1000;
+  /** Group member attributes: changed value by value, never replaced as a whole (see {@link #changeValues}). */
+  public static final Set<String> MEMBER_ATTRIBUTES = Set.of("member", "uniquemember", "memberuid");
   private static final String REDACTED = AuditDetails.REDACTED;
 
   private final LdapDirectory directory;
@@ -475,8 +477,27 @@ public class EntryService {
       String key = e.getKey();
       List<String> next = e.getValue();
       List<String> prev = current.values(key);
+      FormField field = form.fields().stream().filter(f -> f.attribute().equalsIgnoreCase(key)).findFirst().orElseThrow();
+      String attr = field.attribute();
+      if (MEMBER_ATTRIBUTES.contains(key)) {
+        // Members: only the difference, as value-level ADD and DELETE, so a concurrent change to
+        // other members is kept. A group the directory returned in ranges (Active Directory, over
+        // 1,500 members) can't be edited as a whole list: its full list was never read.
+        if (current.attributes().keySet().stream().anyMatch(k -> k.startsWith(key + ";range="))) {
+          throw new ApiException(HttpStatus.CONFLICT, field.label() + " has too many values to edit as a list (the directory returns them in "
+              + "parts); add and remove them with \"Change members in bulk\" or the API", "ranged_values");
+        }
+        boolean dnValued = !key.equals("memberuid");
+        java.util.function.BiPredicate<String, String> same = (a, b) -> dnValued ? Dns.equal(a, b) || a.equalsIgnoreCase(b) : a.equalsIgnoreCase(b);
+        List<String> added = next.stream().filter(v -> prev.stream().noneMatch(p -> same.test(p, v))).toList();
+        List<String> removed = prev.stream().filter(p -> next.stream().noneMatch(v -> same.test(p, v))).toList();
+        if (added.isEmpty() && removed.isEmpty()) continue;
+        recorded.add(change(attr, prev, next));
+        if (!added.isEmpty()) changes.add(new Modification(ModificationType.ADD, attr, added.toArray(String[]::new)));
+        if (!removed.isEmpty()) changes.add(new Modification(ModificationType.DELETE, attr, removed.toArray(String[]::new)));
+        continue;
+      }
       if (sameSet(prev, next)) continue;
-      String attr = form.fields().stream().filter(f -> f.attribute().equalsIgnoreCase(key)).findFirst().orElseThrow().attribute();
       recorded.add(change(attr, prev, next));
       if (next.isEmpty()) {
         if (!prev.isEmpty()) changes.add(new Modification(ModificationType.DELETE, attr));
@@ -491,7 +512,8 @@ public class EntryService {
       return null;
     }
     if (!changes.isEmpty()) audit.requireWritable();
-    directory.modify(targetDn, changes);
+    // Permissive: value-level member changes skip values another change already added or removed.
+    directory.modifyValues(targetDn, changes);
     // A save that changed nothing is not worth a line in the audit log.
     if (!recorded.isEmpty()) {
       List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
