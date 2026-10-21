@@ -419,6 +419,8 @@ export function useCreateAuditToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => api.post<{ token: AuditToken; secret: string }>('/api/admin/audit/tokens', { name }),
+    // The answer holds the token's value: never kept in the mutation cache once the page let go of it.
+    gcTime: 0,
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.auditTokens }),
   });
 }
@@ -725,6 +727,8 @@ export function useCreateApiToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ApiTokenRequest) => api.post<{ token: ApiToken; secret: string }>('/api/admin/api-tokens', body),
+    // The answer holds the token's value: never kept in the mutation cache once the page let go of it.
+    gcTime: 0,
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.apiTokens }),
   });
 }
@@ -755,9 +759,15 @@ export function useWebhookMutations() {
   const refresh = () => qc.invalidateQueries({ queryKey: keys.webhooks });
   const url = (id: string) => `/api/admin/webhooks/${encodeURIComponent(id)}`;
   return {
-    create: useMutation({ mutationFn: (body: WebhookInput) => api.post<{ webhook: Webhook; secret: string }>('/api/admin/webhooks', body), onSuccess: refresh }),
+    // Answers with a signing secret are dropped from the mutation cache at once (gcTime 0; the
+    // page also resets the mutation after taking the secret).
+    create: useMutation({
+      mutationFn: (body: WebhookInput) => api.post<{ webhook: Webhook; secret: string }>('/api/admin/webhooks', body),
+      onSuccess: refresh,
+      gcTime: 0,
+    }),
     update: useMutation({ mutationFn: ({ id, body }: { id: string; body: WebhookInput }) => api.put<Webhook>(url(id), body), onSuccess: refresh }),
-    rotate: useMutation({ mutationFn: (id: string) => api.post<{ webhook: Webhook; secret: string }>(`${url(id)}/rotate-secret`), onSuccess: refresh }),
+    rotate: useMutation({ mutationFn: (id: string) => api.post<{ webhook: Webhook; secret: string }>(`${url(id)}/rotate-secret`), onSuccess: refresh, gcTime: 0 }),
     remove: useMutation({ mutationFn: (id: string) => api.del(url(id)), onSuccess: refresh }),
     test: useMutation({
       mutationFn: (id: string) => api.post<{ deliveryId: string }>(`${url(id)}/test`),

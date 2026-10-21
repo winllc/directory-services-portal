@@ -109,6 +109,8 @@ function TokensTab() {
         onSuccess: (r) => {
           setSecret(r.secret);
           setName('');
+          // Only the dialog holds the value from here on.
+          create.reset();
         },
       },
     );
@@ -267,6 +269,7 @@ function WebhookDialog({ editing, onClose, onCreated }: { editing: Webhook | 'ne
         onSuccess: (r) => {
           onClose();
           onCreated(r.secret);
+          m.create.reset();
         },
       });
     } else if (editing) {
@@ -436,7 +439,14 @@ function WebhooksTab() {
                   size="sm"
                   variant="ghost"
                   icon={<RefreshCw size={14} />}
-                  onClick={() => m.rotate.mutate(w.id, { onSuccess: (r) => setSecret(r.secret) })}
+                  onClick={() =>
+                    m.rotate.mutate(w.id, {
+                      onSuccess: (r) => {
+                        setSecret(r.secret);
+                        m.rotate.reset();
+                      },
+                    })
+                  }
                   aria-label={`New secret for ${w.name}`}
                 >
                   New secret
