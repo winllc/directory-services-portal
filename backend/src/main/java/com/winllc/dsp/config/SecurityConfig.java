@@ -92,6 +92,9 @@ public class SecurityConfig {
         .httpBasic(AbstractHttpConfigurer::disable)
         .logout(AbstractHttpConfigurer::disable)
         .securityContext(sc -> sc.securityContextRepository(contexts))
+        // The client is a single-page app: nothing resumes a saved request after sign-in, so none
+        // is kept in the session.
+        .requestCache(AbstractHttpConfigurer::disable)
         .addFilterAfter(new RequestHeaderCsrfFilter(denials), SecurityContextHolderFilter.class)
         // Idle and absolute timeouts, concurrent sessions and group refresh, before authorization.
         .addFilterAfter(new SessionControlFilter(sessions), RequestHeaderCsrfFilter.class)

@@ -5,6 +5,7 @@ import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.audit.AuditJson;
 import com.winllc.dsp.audit.AuditUnavailableException;
 import com.winllc.dsp.cluster.Cluster;
+import com.winllc.dsp.cluster.SessionAttributes;
 import com.winllc.dsp.config.EnsProperties;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.model.SessionUser;
@@ -25,7 +26,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.core.serializer.support.DeserializingConverter;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
@@ -374,14 +374,13 @@ public class SessionService implements HttpSessionListener {
           LEFT JOIN spring_session_attributes a ON a.session_primary_id = s.primary_id AND a.attribute_name = ?
         WHERE s.expiry_time < ? AND s.principal_name IS NOT NULL ORDER BY s.expiry_time LIMIT 500""",
         (rs, i) -> new ExpiredRow(rs.getString(1), rs.getBytes(2)), HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, now);
-    DeserializingConverter deserializer = new DeserializingConverter(SessionService.class.getClassLoader());
     int recorded = 0;
     for (ExpiredRow row : rows) {
       // Only the replica whose delete removes the row records it.
       if (jdbc.update("DELETE FROM spring_session WHERE primary_id = ? AND expiry_time < ?", row.id(), now) == 0) continue;
       SessionUser user = null;
       try {
-        user = row.context() == null ? null : userOfContext(deserializer.convert(row.context()));
+        user = row.context() == null ? null : userOfContext(SessionAttributes.read(row.context(), SessionService.class.getClassLoader()));
       } catch (RuntimeException e) {
         log.warn("Could not read an expired session's user: {}", LogSafe.of(e.getMessage()));
       }
