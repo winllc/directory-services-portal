@@ -80,8 +80,11 @@ one replica and the `Recreate` strategy). What is new and optional:
 - License state in the database: with `DSP_DATABASE_*` the installation id, license and
   revisions move into the database at the first start (imported from the license volume, so keep
   it mounted then); an upgraded database with no id to import refuses to start rather than make a
-  new one (`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` overrides). Without the database the
-  license files are used exactly as before.
+  new one, as does a pod running without the license volume while the database has no id
+  (`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` overrides only while the database holds no license
+  state). Without the database the license files are used exactly as before.
+- Helm: the license PVC now carries `helm.sh/resource-policy: keep`, so `helm uninstall` no
+  longer deletes it; delete it with `kubectl delete pvc` when you mean to.
 - Helm: `api.replicaCount` may exceed 1 (with the database),
   `api.updateStrategy`, `api.podDisruptionBudget`, `database.*`, `sso.*`,
   `networkPolicy.egress.database` and `.sso`.
@@ -804,9 +807,17 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
   volume is not read. **Keep the license volume mounted for that first start.** If a database that
   was already in use (an earlier release) has no installation id yet and there is no
   `installation-id` file to import, the API refuses to start rather than make a new id, which would
-  break bound licenses; set `ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` once only for an
-  installation that never had a license. A new database (fresh install) just makes one id for all
-  instances.
+  break bound licenses. The same applies, whatever the database's history, to an instance started
+  with `ENS_LICENSE_EXPECT_INSTALLATION_ID=true` (the Helm chart sets it where the license volume
+  is replaced by an empty directory): such an instance never makes the id, so run the first start
+  with one replica. `ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` accepts a new id, only while the
+  database holds no license state at all and with an ERROR in the log on every start: set it once,
+  for an installation that never had a license, and remove it. A new database behind a new
+  install just makes one id for all instances.
+- After the move, the license volume holds the license state of that moment and is no longer
+  updated: a license uploaded later is only in the database. Don't go back to running without the
+  database (the volume's old license would return), and keep the volume only as the import
+  source.
 
 **Moving an existing installation to the database: upgrade a single instance first.** Set the
 `DSP_DATABASE_*` variables and restart the single instance with its data volume still mounted. The first start imports
