@@ -497,7 +497,9 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   own; over it, 429 with `Retry-After`. The count is kept in each API replica's memory, so with
   several replicas a token can make up to the limit on each. An address that presents more than
   `API_FAILED_TOKEN_LIMIT_PER_MINUTE` (30) unknown, expired or revoked tokens a minute gets 429
-  before any token is looked up.
+  instead of 401 for further bad ones. Only failures count, and a request with a valid token is
+  never refused by it; the address is the client's as the web tier forwards it (the same one
+  sign-in throttling uses), so integrations behind one proxy don't lock each other out.
 
 ### Webhooks
 *Administration → Integrations → Webhooks*
@@ -526,7 +528,8 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
 - **Delivery**: a 2xx answer delivers; anything else, including a redirect (never followed), is
   retried after 30 s, 2 min, 10 min, 30 min, 1 h, 3 h and 6 h, up to `WEBHOOK_MAX_ATTEMPTS`
   (default 8); then the delivery fails and `webhook.delivery-failed` is audited. Each attempt has
-  an overall deadline, `WEBHOOK_SEND_TIMEOUT` (20 s: connect, TLS, request and answer together).
+  an overall deadline, `WEBHOOK_SEND_TIMEOUT` (20 s: name lookup, connect, TLS, request and answer
+  together).
   Delivery is **at least once**: an attempt whose answer was lost is made again with the same
   `X-DSP-Event-Id`, so receivers should drop events they have already handled. The delivery log
   (per webhook, with each payload) keeps finished deliveries for `WEBHOOK_LOG_RETENTION` (30 days;
@@ -563,8 +566,10 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
 - **Import** (users with write access): *Import* takes a CSV in the export's layout (a `dn` column
   is optional: without it, entries are named by the form's naming attribute in the first create
   container) or LDIF entries (`changetype: add` too; modify, delete and moddn records are
-  refused, and so is any file with a value given as a URL, `attr:< file:///…` or `http://…`, which
-  would make the server read a file or fetch a URL). *Check file* runs every row without writing and shows what would be created,
+  refused, and so is any file with `:<` on a line other than a comment, as in a value given as a
+  URL (`attr:< file:///…`, `http://…`, also in a `control:` line), which would make the server read
+  a file or fetch a URL, and any line starting with a tab; give a value that contains `:<`
+  base64-encoded, `attr:: …`). *Check file* runs every row without writing and shows what would be created,
   updated, left unchanged or refused, with the field messages; *Import* then writes. Existing
   entries get the values given (an empty cell leaves an attribute alone); others are created;
   the import can be limited to only creating or only updating. Each entry goes through the same
@@ -576,7 +581,11 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   many members (one per line) in one audited change, up to `BULK_MAX_MEMBERS` (5,000). Sent as
   value-level adds and deletes with the permissive modify control (never a replace of the list),
   so another change made at the same time is kept, and so is an Active Directory group of more
-  than 1,500 members, whose members come back in ranges. The same applies to the API.
+  than 1,500 members, whose members come back in ranges. The same applies to the API. Saving a
+  group in the entry form, an API update and an import row also change member, uniqueMember and
+  memberUid by their difference (value-level adds and deletes), and refuse (409 `ranged_values`)
+  to edit a member list the directory returned in ranges, which only the bulk change can add to
+  or remove from.
 - Not yet (Wave 4): import as an unattended scheduled job, LDIF modify and delete records,
   multi-select bulk edit and delete in the list, clearing attributes by import, and lifting the
   1,000-entry cap of the list view.
