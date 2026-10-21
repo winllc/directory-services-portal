@@ -5,6 +5,7 @@ import com.enssolutions.license.LicenseManager;
 import com.enssolutions.license.LicenseVerifier;
 import java.time.Instant;
 import java.util.Optional;
+import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -53,10 +54,22 @@ public class LicensingConfiguration implements WebMvcConfigurer {
     return Optional.ofNullable(build.getIfAvailable()).map(BuildProperties::getTime);
   }
 
+  /**
+   * Alone: the license file and state directory, as before. With the shared database
+   * (DSP_DATABASE_URL): the license state in its tables, shared by every replica; the first use
+   * imports the installation id, the revisions seen and the license from ENS_LICENSE_STATE_DIR and
+   * ENS_LICENSE_FILE, so an existing installation keeps its id ({@link LicenseStateGuard} refuses
+   * to start where it would get a new one instead).
+   */
   @Bean
-  LicenseManager licenseManager() {
+  LicenseManager licenseManager(ObjectProvider<DataSource> dataSource) {
     Optional<Instant> released = releaseDate();
-    return LicenseManager.fromEnvironment(Licensing.PRODUCT, LicenseVerifier.trusting(EnsKeys.PUBLIC_KEYS), released);
+    LicenseVerifier verifier = LicenseVerifier.trusting(EnsKeys.PUBLIC_KEYS);
+    DataSource shared = dataSource.getIfAvailable();
+    if (shared == null) return LicenseManager.fromEnvironment(Licensing.PRODUCT, verifier, released);
+    LicenseStateGuard.check(shared, Licensing.PRODUCT, System.getenv());
+    // The pool itself, not a transaction-aware proxy: the store manages its own transactions.
+    return LicenseManager.fromEnvironment(Licensing.PRODUCT, verifier, released, shared);
   }
 
   @Override
@@ -72,7 +85,7 @@ public class LicensingConfiguration implements WebMvcConfigurer {
     try {
       LicenseCheck check = manager.current();
       log.info("License: {} ({}, {}). Installation id {}; license file {}; release date {}.", check.message(), check.state(),
-          check.mode(), manager.installationId(), manager.licenseFile(), releaseDate().map(Object::toString).orElse("unknown"));
+          check.mode(), manager.installationId(), manager.licenseLocation(), releaseDate().map(Object::toString).orElse("unknown"));
     } catch (IllegalStateException e) {
       log.error("License: {}. Make ENS_LICENSE_STATE_DIR a directory this user can write (see README, Licensing).", e.getMessage());
     }

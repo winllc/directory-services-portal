@@ -14,9 +14,16 @@ metadata:
   labels:
     {{- include "dsp.labels" $root | nindent 4 }}
     app.kubernetes.io/component: api
-  {{- with .p.annotations }}
+  {{- if or .p.annotations (eq .id "license") }}
   annotations:
+    {{- if eq .id "license" }}
+    # The installation id lives here (or was imported from here): never deleted by Helm, not even
+    # by `helm uninstall` or when the API stops mounting it.
+    helm.sh/resource-policy: keep
+    {{- end }}
+    {{- with .p.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
   {{- end }}
 spec:
   accessModes:

@@ -52,10 +52,11 @@ api:
 
   # API replicas. One (the default) keeps everything as before: sessions, the sign-in lockout and
   # jobs in the API's memory, configuration and the audit store in the data volume. More than one
-  # needs the shared database (database.url), whose tables hold all of these, and volumes that
-  # don't pin the pods to one node: persistence.license ReadWriteMany (the license state; see the
-  # README, High availability), persistence.data disabled or ReadWriteMany (read once, when the
-  # first start with the database imports it). The chart refuses other combinations.
+  # needs the shared database (database.url), whose tables hold all of these and the license
+  # state, and persistence.data disabled or ReadWriteMany (read once, when the first start with
+  # the database imports it). Run that first start with one replica: it also imports the
+  # installation id from the license volume, which several replicas then no longer mount
+  # (ReadWriteOnce; its PVC is kept). The chart refuses other combinations.
   # (0 stops the portal and keeps the volumes.)
   replicaCount: 1
   # Deployment strategy. "" (auto): RollingUpdate (maxUnavailable 0, maxSurge 1, an upgrade never

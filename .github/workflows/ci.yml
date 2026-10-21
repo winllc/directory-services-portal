@@ -140,7 +140,19 @@ jobs:
             grep -qF -- "$want" <<<"$out" || { echo "$out"; exit 1; }
           }
           fails "needs database.url" -f "$ha" --set database.url=
-          fails "persistence.license.accessModes [ReadWriteMany]" -f "$ha" --set 'persistence.license.accessModes={ReadWriteOnce}'
+          # Several replicas with the database: the license state is in the database, so the
+          # ReadWriteOnce license PVC is kept (never deleted by Helm) but not mounted, and a given
+          # license reaches the API as ENS_LICENSE; one replica still mounts it (first-start import).
+          api="$(helm template dsp "$CHART" -f "$ha" --show-only templates/api-deployment.yaml)"
+          if grep -q 'claimName: dsp-directory-services-portal-license' <<<"$api"; then echo "license PVC mounted by several replicas"; exit 1; fi
+          grep -q 'name: ENS_LICENSE$' <<<"$api"
+          grep -A1 'name: ENS_LICENSE_EXPECT_INSTALLATION_ID' <<<"$api" | grep -q '"true"'
+          if helm template dsp "$CHART" -f "$ha" --set api.replicaCount=1 --set persistence.data.enabled=true --show-only templates/api-deployment.yaml \
+            | grep -q ENS_LICENSE_EXPECT_INSTALLATION_ID; then echo "EXPECT with the license volume mounted"; exit 1; fi
+          if grep -q 'name: license-init' <<<"$api"; then echo "license-init without the license volume"; exit 1; fi
+          helm template dsp "$CHART" -f "$ha" --set api.replicaCount=1 --set persistence.data.enabled=true --show-only templates/api-deployment.yaml \
+            | grep -q 'claimName: dsp-directory-services-portal-license'
+          helm template dsp "$CHART" -f "$ha" --show-only templates/pvc.yaml | grep -q 'helm.sh/resource-policy: keep'
           fails "persistence.data ReadWriteOnce" -f "$ha" --set persistence.data.enabled=true
           fails "api.updateStrategy RollingUpdate with a ReadWriteOnce volume" -f "$CHART/ci/default-values.yaml" --set api.updateStrategy=RollingUpdate --set database.url=jdbc:postgresql://db:5432/dsp
           fails "database.url must be a PostgreSQL JDBC URL" -f "$CHART/ci/default-values.yaml" --set database.url=postgres://x

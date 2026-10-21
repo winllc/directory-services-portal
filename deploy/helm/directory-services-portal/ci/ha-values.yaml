@@ -1,6 +1,6 @@
 # Several API replicas on the shared PostgreSQL database, with OIDC single sign-on: rolling updates,
-# a PodDisruptionBudget, the license state on a ReadWriteMany volume and no data volume (its
-# content was imported by the first start with the database).
+# a PodDisruptionBudget, the license state in the database (its ReadWriteOnce volume kept but no
+# longer mounted) and no data volume (both imported by the first start with the database).
 ldap:
   url: ldaps://ldap.corp.example:636
   bindDn: cn=portal,ou=system,dc=corp,dc=example
@@ -11,11 +11,10 @@ ldap:
 api:
   replicaCount: 3
 persistence:
-  license:
-    accessModes: [ReadWriteMany]
-    storageClass: nfs
   data:
     enabled: false
+license:
+  existingSecret: dsp-license
 database:
   url: jdbc:postgresql://postgres.db.svc:5432/dsp
   username: dsp

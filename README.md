@@ -77,7 +77,15 @@ one replica and the `Recreate` strategy). What is new and optional:
 - [The shared database](#high-availability-several-api-instances) (`DSP_DATABASE_*`, PostgreSQL)
   for several API instances. Its first start imports `DATA_DIR`; keep the data volume mounted for
   it, and don't return to running without the database afterwards.
-- Helm: `api.replicaCount` may exceed 1 (with the database and a ReadWriteMany license volume),
+- License state in the database: with `DSP_DATABASE_*` the installation id, license and
+  revisions move into the database at the first start (imported from the license volume, so keep
+  it mounted then); an upgraded database with no id to import refuses to start rather than make a
+  new one, as does a pod running without the license volume while the database has no id
+  (`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` overrides only while the database holds no license
+  state). Without the database the license files are used exactly as before.
+- Helm: the license PVC now carries `helm.sh/resource-policy: keep`, so `helm uninstall` no
+  longer deletes it; delete it with `kubectl delete pvc` when you mean to.
+- Helm: `api.replicaCount` may exceed 1 (with the database),
   `api.updateStrategy`, `api.podDisruptionBudget`, `database.*`, `sso.*`,
   `networkPolicy.egress.database` and `.sso`.
 - The release bundle's `env.template` lists the new variables; `upgrade.sh` keeps your `.env`, so
@@ -791,10 +799,30 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
 - **Single sign-on** requests in flight and used SAML assertion ids are shared, so the provider's
   answer may reach any instance.
 
-The license state (installation id, license, revisions seen) is still kept in
-`ENS_LICENSE_STATE_DIR`: every instance must see the same directory (a shared volume; on
-Kubernetes a ReadWriteMany license volume, which the chart requires for more than one replica).
-The ENS license library's database store will remove that requirement.
+- **The license state** (installation id, license, revisions seen) moves into the database
+  (`ens_license_*`, ENS license library 1.2.0's database store): every instance has the same
+  installation id and license, and an upload on the license screen reaches all of them. The first
+  start imports the id, the revisions and the license from `ENS_LICENSE_STATE_DIR` and
+  `ENS_LICENSE_FILE`, so licenses bound to this installation keep working; after that the license
+  volume is not read. **Keep the license volume mounted for that first start.** If a database that
+  was already in use (an earlier release) has no installation id yet and there is no
+  `installation-id` file to import, the API refuses to start rather than make a new id, which would
+  break bound licenses. The same applies, whatever the database's history, to an instance started
+  with `ENS_LICENSE_EXPECT_INSTALLATION_ID=true` (the Helm chart sets it where the license volume
+  is replaced by an empty directory): such an instance never makes the id, so run the first start
+  with one replica. `ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` accepts a new id, only while the
+  database holds no license state at all and with an ERROR in the log on every start: set it once,
+  for an installation that never had a license, and remove it. A new database behind a new
+  install just makes one id for all instances.
+- With the license volume disabled (no `ENS_LICENSE_STATE_DIR` that persists) and the database
+  on, the database is the only copy of the installation id: if it is rebuilt or restored without
+  the `ens_license_*` tables, there is nothing to recover the id from and the installation gets a
+  new one (licenses bound to the old id must be re-issued). Back up the database, or keep the
+  license volume.
+- After the move, the license volume holds the license state of that moment and is no longer
+  updated: a license uploaded later is only in the database. Don't go back to running without the
+  database (the volume's old license would return), and keep the volume only as the import
+  source.
 
 **Moving an existing installation to the database: upgrade a single instance first.** Set the
 `DSP_DATABASE_*` variables and restart the single instance with its data volume still mounted. The first start imports
