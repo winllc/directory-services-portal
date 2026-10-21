@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
  * (member, uniqueMember or memberUid, or any multi-valued DN field). Reads and changes go through
  * {@link EntryService}, so the definition's namespace, the user's permissions, the form's
  * validation and the audit trail all apply exactly as when the group is edited in the portal.
+ * Changes are value-level adds and deletes ({@link EntryService#changeValues}), never a replace of
+ * the member list.
  */
 @Service
 public class Memberships {
@@ -29,7 +31,12 @@ public class Memberships {
 
   public record Members(String dn, String attribute, List<String> members) {}
 
-  public record Change(String dn, String attribute, List<String> added, List<String> removed, List<String> members) {}
+  /**
+   * What changed. {@code partial}: the directory returned the group's values in ranges (Active
+   * Directory, over 1,500 members), so the requested values were sent as they are and the server
+   * skipped those already present or absent.
+   */
+  public record Change(String dn, String attribute, List<String> added, List<String> removed, boolean partial) {}
 
   private final EntryService entries;
   private final IntegrationProperties props;
@@ -77,28 +84,8 @@ public class Memberships {
     if (dnValued) {
       for (String v : toAdd) if (v.length() > 1024 || !Dns.isValid(v)) throw ApiException.badRequest("\"" + shorten(v) + "\" is not a valid DN");
     }
-    DirectoryEntry entry = entries.get(user, def, dn);
-    List<String> current = entry.values(f.attribute());
-    List<String> next = new ArrayList<>();
-    List<String> removed = new ArrayList<>();
-    for (String v : current) {
-      if (toRemove.stream().anyMatch(r -> same(r, v, dnValued))) removed.add(v);
-      else next.add(v);
-    }
-    List<String> added = new ArrayList<>();
-    for (String v : toAdd) {
-      if (next.stream().noneMatch(x -> same(x, v, dnValued))) {
-        next.add(v);
-        added.add(v);
-      }
-    }
-    if (added.isEmpty() && removed.isEmpty()) return new Change(entry.dn(), f.attribute(), List.of(), List.of(), current);
-    DirectoryEntry updated = entries.update(user, def, entry.dn(), Map.of(f.attribute(), next), false);
-    return new Change(updated.dn(), f.attribute(), added, removed, updated.values(f.attribute()));
-  }
-
-  private static boolean same(String a, String b, boolean dn) {
-    return dn ? Dns.equal(a, b) : a.equalsIgnoreCase(b);
+    EntryService.ValueChange c = entries.changeValues(user, def, dn, f, toAdd, toRemove, dnValued);
+    return new Change(c.dn(), c.attribute(), c.added(), c.removed(), c.partial());
   }
 
   private static List<String> clean(List<String> values) {

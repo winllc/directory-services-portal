@@ -508,6 +508,60 @@ public class EntryService {
     return loadEntry(def, form, targetDn);
   }
 
+  /** The outcome of {@link #changeValues}; {@code partial}: the server returned the values in ranges. */
+  public record ValueChange(String dn, String attribute, List<String> added, List<String> removed, boolean partial) {}
+
+  /**
+   * Adds and removes values of one multi-valued field (group members) as value-level ADD and DELETE
+   * modifications, never a REPLACE of the whole attribute: a concurrent change to other values is
+   * kept, and so are the values of a group the server returned only in part (Active Directory's
+   * ranged retrieval of more than 1,500 members), which a read-modify-replace would wipe. Same
+   * permission, namespace, validation (of the added values) and audit as {@link #update}; the audit
+   * event records the removed values as {@code <attribute>.old} and the added ones as
+   * {@code <attribute>.new}, with {@code details.change = values}.
+   */
+  public ValueChange changeValues(SessionUser user, DirectoryDefinition def, String dn, FormField field, List<String> add, List<String> remove,
+      boolean dnValued) {
+    AuditLog.Draft event = audit.event("entry.update").by(user).definition(def.id()).target("entry", dn, null);
+    return audited("update", event, () -> {
+      if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
+      require(user, def, AccessLevel.WRITE);
+      FormDefinition form = form(def);
+      if (!FormValidator.isWritable(form, field, FormValidator.Mode.UPDATE)) throw ApiException.forbidden(field.label() + " can't be changed");
+      DirectoryEntry current = loadEntry(def, form, dn);
+      String name = title(def, current);
+      event.target("entry", current.dn(), name);
+      String attr = field.attribute();
+      String key = attr.toLowerCase();
+      boolean partial = current.attributes().keySet().stream().anyMatch(k -> k.startsWith(key + ";range="));
+      List<String> present = current.values(attr);
+      java.util.function.BiPredicate<String, String> same = (a, b) -> dnValued ? Dns.equal(a, b) || a.equalsIgnoreCase(b) : a.equalsIgnoreCase(b);
+      List<String> toAdd = partial ? List.copyOf(add) : add.stream().filter(v -> present.stream().noneMatch(p -> same.test(p, v))).toList();
+      List<String> toRemove = partial ? List.copyOf(remove) : present.stream().filter(p -> remove.stream().anyMatch(r -> same.test(p, r))).toList();
+      toRemove = toRemove.stream().filter(v -> toAdd.stream().noneMatch(a -> same.test(a, v))).toList();
+      if (!toAdd.isEmpty()) {
+        List<OptionItem> resolved = field.dropdownWidget() && field.dropdown() instanceof DropdownSource.Ldap src && !field.allowsCustomValues()
+            ? options.lookup(src, toAdd) : null;
+        String error = FormValidator.validateField(field, toAdd, resolved);
+        if (error != null) throw ApiException.badRequest("Some fields are invalid", Map.of(key, error));
+      }
+      if (!partial && field.required() && present.size() - toRemove.size() + toAdd.size() <= 0) {
+        throw ApiException.badRequest("Some fields are invalid", Map.of(key, field.label() + " is required"));
+      }
+      if (toAdd.isEmpty() && toRemove.isEmpty()) return new ValueChange(current.dn(), attr, List.of(), List.of(), partial);
+      List<Modification> changes = new ArrayList<>();
+      if (!toAdd.isEmpty()) changes.add(new Modification(ModificationType.ADD, attr, toAdd.toArray(String[]::new)));
+      if (!toRemove.isEmpty()) changes.add(new Modification(ModificationType.DELETE, attr, toRemove.toArray(String[]::new)));
+      AuditEvent.Change recorded = change(attr, toRemove, toAdd);
+      event.changes(List.of(recorded)).detail("change", "values");
+      audit.requireWritable();
+      directory.modifyValues(current.dn(), changes);
+      event.success();
+      publish(user, EntryChanged.UPDATE, def, form, current.dn(), null, name, List.of(recorded), false);
+      return new ValueChange(current.dn(), attr, toAdd, toRemove, partial);
+    });
+  }
+
   public void remove(SessionUser user, DirectoryDefinition def, String dn) {
     AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).target("entry", dn, null);
     audited("delete", event, () -> {

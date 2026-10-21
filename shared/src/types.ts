@@ -614,9 +614,13 @@ export interface GroupMembers {
   members: string[];
 }
 
-export interface MembershipChangeResult extends GroupMembers {
+export interface MembershipChangeResult {
+  dn: string;
+  attribute: string;
   added: string[];
   removed: string[];
+  /** The directory returned the group's members in ranges: the values were sent as requested. */
+  partial: boolean;
 }
 
 // ---------------------------------------------------------------------------

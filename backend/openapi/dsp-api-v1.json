@@ -854,11 +854,8 @@
           "dn" : {
             "type" : "string"
           },
-          "members" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string"
-            }
+          "partial" : {
+            "type" : "boolean"
           },
           "removed" : {
             "type" : "array",

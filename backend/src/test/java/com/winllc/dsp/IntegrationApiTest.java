@@ -165,7 +165,8 @@ class IntegrationApiTest extends ApiTestSupport {
     JsonNode change = body(r);
     assertThat(change.get("added").toString()).contains(BOB);
     assertThat(change.get("removed").toString()).contains(ALICE);
-    assertThat(change.get("members").toString()).contains(BOB).doesNotContain(ALICE);
+    assertThat(body(call(t, get(u("/api/v1/directories/groups/members" + q(ENGINEERING))))).get("members").toString())
+        .contains(BOB).doesNotContain(ALICE);
     // A value that is not a person the member field offers is refused by the form's validation.
     MvcResult bad = call(t, jsonBody(post(u("/api/v1/directories/groups/members" + q(ENGINEERING))), Map.of("add", List.of("uid=nobody,ou=people," + B))));
     assertThat(status(bad)).isEqualTo(400);
@@ -199,6 +200,56 @@ class IntegrationApiTest extends ApiTestSupport {
     assertThat(status(call(full, get("/api/v1/directories/staff/entries")))).isEqualTo(404);
     // Still a helpdesk member: devices stay readable.
     assertThat(status(call(full, get("/api/v1/directories/devices/entries")))).isEqualTo(200);
+  }
+
+  @Test
+  void aTokenOfADisabledOrLockedCreatorIsRefused() throws Exception {
+    // The demo schema has no lock attributes: teach the embedded server nsAccountLock (389-DS) and
+    // pwdAccountLockedTime (password policy), and let dave's entry hold them.
+    String dave = "uid=dave,ou=people," + B;
+    // (The embedded server's schema entry lacks its own cn value, which the change must add.)
+    directory.modify("cn=schema", List.of(new Modification(ModificationType.REPLACE, "cn", "schema"),
+        new Modification(ModificationType.ADD, "attributeTypes",
+        "( 2.16.840.1.113730.3.1.610 NAME 'nsAccountLock' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )",
+        "( 1.3.6.1.4.1.42.2.27.8.1.17 NAME 'pwdAccountLockedTime' SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 SINGLE-VALUE )")));
+    String admins = "cn=directory-admins,ou=groups," + B;
+    directory.modify(admins, List.of(new Modification(ModificationType.ADD, "member", dave)));
+    Token t = token(login("dave"), "entries:read");
+    assertThat(status(call(t, get("/api/v1/directories")))).isEqualTo(200);
+
+    directory.modify(dave, List.of(new Modification(ModificationType.ADD, "objectClass", "extensibleObject"),
+        new Modification(ModificationType.ADD, "nsAccountLock", "true")));
+    owners.forget(t.id());
+    MvcResult locked = call(t, get("/api/v1/directories"));
+    assertThat(status(locked)).isEqualTo(401);
+    assertThat(body(locked).get("code").asString()).isEqualTo("token_owner_disabled");
+    // Refused on every request, not cached; usable again once unlocked.
+    assertThat(status(call(t, get("/api/v1/directories")))).isEqualTo(401);
+    directory.modify(dave, List.of(new Modification(ModificationType.DELETE, "nsAccountLock")));
+    assertThat(status(call(t, get("/api/v1/directories")))).isEqualTo(200);
+
+    directory.modify(dave, List.of(new Modification(ModificationType.ADD, "pwdAccountLockedTime", "20261021000000Z")));
+    owners.forget(t.id());
+    assertThat(body(call(t, get("/api/v1/directories"))).get("code").asString()).isEqualTo("token_owner_disabled");
+  }
+
+  @Test
+  void refusesAnAddressThatKeepsPresentingBadTokens() throws Exception {
+    MockHttpServletRequestBuilder bad = get("/api/v1/directories").header("Authorization", "Bearer dspat_guess").with(r -> {
+      r.setRemoteAddr("203.0.113.77");
+      return r;
+    });
+    int limited = 0;
+    for (int i = 0; i < 40; i++) {
+      MvcResult r = mvc.perform(bad).andReturn();
+      if (status(r) == 429) {
+        limited++;
+        assertThat(r.getResponse().getHeader("Retry-After")).isNotNull();
+      }
+    }
+    assertThat(limited).isGreaterThanOrEqualTo(10);
+    // Another address is not affected.
+    assertThat(status(anonymous(get("/api/v1/directories").header("Authorization", "Bearer dspat_guess")))).isEqualTo(401);
   }
 
   @Test
