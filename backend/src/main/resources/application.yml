@@ -170,6 +170,8 @@ portal:
       # Requests per minute per token unless the token sets its own (per API replica).
       rate-limit-per-minute: ${API_RATE_LIMIT_PER_MINUTE:120}
       max-token-days: ${API_TOKEN_MAX_DAYS:365}
+      # Unknown, expired or revoked tokens per minute per client address before it gets 429.
+      failed-token-limit-per-minute: ${API_FAILED_TOKEN_LIMIT_PER_MINUTE:30}
     webhooks:
       enabled: ${WEBHOOKS_ENABLED:true}
       # Host names (exact or *.example.com, ";"-separated) whose webhooks may reach private,
@@ -178,6 +180,8 @@ portal:
       max-attempts: ${WEBHOOK_MAX_ATTEMPTS:8}
       connect-timeout: ${WEBHOOK_CONNECT_TIMEOUT:5s}
       read-timeout: ${WEBHOOK_READ_TIMEOUT:10s}
+      # The most one delivery attempt may take in all.
+      send-timeout: ${WEBHOOK_SEND_TIMEOUT:20s}
       log-retention: ${WEBHOOK_LOG_RETENTION:30d}
     transfer:
       export-max-entries: ${EXPORT_MAX_ENTRIES:10000}

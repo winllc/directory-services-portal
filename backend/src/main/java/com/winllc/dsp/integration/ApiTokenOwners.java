@@ -27,23 +27,29 @@ public class ApiTokenOwners {
     this.auth = auth;
   }
 
+  /** The creator as the directory has them now, or why the token may not act as them. */
+  public record Owner(SessionUser user, String problem) {}
+
   /**
-   * The creator with current rights, or null when their entry no longer exists.
+   * The creator with current rights; problem "missing" when their entry no longer exists, or
+   * "disabled" when the directory marks their account disabled or locked. A usable owner is
+   * cached for a minute; a refusal is not cached, so re-enabling takes effect at once and a
+   * disabled account is refused on every request.
    *
    * @throws RuntimeException when the directory can't be read
    */
-  public SessionUser resolve(ApiTokens.Token token) {
+  public Owner resolve(ApiTokens.Token token) {
     long now = System.nanoTime();
     Cached c = cache.get(token.id());
-    if (c != null && now - c.at() < TTL_NANOS) return c.user();
+    if (c != null && now - c.at() < TTL_NANOS) return new Owner(c.user(), null);
     SessionUser stub = new SessionUser(token.createdBy(), token.createdByDn(), token.createdBy(), null, List.of(), false, AUTH_METHOD, null);
-    SessionUser fresh = auth.refresh(stub);
-    if (fresh == null) {
+    AuthService.Checked fresh = auth.refreshActive(stub);
+    if (fresh == null || fresh.user() == null) {
       cache.remove(token.id());
-      return null;
+      return new Owner(null, fresh == null ? "missing" : "disabled");
     }
-    cache.put(token.id(), new Cached(fresh, now));
-    return fresh;
+    cache.put(token.id(), new Cached(fresh.user(), now));
+    return new Owner(fresh.user(), null);
   }
 
   public void forget(String tokenId) {

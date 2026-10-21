@@ -26,6 +26,14 @@ public class IntegrationProperties {
     private int rateLimitPerMinute = 120;
     /** The longest lifetime an administrator may give a token. */
     private int maxTokenDays = 365;
+    /**
+     * Unknown, expired or revoked tokens per minute per client address (per replica) before that
+     * address is refused with 429 without looking tokens up.
+     */
+    private int failedTokenLimitPerMinute = 30;
+
+    public int getFailedTokenLimitPerMinute() { return failedTokenLimitPerMinute; }
+    public void setFailedTokenLimitPerMinute(int failedTokenLimitPerMinute) { this.failedTokenLimitPerMinute = failedTokenLimitPerMinute; }
 
     public int getRateLimitPerMinute() { return rateLimitPerMinute; }
     public void setRateLimitPerMinute(int rateLimitPerMinute) { this.rateLimitPerMinute = rateLimitPerMinute; }
@@ -45,6 +53,8 @@ public class IntegrationProperties {
     private int maxAttempts = 8;
     private Duration connectTimeout = Duration.ofSeconds(5);
     private Duration readTimeout = Duration.ofSeconds(10);
+    /** The most one delivery attempt may take in all (connect, handshake, request, answer). */
+    private Duration sendTimeout = Duration.ofSeconds(20);
     /** How long finished deliveries stay in the delivery log. */
     private Duration logRetention = Duration.ofDays(30);
 
@@ -59,6 +69,8 @@ public class IntegrationProperties {
     public Duration getReadTimeout() { return readTimeout; }
     public void setReadTimeout(Duration readTimeout) { this.readTimeout = readTimeout; }
     public Duration getLogRetention() { return logRetention; }
+    public Duration getSendTimeout() { return sendTimeout; }
+    public void setSendTimeout(Duration sendTimeout) { this.sendTimeout = sendTimeout; }
     public void setLogRetention(Duration logRetention) { this.logRetention = logRetention; }
 
     public List<String> allowedHostList() {

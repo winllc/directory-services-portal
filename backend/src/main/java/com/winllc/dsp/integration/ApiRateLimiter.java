@@ -8,7 +8,9 @@ import org.springframework.stereotype.Component;
 
 /**
  * A token bucket per API token: up to {@code limit} requests in a burst, refilled at
- * {@code limit} per minute. Kept per API replica (several replicas each allow the limit).
+ * {@code limit} per minute. Kept in each API replica's memory: with several replicas behind a load
+ * balancer, a token can make up to the limit on each of them. Also counts failed token attempts
+ * per client address ({@code ip:} keys).
  */
 @Component
 public class ApiRateLimiter {
@@ -59,6 +61,20 @@ public class ApiRateLimiter {
       return b;
     });
     return wait[0];
+  }
+
+  /**
+   * Seconds until the bucket has a request left, without taking one (0: it has). For refusing a
+   * client early, before any work, once its failures used up its budget.
+   */
+  public long blocked(String key, int limit) {
+    int perMinute = Math.max(1, limit);
+    Bucket b = buckets.get(key);
+    if (b == null) return 0;
+    synchronized (b) {
+      double tokens = Math.min(perMinute, b.tokens + (nanos.getAsLong() - b.at) * (double) perMinute / MINUTE_NANOS);
+      return tokens >= 1 ? 0 : Math.max(1, (long) Math.ceil((1 - tokens) * 60.0 / perMinute));
+    }
   }
 
   public void forget(String tokenId) {

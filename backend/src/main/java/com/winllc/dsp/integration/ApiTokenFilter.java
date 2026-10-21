@@ -59,8 +59,18 @@ public class ApiTokenFilter extends OncePerRequestFilter {
       unauthorized(response, "API token required: send Authorization: Bearer <token>", "token_required");
       return;
     }
+    // A client guessing tokens is refused before any lookup once it used up its failures.
+    String client = "ip:" + request.getRemoteAddr();
+    int failures = props.getApi().getFailedTokenLimitPerMinute();
+    long blocked = limiter.blocked(client, failures);
+    if (blocked > 0) {
+      response.setHeader("Retry-After", Long.toString(blocked));
+      write(response, 429, "Too many invalid API tokens from this address; retry after " + blocked + " s", "rate_limited");
+      return;
+    }
     ApiTokens.Check check = tokens.check(header.substring(7).trim());
     if (!check.ok()) {
+      limiter.acquire(client, failures);
       String message = switch (check.problem()) {
         case "expired" -> "This API token has expired";
         case "revoked" -> "This API token has been revoked";
@@ -77,19 +87,22 @@ public class ApiTokenFilter extends OncePerRequestFilter {
       write(response, 429, "Too many requests for this API token; retry after " + wait + " s", "rate_limited");
       return;
     }
-    SessionUser owner;
+    ApiTokenOwners.Owner resolved;
     try {
-      owner = owners.resolve(token);
+      resolved = owners.resolve(token);
     } catch (RuntimeException e) {
       log.warn("Could not read the creator of API token {} from the directory: {}", LogSafe.of(token.name()), LogSafe.of(e.getMessage()));
       write(response, 503, "The directory is unavailable", "directory_unavailable");
       return;
     }
-    if (owner == null) {
-      if (denials != null) denials.denied(request, "api_token_owner_missing", "The user who created this API token no longer exists");
-      unauthorized(response, "The user who created this API token no longer exists", "token_owner_missing");
+    if (resolved.user() == null) {
+      String message = "missing".equals(resolved.problem()) ? "The user who created this API token no longer exists"
+          : "The account of the user who created this API token is disabled or locked";
+      if (denials != null) denials.denied(request, "api_token_owner_" + resolved.problem(), message);
+      unauthorized(response, message, "token_owner_" + resolved.problem());
       return;
     }
+    SessionUser owner = resolved.user();
     Set<ApiScope> scopes = EnumSet.noneOf(ApiScope.class);
     token.scopes().stream().map(ApiScope::parse).filter(Objects::nonNull).forEach(scopes::add);
     request.setAttribute(ApiTokenContext.ATTRIBUTE, new ApiTokenContext(token.id(), token.name(), scopes,
