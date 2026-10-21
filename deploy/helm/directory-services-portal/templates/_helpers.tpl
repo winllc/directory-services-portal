@@ -204,12 +204,6 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{- if not .Values.database.url -}}
 {{- fail "api.replicaCount > 1 needs database.url (the shared PostgreSQL database for sessions, the sign-in lockout, configuration, the audit store and jobs)" -}}
 {{- end -}}
-{{- if and .Values.persistence.license.enabled (not (has "ReadWriteMany" .Values.persistence.license.accessModes)) -}}
-{{- fail "api.replicaCount > 1 needs persistence.license.accessModes [ReadWriteMany]: every replica reads the license state (installation id, license) from that volume (see the README, High availability)" -}}
-{{- end -}}
-{{- if not .Values.persistence.license.enabled -}}
-{{- fail "api.replicaCount > 1 needs persistence.license enabled with ReadWriteMany: without it each pod would get its own installation id" -}}
-{{- end -}}
 {{- if and .Values.persistence.data.enabled (not (has "ReadWriteMany" .Values.persistence.data.accessModes)) -}}
 {{- fail "api.replicaCount > 1 with persistence.data ReadWriteOnce: the data volume is only read by the first start with the database (to import it); once that has run, set persistence.data.enabled=false (or use ReadWriteMany)" -}}
 {{- end -}}
@@ -291,7 +285,7 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{/* Whether the API mounts a ReadWriteOnce volume (which pins an update to Recreate). */}}
 {{- define "dsp.apiRwoVolume" -}}
 {{- $v := .Values -}}
-{{- if and $v.persistence.license.enabled (not (has "ReadWriteMany" $v.persistence.license.accessModes)) -}}true
+{{- if and (include "dsp.licensePvcMounted" .) (not (has "ReadWriteMany" $v.persistence.license.accessModes)) -}}true
 {{- else if and $v.persistence.data.enabled (not (has "ReadWriteMany" $v.persistence.data.accessModes)) -}}true
 {{- else if and $v.audit.file.enabled $v.audit.file.persistence.enabled (not (has "ReadWriteMany" $v.audit.file.persistence.accessModes)) -}}true
 {{- end -}}
@@ -312,4 +306,16 @@ the audit files and configuration, even on ReadWriteMany storage).
 {{/* Whether single sign-on needs the SAML metadata ConfigMap. */}}
 {{- define "dsp.samlMetadataXml" -}}
 {{- if .Values.sso.saml.metadataXml -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the API mounts the license PVC. Always without the shared database (the license state is
+on it) and with one replica (its first start with the database imports the installation id from
+it). With the database and several replicas a ReadWriteOnce volume can't follow every pod: the
+state is in the database by then (imported at that single-replica start; the API refuses to start
+rather than make a new id if it wasn't), so the pods get an emptyDir and the PVC is kept, unused.
+*/}}
+{{- define "dsp.licensePvcMounted" -}}
+{{- $v := .Values -}}
+{{- if and $v.persistence.license.enabled (or (not $v.database.url) (le (int $v.api.replicaCount) 1) (has "ReadWriteMany" $v.persistence.license.accessModes)) -}}true{{- end -}}
 {{- end -}}

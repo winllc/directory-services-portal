@@ -53,7 +53,7 @@ spec:
       {{- end }}
       securityContext:
         {{- include "dsp.podSecurityContext" (dict "ctx" $v.api.podSecurityContext "root" .) | nindent 8 }}
-      {{- if $licenseGiven }}
+      {{- if and $licenseGiven (include "dsp.licensePvcMounted" .) }}
       initContainers:
         # Copies the given license into the license volume only when no license is installed there
         # yet (as the release bundle's install.sh does), so a license uploaded later on the license
@@ -123,6 +123,15 @@ spec:
               value: /var/lib/ens/directory-portal
             - name: ENS_LICENSE_FILE
               value: /var/lib/ens/directory-portal/license.lic
+            {{- if and $licenseGiven (not (include "dsp.licensePvcMounted" .)) }}
+            # No license volume (state in the shared database): the given license is installed
+            # into the database when none usable is there yet, as license-init does on the volume.
+            - name: ENS_LICENSE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dsp.licenseSecretName" . }}
+                  key: license.lic
+            {{- end }}
             {{- if include "dsp.secretSet" (dict "v" $v.audit.splunk.token) }}
             - name: ENS_AUDIT_SPLUNK_TOKEN
               valueFrom:
@@ -224,7 +233,7 @@ spec:
             {{- end }}
       volumes:
         - name: license
-          {{- if $v.persistence.license.enabled }}
+          {{- if include "dsp.licensePvcMounted" . }}
           persistentVolumeClaim:
             claimName: {{ $v.persistence.license.existingClaim | default (printf "%s-license" (include "dsp.fullname" .)) }}
           {{- else }}
@@ -248,7 +257,7 @@ spec:
           emptyDir: {}
           {{- end }}
         {{- end }}
-        {{- if $licenseGiven }}
+        {{- if and $licenseGiven (include "dsp.licensePvcMounted" .) }}
         - name: license-src
           secret:
             secretName: {{ include "dsp.licenseSecretName" . }}

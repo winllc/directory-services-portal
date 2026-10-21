@@ -77,7 +77,12 @@ one replica and the `Recreate` strategy). What is new and optional:
 - [The shared database](#high-availability-several-api-instances) (`DSP_DATABASE_*`, PostgreSQL)
   for several API instances. Its first start imports `DATA_DIR`; keep the data volume mounted for
   it, and don't return to running without the database afterwards.
-- Helm: `api.replicaCount` may exceed 1 (with the database and a ReadWriteMany license volume),
+- License state in the database: with `DSP_DATABASE_*` the installation id, license and
+  revisions move into the database at the first start (imported from the license volume, so keep
+  it mounted then); an upgraded database with no id to import refuses to start rather than make a
+  new one (`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` overrides). Without the database the
+  license files are used exactly as before.
+- Helm: `api.replicaCount` may exceed 1 (with the database),
   `api.updateStrategy`, `api.podDisruptionBudget`, `database.*`, `sso.*`,
   `networkPolicy.egress.database` and `.sso`.
 - The release bundle's `env.template` lists the new variables; `upgrade.sh` keeps your `.env`, so
@@ -791,10 +796,17 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
 - **Single sign-on** requests in flight and used SAML assertion ids are shared, so the provider's
   answer may reach any instance.
 
-The license state (installation id, license, revisions seen) is still kept in
-`ENS_LICENSE_STATE_DIR`: every instance must see the same directory (a shared volume; on
-Kubernetes a ReadWriteMany license volume, which the chart requires for more than one replica).
-The ENS license library's database store will remove that requirement.
+- **The license state** (installation id, license, revisions seen) moves into the database
+  (`ens_license_*`, ENS license library 1.2.0's database store): every instance has the same
+  installation id and license, and an upload on the license screen reaches all of them. The first
+  start imports the id, the revisions and the license from `ENS_LICENSE_STATE_DIR` and
+  `ENS_LICENSE_FILE`, so licenses bound to this installation keep working; after that the license
+  volume is not read. **Keep the license volume mounted for that first start.** If a database that
+  was already in use (an earlier release) has no installation id yet and there is no
+  `installation-id` file to import, the API refuses to start rather than make a new id, which would
+  break bound licenses; set `ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` once only for an
+  installation that never had a license. A new database (fresh install) just makes one id for all
+  instances.
 
 **Moving an existing installation to the database: upgrade a single instance first.** Set the
 `DSP_DATABASE_*` variables and restart the single instance with its data volume still mounted. The first start imports

@@ -256,25 +256,29 @@ database; the files are left as they were but are not read again. Check the API 
 `Imported ...` lines, then:
 
 ```yaml
-# Step 2: drop the data volume, put the license state on a ReadWriteMany volume, scale out.
+# Step 2: drop the data volume and scale out.
 api:
   replicaCount: 3
 persistence:
   data:
     enabled: false
-  license:
-    accessModes: [ReadWriteMany]   # e.g. an NFS or CephFS storage class
 ```
+
+The license state (installation id, license, revisions seen) is imported into the database at the
+same first start, from the license volume, which must therefore be mounted then (it is, with one
+replica). With several replicas a ReadWriteOnce license volume is no longer mounted (the pods get
+an emptyDir and a license given with `license.*` reaches them as `ENS_LICENSE`); its PVC carries
+`helm.sh/resource-policy: keep`, so Helm never deletes it. A ReadWriteMany license volume stays
+mounted. If the database has no installation id and there is none to import, the API refuses to
+start rather than make a new one (`ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` via
+`api.extraEnv` overrides it, for an installation that never had a license).
 
 With more than one replica the chart renders a PodDisruptionBudget (`api.podDisruptionBudget`)
 and, with the database and no ReadWriteOnce volume mounted, a `RollingUpdate` strategy
 (`maxUnavailable: 0`; without the database it is always `Recreate`, and `RollingUpdate` is
 refused), so
 upgrades and node drains don't interrupt the portal. It refuses `replicaCount > 1` without
-`database.url`, with a ReadWriteOnce license volume, or with a ReadWriteOnce data or audit-file
-volume. The license state (installation id, license, revisions seen) still lives on the license
-volume, which is why it must be ReadWriteMany; moving it into the database is the next step (see
-the source README, High availability). Audit forwarding to Splunk and syslog runs on one elected
+`database.url`, or with a ReadWriteOnce data or audit-file volume. Audit forwarding to Splunk and syslog runs on one elected
 replica at a time; retention runs on one replica.
 
 ### Single sign-on
@@ -346,6 +350,11 @@ no responder or CRL answers for signs in with a warning in the API log. With
 `ocspResponderUrl` relay on a closed network), or `mode: "off"` to keep the check off. A mode you
 set yourself keeps `closed` as before. `helm upgrade --reuse-values` keeps the old `off`.
 
+From the release with the license state in the database, the license PVC gets
+`helm.sh/resource-policy: keep` (`helm uninstall` no longer deletes it), and with `database.url`
+the first start imports the installation id from it: upgrade with one replica first. Several
+replicas no longer need a ReadWriteMany license volume.
+
 From the release with single sign-on and the shared database, nothing changes until you set
 `sso.*` or `database.*`: one replica, `Recreate`, the same volumes. `api.replicaCount` may now be
 more than 1 with the conditions above, and `api.updateStrategy` (empty: automatic) and
@@ -373,8 +382,9 @@ bundle's `install.sh`). Replace a license on the license screen.
 The installation id is also in the API's startup log:
 `kubectl logs -n dsp deploy/dsp-directory-services-portal-api -c api | grep License:`.
 
-**Keep the license PVC** (`<release>-directory-services-portal-license`). `helm upgrade` keeps
-it, but `helm uninstall` deletes the PVCs the chart created. If it is lost, the installation gets
+**Keep the license PVC** (`<release>-directory-services-portal-license`). It carries
+`helm.sh/resource-policy: keep`, so neither `helm upgrade` nor `helm uninstall` deletes it (delete
+it yourself with `kubectl delete pvc` when you really mean to). If it is lost, the installation gets
 a new id and licenses bound to the old one must be re-bound. For installations you may
 reinstall, create the PVCs yourself and set `persistence.license.existingClaim` (and
 `persistence.data.existingClaim`).
@@ -382,7 +392,7 @@ reinstall, create the PVCs yourself and set `persistence.license.existingClaim` 
 ## Uninstall
 
 ```bash
-helm uninstall dsp -n dsp      # deletes the PVCs the chart created (license, data, audit file)
+helm uninstall dsp -n dsp      # deletes the data and audit-file PVCs the chart created; the license PVC is kept
 ```
 
 Existing claims (`existingClaim`) are never touched.
@@ -404,7 +414,7 @@ Existing claims (`existingClaim`) are never touched.
 | `api.image.repository` | `ghcr.io/winllc/directory-services-portal-api` | |
 | `api.image.tag` | `""` | empty: the chart's appVersion |
 | `api.image.pullPolicy` | `IfNotPresent` | |
-| `api.replicaCount` | `1` | more than 1 needs `database.url`, a ReadWriteMany license volume and no ReadWriteOnce data volume (see Several API replicas) |
+| `api.replicaCount` | `1` | more than 1 needs `database.url` and no ReadWriteOnce data volume (see Several API replicas) |
 | `api.updateStrategy` | `""` | `""`: `RollingUpdate` with `database.url` and no ReadWriteOnce volume, else `Recreate`; `RollingUpdate` needs `database.url` |
 | `api.podDisruptionBudget.minAvailable` | `1` | rendered while `replicaCount > 1` |
 | `api.javaOpts` | `-XX:MaxRAMPercentage=75.0` | `JAVA_OPTS` |
