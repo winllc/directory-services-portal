@@ -72,6 +72,8 @@ services:
       X509_EDGE_TERMINATION: ${X509_EDGE_TERMINATION:-false}
       # The public host:port sent to the API as X-Forwarded-Host (empty: the client's Host).
       PUBLIC_HOST: ${PUBLIC_HOST:-}
+      # The largest upload (schema and entry imports); at least the API's IMPORT_MAX_BYTES.
+      MAX_BODY_SIZE: ${MAX_BODY_SIZE:-5m}
     expose:
       - "8080"
     healthcheck:

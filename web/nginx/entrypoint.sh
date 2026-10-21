@@ -23,6 +23,15 @@ if [ -z "$(echo "$NGINX_LOCAL_RESOLVERS" | tr -d " ")" ]; then
     exit 1
 fi
 
+# The largest request body (schema and entry imports): MAX_BODY_SIZE, an nginx size such as 5m.
+DSP_MAX_BODY_SIZE="${MAX_BODY_SIZE:-5m}"
+case "$DSP_MAX_BODY_SIZE" in
+    ''|*[!0-9kKmM]*|[kKmM]*|*[kKmM]?*)
+        echo "dsp-entrypoint: MAX_BODY_SIZE must be a size such as 5m, 10m or 5242880, not $DSP_MAX_BODY_SIZE" >&2
+        exit 1 ;;
+esac
+export DSP_MAX_BODY_SIZE
+
 # Content-Security-Policy, or only reported (ENS_CSP_REPORT_ONLY=true: an escape hatch for a page
 # the policy breaks, not a setting to keep).
 case "${ENS_CSP_REPORT_ONLY:-false}" in
@@ -109,7 +118,7 @@ for template in "$template_dir"/*.template; do
     name=$(basename "$template" .template)
     # Owner-only: the rendered config holds the proxy secret.
     # shellcheck disable=SC2016 # the variables envsubst may replace
-    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS} ${DSP_FORWARDED_HOST}' \
+    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS} ${DSP_FORWARDED_HOST} ${DSP_MAX_BODY_SIZE}' \
         < "$template" > "$output_dir/$name")
     echo "dsp-entrypoint: rendered $template -> $output_dir/$name" >&2
     found=1

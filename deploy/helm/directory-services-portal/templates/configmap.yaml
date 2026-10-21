@@ -49,6 +49,16 @@ data:
   ENS_SESSION_MAX_PER_USER: {{ include "dsp.str" $v.server.session.maxPerUser | quote }}
   GROUP_REFRESH_INTERVAL: {{ include "dsp.str" $v.server.groupRefreshInterval | quote }}
   LOGIN_MAX_FAILURES: {{ include "dsp.str" $v.server.login.maxFailures | quote }}
+  # Integration API, webhooks, import and export
+  API_RATE_LIMIT_PER_MINUTE: {{ include "dsp.str" $v.integrations.api.rateLimitPerMinute | quote }}
+  API_TOKEN_MAX_DAYS: {{ include "dsp.str" $v.integrations.api.maxTokenDays | quote }}
+  WEBHOOKS_ENABLED: {{ $v.integrations.webhooks.enabled | quote }}
+  WEBHOOK_ALLOWED_HOSTS: {{ include "dsp.joinSemi" $v.integrations.webhooks.allowedHosts | quote }}
+  WEBHOOK_MAX_ATTEMPTS: {{ include "dsp.str" $v.integrations.webhooks.maxAttempts | quote }}
+  EXPORT_MAX_ENTRIES: {{ include "dsp.str" $v.integrations.transfer.exportMaxEntries | quote }}
+  IMPORT_MAX_BYTES: {{ include "dsp.str" $v.integrations.transfer.importMaxBytes | quote }}
+  IMPORT_MAX_ROWS: {{ include "dsp.str" $v.integrations.transfer.importMaxRows | quote }}
+  BULK_MAX_MEMBERS: {{ include "dsp.str" $v.integrations.transfer.bulkMaxMembers | quote }}
   LOGIN_LOCKOUT_WINDOW: {{ include "dsp.str" $v.server.login.lockoutWindow | quote }}
   ENS_COOKIE_SECURE: {{ include "dsp.cookieSecure" . | quote }}
   ENS_CSP_REPORT_ONLY: {{ $v.server.cspReportOnly | quote }}

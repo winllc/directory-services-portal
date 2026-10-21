@@ -235,6 +235,24 @@ jobs:
           grep -q 'port: 5432' <<<"$many"
           echo "HA guards OK"
 
+      - name: Check the integration settings
+        run: |
+          # Import limits reach the API and the web tier's upload limit (never below 5 MiB); webhook
+          # egress is opened only while webhooks are on; allow-listed hosts reach the API.
+          d="$CHART/ci/default-values.yaml"
+          cm="$(helm template dsp "$CHART" -f "$d" --set integrations.transfer.importMaxBytes=20971520 \
+            --set 'integrations.webhooks.allowedHosts={hooks.internal,*.corp.example}' --show-only templates/configmap.yaml)"
+          grep -qx '  IMPORT_MAX_BYTES: "20971520"' <<<"$cm"
+          grep -qx '  WEBHOOK_ALLOWED_HOSTS: "hooks.internal;\*.corp.example"' <<<"$cm"
+          helm template dsp "$CHART" -f "$d" --set integrations.transfer.importMaxBytes=20971520 --show-only templates/web-deployment.yaml \
+            | grep -A1 'name: MAX_BODY_SIZE' | grep -q '"20971520"'
+          helm template dsp "$CHART" -f "$d" --set integrations.transfer.importMaxBytes=1000 --show-only templates/web-deployment.yaml \
+            | grep -A1 'name: MAX_BODY_SIZE' | grep -q '"5242880"'
+          np() { helm template dsp "$CHART" -f "$d" --set networkPolicy.enabled=true "$@" --show-only templates/networkpolicy.yaml | grep -c 'port: 443' || true; }
+          [ "$(np)" -gt "$(np --set integrations.webhooks.enabled=false)" ] || { echo "no webhook egress"; exit 1; }
+          if helm template dsp "$CHART" -f "$d" --set 'integrations.webhooks.allowedHosts={bad host}' > /dev/null 2>&1; then echo "accepted a bad host"; exit 1; fi
+          echo "integration settings OK"
+
   image:
     # Builds both images on every push, checks the pair starts and answers through the web
     # tier, and publishes what it just checked. Nothing is published from a pull request: a
