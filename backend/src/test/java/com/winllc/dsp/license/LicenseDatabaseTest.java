@@ -135,13 +135,26 @@ class LicenseDatabaseTest {
   void theOverrideIsHonouredOnlyWhileTheDatabaseHoldsNoLicenseState() {
     Path none = dir.resolve("none");
     try (HikariDataSource ds = database(null)) {
-      Map<String, String> env = Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true", LicenseStateGuard.OVERRIDE, "true");
+      Map<String, String> env = Map.of("ENS_LICENSE_STATE_DIR", none.toString(), LicenseStateGuard.OVERRIDE, "true");
+      new JdbcTemplate(ds).update("INSERT INTO dsp_document (name, version, content) VALUES (?, 1, '\"x\"')", LicenseStateGuard.UPGRADED_MARKER);
       // Partial loss: revisions remain but the id is gone. The override must not mint a new id.
       new JdbcTemplate(ds).update("INSERT INTO ens_license_revision (product, license_id, revision) VALUES (?, 'L-1', 2)", PRODUCT);
       assertThatThrownBy(() -> LicenseStateGuard.check(ds, PRODUCT, env))
           .isInstanceOf(IllegalStateException.class).hasMessageContaining("not honoured");
       new JdbcTemplate(ds).update("DELETE FROM ens_license_revision");
       LicenseStateGuard.check(ds, PRODUCT, env);
+    }
+  }
+
+  @Test
+  void theOverrideIsIgnoredOnPodsWithoutTheLicenseVolume() {
+    Path none = dir.resolve("none");
+    // A forgotten override plus a rebuilt (empty) database: pods the chart started without the
+    // license volume still refuse to make an id.
+    try (HikariDataSource ds = database(null)) {
+      assertThatThrownBy(() -> LicenseStateGuard.check(ds, PRODUCT,
+          Map.of("ENS_LICENSE_STATE_DIR", none.toString(), EXPECT, "true", LicenseStateGuard.OVERRIDE, "true")))
+          .isInstanceOf(IllegalStateException.class).hasMessageContaining("not honoured without the license volume");
     }
   }
 }

@@ -19,7 +19,8 @@ import org.slf4j.LoggerFactory;
  * license file to import the id from (the license volume isn't mounted). The same with
  * {@value #EXPECT}=true (no license volume in this pod), whatever the database's history. Set
  * {@value #OVERRIDE}=true to accept a new id (e.g. a fresh install that was never licensed): it is
- * honoured only while the database holds no license state at all, and logged at ERROR every start.
+ * honoured only while the database holds no license state at all and never together with
+ * {@value #EXPECT}, and logged at ERROR every start.
  */
 public final class LicenseStateGuard {
   private static final Logger log = LoggerFactory.getLogger(LicenseStateGuard.class);
@@ -65,7 +66,9 @@ public final class LicenseStateGuard {
     // upgrade), and not where the license volume was replaced by an empty one (EXPECT, set by the
     // chart): there the id must come from the volume, at a start that mounts it.
     if (!upgraded && !expect) return;
-    if (allow && !anyState) {
+    // Never on a pod started without the license volume: a forgotten override plus a rebuilt
+    // database would otherwise mint an id there.
+    if (allow && !expect && !anyState) {
       log.error("License state: no installation id to import ({} has none) and {}=true: a NEW installation id is made."
           + " Licenses bound to a previous id stop working.", stateDir, OVERRIDE);
       return;
@@ -77,7 +80,8 @@ public final class LicenseStateGuard {
             : "This portal used the database before the license state moved into it, so starting would make a NEW installation id"
             + " and licenses bound to the old one would stop working. Mount the license volume (ENS_LICENSE_STATE_DIR) for this"
             + " start so its id is imported.")
-        + (anyState ? " (" + OVERRIDE + " is not honoured: the database already holds license state.)"
+        + (expect ? " (" + OVERRIDE + " is not honoured without the license volume.)"
+            : anyState ? " (" + OVERRIDE + " is not honoured: the database already holds license state.)"
             : " If this installation never had a license, set " + OVERRIDE + "=true once, then remove it."));
   }
 

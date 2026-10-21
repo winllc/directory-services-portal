@@ -277,6 +277,10 @@ several replicas) stops with a message instead of breaking the license; start wi
 `ENS_LICENSE_ALLOW_NEW_INSTALLATION_ID=true` (via `api.extraEnv`) accepts a new id only while the
 database holds no license state, for an installation that never had a license; remove it after.
 
+With `persistence.license.enabled=false` and the database on, the database is the only copy of
+the installation id: a rebuilt database (without its `ens_license_*` tables) gives the
+installation a new id, and licenses bound to the old one must be re-issued. Back up the database.
+
 After the move the license volume is a frozen copy of the state at that first start. Scaling back
 to one replica mounts it again, but the API reads the database, not the volume; turning the
 database off (`database.url` empty) would bring back the volume's old license, so don't, or

@@ -814,6 +814,11 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
   database holds no license state at all and with an ERROR in the log on every start: set it once,
   for an installation that never had a license, and remove it. A new database behind a new
   install just makes one id for all instances.
+- With the license volume disabled (no `ENS_LICENSE_STATE_DIR` that persists) and the database
+  on, the database is the only copy of the installation id: if it is rebuilt or restored without
+  the `ens_license_*` tables, there is nothing to recover the id from and the installation gets a
+  new one (licenses bound to the old id must be re-issued). Back up the database, or keep the
+  license volume.
 - After the move, the license volume holds the license state of that moment and is no longer
   updated: a license uploaded later is only in the database. Don't go back to running without the
   database (the volume's old license would return), and keep the volume only as the import
