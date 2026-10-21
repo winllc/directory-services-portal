@@ -14,6 +14,15 @@ const ENGINEERING = 'cn=engineering,ou=groups,dc=example,dc=com';
 async function check(page: Page, name: string) {
   // Settle: no loading spinners left.
   await expect(page.locator('.loading-block')).toHaveCount(0, { timeout: 20_000 });
+  // And no opening animation still running: a dialog fading in would be measured half transparent.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
   const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
   // Kept with the test's output (test-results/) and attached to the HTML report.
   const file = test.info().outputPath(`axe-${name}.json`);
