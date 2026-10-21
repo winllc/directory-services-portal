@@ -149,12 +149,16 @@ public final class UrlGuard {
     }
     if (allZero(b, 0, 16)) return "unspecified";
     if (allZero(b, 0, 15) && u(b[15]) == 1) return "loopback";
-    // Embedded IPv4: ::a.b.c.d (compatible), ::ffff:a.b.c.d (mapped), 64:ff9b::a.b.c.d (NAT64).
+    // Embedded IPv4: ::a.b.c.d (compatible), ::ffff:a.b.c.d (mapped), ::ffff:0:a.b.c.d (translated,
+    // RFC 2765), 64:ff9b::a.b.c.d (NAT64 well-known prefix).
+    boolean nat64 = u(b[0]) == 0x00 && u(b[1]) == 0x64 && u(b[2]) == 0xff && u(b[3]) == 0x9b;
     if (allZero(b, 0, 12) || (allZero(b, 0, 10) && u(b[10]) == 0xff && u(b[11]) == 0xff)
-        || (u(b[0]) == 0x00 && u(b[1]) == 0x64 && u(b[2]) == 0xff && u(b[3]) == 0x9b && allZero(b, 4, 12))) {
-      String why = classify4(new byte[] {b[12], b[13], b[14], b[15]});
-      return why == null ? null : why;
+        || (allZero(b, 0, 8) && u(b[8]) == 0xff && u(b[9]) == 0xff && allZero(b, 10, 12)) || (nat64 && allZero(b, 4, 12))) {
+      return classify4(new byte[] {b[12], b[13], b[14], b[15]});
     }
+    // The rest of 64:ff9b::/32, including the local-use NAT64 prefix 64:ff9b:1::/48 (RFC 8215), whose
+    // IPv4 address can sit at several places depending on the prefix length: refused outright.
+    if (nat64) return "reserved";
     // 6to4 (2002::/16) carries an IPv4 address in bytes 2-5.
     if (u(b[0]) == 0x20 && u(b[1]) == 0x02) {
       String why = classify4(new byte[] {b[2], b[3], b[4], b[5]});

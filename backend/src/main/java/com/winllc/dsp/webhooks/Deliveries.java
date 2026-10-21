@@ -23,7 +23,11 @@ public interface Deliveries {
     }
   }
 
-  void enqueue(List<Delivery> deliveries);
+  /** Queues deliveries; returns how many were accepted (a full outbox refuses the rest). */
+  int enqueue(List<Delivery> deliveries);
+
+  /** Writes changes kept in memory to storage (the file store batches its writes). */
+  default void flush() {}
 
   /**
    * Due pending deliveries, each counted as an attempt and leased until {@code now + lease} (another

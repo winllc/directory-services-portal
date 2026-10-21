@@ -20,17 +20,24 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The outbox and delivery log of a single API instance: {@code webhook-deliveries.json} in the data
- * directory, rewritten (atomically) on every change. Pending deliveries survive a restart; of the
- * finished ones the newest {@value #KEEP_FINISHED} are kept (and none past the retention).
+ * directory. Changes are kept in memory and written (atomically, the whole file) by {@link #flush},
+ * which the delivery thread calls every couple of seconds and at shutdown, so an import of
+ * thousands of rows doesn't rewrite the file per row; a crash loses at most the last seconds of
+ * queued deliveries. At most {@value #MAX_PENDING} deliveries wait at once: beyond that new ones
+ * are refused (and reported). Of the finished ones the newest {@value #KEEP_FINISHED} are kept (and
+ * none past the retention).
  */
 public class FileDeliveries implements Deliveries {
   private static final Logger log = LoggerFactory.getLogger(FileDeliveries.class);
   static final String FILE = "webhook-deliveries.json";
   static final int KEEP_FINISHED = 2000;
+  static final int MAX_PENDING = 10_000;
 
   private final Path file;
   private final JsonMapper mapper;
   private final List<Delivery> all = new ArrayList<>();
+  private boolean dirty;
+  private int maxPending = MAX_PENDING;
 
   public FileDeliveries(Path file, JsonMapper mapper) {
     this.file = file;
@@ -44,7 +51,19 @@ public class FileDeliveries implements Deliveries {
     }
   }
 
+  /** For tests. */
+  void maxPending(int max) {
+    this.maxPending = max;
+  }
+
   private void save() {
+    dirty = true;
+  }
+
+  @Override
+  public synchronized void flush() {
+    if (!dirty) return;
+    dirty = false;
     try {
       Files.createDirectories(file.getParent());
       Path tmp = file.resolveSibling(FILE + ".tmp");
@@ -55,16 +74,20 @@ public class FileDeliveries implements Deliveries {
       Files.writeString(tmp, mapper.writeValueAsString(all), StandardCharsets.UTF_8);
       Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     } catch (IOException | RuntimeException e) {
+      dirty = true;
       log.error("Could not store the webhook deliveries in {}: {}", file, LogSafe.of(e.getMessage()));
     }
   }
 
   @Override
-  public synchronized void enqueue(List<Delivery> deliveries) {
-    if (deliveries.isEmpty()) return;
-    all.addAll(deliveries);
+  public synchronized int enqueue(List<Delivery> deliveries) {
+    if (deliveries.isEmpty()) return 0;
+    long pending = all.stream().filter(d -> PENDING.equals(d.status())).count();
+    int room = (int) Math.max(0, Math.min(deliveries.size(), maxPending - pending));
+    all.addAll(deliveries.subList(0, room));
     trim();
     save();
+    return room;
   }
 
   @Override

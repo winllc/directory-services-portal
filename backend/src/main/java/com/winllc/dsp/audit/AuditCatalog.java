@@ -43,7 +43,7 @@ public final class AuditCatalog {
     for (String a : List.of("license.installed", "license.rejected", "license.mode-changed", "license.install")) {
       ACTIONS.put(a, "license");
     }
-    for (String a : List.of("system.started", "system.stopped", "job.completed", "job.failed", "webhook.delivery-failed")) ACTIONS.put(a, "system");
+    for (String a : List.of("system.started", "system.stopped", "job.completed", "job.failed", "webhook.delivery-failed", "webhook.delivery-dropped")) ACTIONS.put(a, "system");
     for (String a : List.of("audit.exported", "audit.verified", "audit.token-created", "audit.token-revoked", "audit.pruned",
         "audit.delivery-failed", "audit.delivery-recovered")) {
       ACTIONS.put(a, "audit");

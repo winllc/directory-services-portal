@@ -261,7 +261,10 @@ class WebhooksTest extends ApiTestSupport {
     for (String bad : List.of("http://example.com/hook", "https://user:pw@example.com/", "https://169.254.169.254/latest/meta-data/",
         "https://[::1]/", "https://127.0.0.1/", "https://localhost/", "https://10.1.2.3/", "https://192.168.0.1/", "https://172.20.0.1/",
         "https://[fd00:ec2::254]/", "https://[::ffff:169.254.169.254]/", "https://[64:ff9b::a9fe:a9fe]/", "https://[2002:a9fe:a9fe::]/",
-        "https://[fe80::1]/", "https://0.0.0.0/", "https://100.64.0.1/", "ftp://example.com/")) {
+        "https://[fe80::1]/", "https://0.0.0.0/", "https://100.64.0.1/", "ftp://example.com/",
+        // NAT64 (well-known and local-use prefixes), IPv4-compatible and IPv4-translated forms.
+        "https://[64:ff9b:1::a9fe:a9fe]/", "https://[64:ff9b:1:ffff::1]/", "https://[64:ff9b::7f00:1]/", "https://[::a9fe:a9fe]/",
+        "https://[::ffff:0:a9fe:a9fe]/", "https://[::ffff:0:7f00:1]/")) {
       MvcResult r = admin.post("/api/admin/webhooks", Map.of("name", "bad", "url", bad, "events", List.of("entry.changed")));
       assertThat(status(r)).as(bad).isEqualTo(400);
       assertThat(body(r).get("details").get("url").asString()).as(bad).isNotBlank();

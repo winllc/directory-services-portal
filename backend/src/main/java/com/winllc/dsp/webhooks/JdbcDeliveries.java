@@ -40,12 +40,13 @@ public class JdbcDeliveries implements Deliveries {
   }
 
   @Override
-  public void enqueue(List<Delivery> deliveries) {
+  public int enqueue(List<Delivery> deliveries) {
     for (Delivery d : deliveries) {
       jdbc.update("INSERT INTO dsp_webhook_delivery (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           d.id(), d.webhookId(), d.eventId(), d.eventType(), d.payload(), d.status(), d.attempts(), ts(d.nextAttemptAt()),
           ts(d.createdAt()), ts(d.lastAttemptAt()), d.lastStatus(), d.lastError(), ts(d.deliveredAt()));
     }
+    return deliveries.size();
   }
 
   @Override

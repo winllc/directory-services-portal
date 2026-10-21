@@ -13,6 +13,10 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.SNIHostName;
@@ -23,9 +27,16 @@ import javax.net.ssl.SSLSocket;
 /**
  * Sends one webhook: an HTTPS POST to exactly the address {@link UrlGuard} checked (the TLS
  * certificate is still verified against the host name), without proxies or redirects. A 2xx answer
- * is a delivery; anything else, including a redirect, is a failed attempt.
+ * is a delivery; anything else, including a redirect, is a failed attempt. Each send has an
+ * overall deadline (connect, TLS handshake, request and answer together): a watchdog closes the
+ * socket when it passes, so a receiver that answers a byte at a time can't hold the sender.
  */
 public class WebhookSender {
+  private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
+    Thread t = new Thread(r, "dsp-webhook-watchdog");
+    t.setDaemon(true);
+    return t;
+  });
   public static final String SIGNATURE_HEADER = "X-DSP-Signature";
   public static final String TIMESTAMP_HEADER = "X-DSP-Timestamp";
 
@@ -39,11 +50,23 @@ public class WebhookSender {
   private final SSLContext tls;
   private final Duration connectTimeout;
   private final Duration readTimeout;
+  private final Duration deadline;
 
   public WebhookSender(SSLContext tls, Duration connectTimeout, Duration readTimeout) {
+    this(tls, connectTimeout, readTimeout, connectTimeout.plus(readTimeout));
+  }
+
+  /** {@code deadline}: the most one send may take in all. */
+  public WebhookSender(SSLContext tls, Duration connectTimeout, Duration readTimeout, Duration deadline) {
     this.tls = tls;
     this.connectTimeout = connectTimeout;
     this.readTimeout = readTimeout;
+    this.deadline = deadline;
+  }
+
+  /** The longest one send can take. */
+  public Duration deadline() {
+    return deadline;
   }
 
   /**
@@ -62,8 +85,29 @@ public class WebhookSender {
   }
 
   public Result send(UrlGuard.Target target, Map<String, String> headers, byte[] body) {
-    try (Socket raw = new Socket()) {
-      raw.connect(new InetSocketAddress(target.address(), target.port()), (int) connectTimeout.toMillis());
+    Socket watched = new Socket();
+    java.util.concurrent.atomic.AtomicBoolean expired = new java.util.concurrent.atomic.AtomicBoolean();
+    ScheduledFuture<?> watchdog = WATCHDOG.schedule(() -> {
+      expired.set(true);
+      try {
+        watched.close();
+      } catch (IOException ignored) {
+        // closing is all it can do
+      }
+    }, deadline.toMillis(), TimeUnit.MILLISECONDS);
+    Result result;
+    try {
+      result = sendOn(watched, target, headers, body);
+    } finally {
+      watchdog.cancel(false);
+    }
+    if (expired.get() && !result.delivered()) return new Result(0, "No complete answer within " + deadline.toSeconds() + " s");
+    return result;
+  }
+
+  private Result sendOn(Socket socketToUse, UrlGuard.Target target, Map<String, String> headers, byte[] body) {
+    try (Socket raw = socketToUse) {
+      raw.connect(new InetSocketAddress(target.address(), target.port()), (int) Math.min(connectTimeout.toMillis(), deadline.toMillis()));
       raw.setSoTimeout((int) readTimeout.toMillis());
       try (SSLSocket socket = (SSLSocket) tls.getSocketFactory().createSocket(raw, target.host(), target.port(), true)) {
         SSLParameters params = socket.getSSLParameters();

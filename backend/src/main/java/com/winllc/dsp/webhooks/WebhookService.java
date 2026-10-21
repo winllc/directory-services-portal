@@ -48,11 +48,16 @@ import tools.jackson.databind.json.JsonMapper;
  * the URL again with {@link UrlGuard} each time, and retries failures with growing pauses (30 s,
  * 2 min, 10 min, 30 min, 1 h, 3 h, 6 h) up to WEBHOOK_MAX_ATTEMPTS; a delivery that runs out is
  * marked failed and audited ({@code webhook.delivery-failed}).
+ *
+ * <p>Delivery is at least once: an attempt whose answer was lost (a timeout after the receiver
+ * acted, a replica stopping mid-send) is made again, with the same {@code X-DSP-Event-Id}, which
+ * receivers use to drop repeats.
  */
 @Service
 public class WebhookService {
   private static final Logger log = LoggerFactory.getLogger(WebhookService.class);
-  static final Duration LEASE = Duration.ofMinutes(2);
+  /** Added to the send deadline: how long a claimed delivery stays leased. */
+  static final Duration LEASE = Duration.ofMinutes(1);
   private static final Duration[] BACKOFF = {Duration.ofSeconds(30), Duration.ofMinutes(2), Duration.ofMinutes(10), Duration.ofMinutes(30),
       Duration.ofHours(1), Duration.ofHours(3), Duration.ofHours(6)};
   /** Members listed per change in a group.membership_changed event (more: truncated is true). */
@@ -78,7 +83,8 @@ public class WebhookService {
         : new FileDeliveries(Path.of(portal.getDataDir()).toAbsolutePath().resolve(FileDeliveries.FILE), mapper);
     this.guard = new UrlGuard(props.getWebhooks().allowedHostList(), InetAddress::getAllByName);
     try {
-      this.sender = new WebhookSender(SSLContext.getDefault(), props.getWebhooks().getConnectTimeout(), props.getWebhooks().getReadTimeout());
+      this.sender = new WebhookSender(SSLContext.getDefault(), props.getWebhooks().getConnectTimeout(), props.getWebhooks().getReadTimeout(),
+          props.getWebhooks().getSendTimeout());
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException("TLS is not available", e);
     }
@@ -93,6 +99,7 @@ public class WebhookService {
   @PreDestroy
   void stop() {
     worker.shutdownNow();
+    deliveries.flush();
   }
 
   public UrlGuard guard() {
@@ -133,10 +140,26 @@ public class WebhookService {
           queued.add(newDelivery(w.id(), eventId, type, payload));
         }
       }
-      deliveries.enqueue(queued);
+      int accepted = deliveries.enqueue(queued);
+      if (accepted < queued.size()) dropped(queued.size() - accepted);
     } catch (RuntimeException e) {
       log.error("Could not queue webhooks for the change of {}: {}", LogSafe.of(change.dn()), LogSafe.of(e.getMessage()));
     }
+  }
+
+  private volatile Instant lastDropReport = Instant.EPOCH;
+  private final java.util.concurrent.atomic.AtomicLong droppedSinceReport = new java.util.concurrent.atomic.AtomicLong();
+
+  /** The outbox is full: logged every time, audited at most once a minute with the count. */
+  private void dropped(int count) {
+    long total = droppedSinceReport.addAndGet(count);
+    log.warn("The webhook outbox is full: {} deliveries were not queued", count);
+    Instant now = Instant.now();
+    if (Duration.between(lastDropReport, now).compareTo(Duration.ofMinutes(1)) < 0) return;
+    lastDropReport = now;
+    droppedSinceReport.addAndGet(-total);
+    audit.event("webhook.delivery-dropped").system().detail("dropped", total)
+        .failed("The webhook outbox is full: deliveries were not queued (receivers down for long?)");
   }
 
   /** Queues a ping for one webhook; returns the delivery's id. */
@@ -148,7 +171,9 @@ public class WebhookService {
     Map<String, Object> actor = new LinkedHashMap<>();
     actor.put("username", by);
     Deliveries.Delivery d = newDelivery(w.id(), eventId, Webhooks.PING, payload(eventId, Webhooks.PING, actor, data));
-    deliveries.enqueue(List.of(d));
+    if (deliveries.enqueue(List.of(d)) == 0) throw new com.winllc.dsp.web.ApiException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+        "The webhook outbox is full; try again when deliveries have caught up");
+    deliveries.flush();
     return d.id();
   }
 
@@ -246,11 +271,17 @@ public class WebhookService {
       lastPurge = now;
       deliveries.purge(now.minus(props.getWebhooks().getLogRetention()));
     }
+    // One at a time, each leased for longer than one attempt can take, so a delivery is never
+    // claimed again (here or by another replica) while it is still being sent.
+    Duration lease = sender.deadline().plus(LEASE);
     int count = 0;
-    for (Deliveries.Delivery d : deliveries.claim(now, 20, LEASE)) {
-      attempt(d);
+    while (count < 20) {
+      List<Deliveries.Delivery> claimed = deliveries.claim(Instant.now(), 1, lease);
+      if (claimed.isEmpty()) break;
+      attempt(claimed.get(0));
       count++;
     }
+    deliveries.flush();
     return count;
   }
 
