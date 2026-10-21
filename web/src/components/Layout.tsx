@@ -87,6 +87,9 @@ export function Layout() {
 
   return (
     <div className={cx('app-shell', open && 'nav-open')}>
+      <a className="skip-link" href="#main">
+        Skip to main content
+      </a>
       <aside className="sidebar" aria-label="Main navigation">
         <div className="brand">
           <div className="brand-logo">
@@ -207,7 +210,7 @@ export function Layout() {
           </div>
         </header>
         <LicenseNotices />
-        <main className="content" id="main">
+        <main className="content" id="main" tabIndex={-1}>
           <Outlet />
         </main>
       </div>

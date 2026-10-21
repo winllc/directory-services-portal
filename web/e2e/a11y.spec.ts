@@ -110,3 +110,26 @@ test('as a user without administration: home and profile', async ({ page }) => {
   await expect(page.locator('main h1').first()).toBeVisible();
   await check(page, 'user-profile');
 });
+
+test('keyboard: skip link, page titles, dialogs close with Escape and return focus', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/d/staff');
+  await expect(page.locator('main h1')).toHaveText('Staff Directory');
+  await expect(page).toHaveTitle('Staff Directory · Directory Services Portal');
+  await page.keyboard.press('Tab');
+  const skip = page.getByRole('link', { name: 'Skip to main content' });
+  await expect(skip).toBeFocused();
+  await expect(skip).toBeInViewport();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('main')).toBeFocused();
+
+  const open = page.getByRole('button', { name: 'Import' });
+  await open.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  // Focus moves into the dialog, Escape closes it and focus returns to the button that opened it.
+  await expect(page.getByRole('dialog').locator(':focus')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(open).toBeFocused();
+});
