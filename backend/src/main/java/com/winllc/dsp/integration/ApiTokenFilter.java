@@ -59,18 +59,17 @@ public class ApiTokenFilter extends OncePerRequestFilter {
       unauthorized(response, "API token required: send Authorization: Bearer <token>", "token_required");
       return;
     }
-    // A client guessing tokens is refused before any lookup once it used up its failures.
-    String client = "ip:" + request.getRemoteAddr();
-    int failures = props.getApi().getFailedTokenLimitPerMinute();
-    long blocked = limiter.blocked(client, failures);
-    if (blocked > 0) {
-      response.setHeader("Retry-After", Long.toString(blocked));
-      write(response, 429, "Too many invalid API tokens from this address; retry after " + blocked + " s", "rate_limited");
-      return;
-    }
     ApiTokens.Check check = tokens.check(header.substring(7).trim());
     if (!check.ok()) {
-      limiter.acquire(client, failures);
+      // Failures only are counted, per client address (the address Spring resolved from the web
+      // tier's X-Forwarded-For, as for sign-in throttling); a valid token is never blocked by them.
+      String client = "bad-token:" + request.getRemoteAddr();
+      long wait = limiter.acquire(client, props.getApi().getFailedTokenLimitPerMinute());
+      if (wait > 0) {
+        response.setHeader("Retry-After", Long.toString(wait));
+        write(response, 429, "Too many invalid API tokens from this address; retry after " + wait + " s", "rate_limited");
+        return;
+      }
       String message = switch (check.problem()) {
         case "expired" -> "This API token has expired";
         case "revoked" -> "This API token has been revoked";

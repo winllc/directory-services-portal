@@ -170,7 +170,8 @@ portal:
       # Requests per minute per token unless the token sets its own (per API replica).
       rate-limit-per-minute: ${API_RATE_LIMIT_PER_MINUTE:120}
       max-token-days: ${API_TOKEN_MAX_DAYS:365}
-      # Unknown, expired or revoked tokens per minute per client address before it gets 429.
+      # Unknown, expired or revoked tokens per minute per client address; more get 429 (valid
+      # tokens from the address are never refused by it).
       failed-token-limit-per-minute: ${API_FAILED_TOKEN_LIMIT_PER_MINUTE:30}
     webhooks:
       enabled: ${WEBHOOKS_ENABLED:true}

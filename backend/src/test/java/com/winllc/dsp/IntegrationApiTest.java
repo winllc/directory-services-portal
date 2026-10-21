@@ -248,6 +248,12 @@ class IntegrationApiTest extends ApiTestSupport {
       }
     }
     assertThat(limited).isGreaterThanOrEqualTo(10);
+    // A valid token from the same address (all clients behind one proxy) still works.
+    Token valid = token(login("admin"), "entries:read");
+    assertThat(status(mvc.perform(get("/api/v1/directories").header("Authorization", "Bearer " + valid.secret()).with(r -> {
+      r.setRemoteAddr("203.0.113.77");
+      return r;
+    })).andReturn())).isEqualTo(200);
     // Another address is not affected.
     assertThat(status(anonymous(get("/api/v1/directories").header("Authorization", "Bearer dspat_guess")))).isEqualTo(401);
   }
