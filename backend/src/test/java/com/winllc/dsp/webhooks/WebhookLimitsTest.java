@@ -53,6 +53,22 @@ class WebhookLimitsTest {
     }
   }
 
+  @Test
+  void aSlowNameLookupCountsAgainstTheDeadline() {
+    UrlGuard slow = new UrlGuard(List.of(), host -> {
+      try {
+        Thread.sleep(5_000);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      return new InetAddress[] {InetAddress.getByAddress(host, new byte[] {93, (byte) 184, (byte) 216, 34})};
+    });
+    Instant start = Instant.now();
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> slow.resolve(URI.create("https://hooks.example/"), Duration.ofMillis(300)))
+        .isInstanceOf(UrlGuard.Refused.class).hasMessageContaining("did not resolve");
+    assertThat(Duration.between(start, Instant.now())).isLessThan(Duration.ofSeconds(2));
+  }
+
   private static Deliveries.Delivery delivery(String webhook) {
     Instant now = Instant.now();
     return new Deliveries.Delivery(UUID.randomUUID().toString(), webhook, "evt_" + UUID.randomUUID(), "entry.changed", "{}", Deliveries.PENDING, 0, now,

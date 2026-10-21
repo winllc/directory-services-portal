@@ -80,10 +80,37 @@ public final class UrlGuard {
    * @throws Refused when the host can't be resolved or any address is not allowed
    */
   public Target resolve(URI uri) throws Refused {
+    return resolve(uri, null);
+  }
+
+  private static final java.util.concurrent.ExecutorService LOOKUPS = java.util.concurrent.Executors.newFixedThreadPool(4, r -> {
+    Thread t = new Thread(r, "dsp-webhook-dns");
+    t.setDaemon(true);
+    return t;
+  });
+
+  /** As {@link #resolve(URI)}, giving up on a name lookup that takes longer than {@code timeout} (null: no limit). */
+  public Target resolve(URI uri, java.time.Duration timeout) throws Refused {
     String host = hostOf(uri);
     InetAddress[] addresses;
     try {
-      addresses = resolver.resolve(host);
+      if (timeout == null) {
+        addresses = resolver.resolve(host);
+      } else {
+        java.util.concurrent.Future<InetAddress[]> lookup = LOOKUPS.submit(() -> resolver.resolve(host));
+        try {
+          addresses = lookup.get(Math.max(1, timeout.toMillis()), java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+          lookup.cancel(true);
+          throw new Refused("The host name " + host + " did not resolve within " + Math.max(1, timeout.toSeconds()) + " s");
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new Refused("Interrupted while resolving " + host);
+        } catch (java.util.concurrent.ExecutionException e) {
+          if (e.getCause() instanceof UnknownHostException u) throw u;
+          throw new Refused("The host name " + host + " cannot be resolved");
+        }
+      }
     } catch (UnknownHostException e) {
       throw new Refused("The host name " + host + " cannot be resolved");
     }

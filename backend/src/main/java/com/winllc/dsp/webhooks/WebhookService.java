@@ -295,7 +295,9 @@ public class WebhookService {
     Integer status = null;
     String error;
     try {
-      UrlGuard.Target target = guard.resolve(UrlGuard.parse(w.url()));
+      // One deadline for the whole attempt: the name lookup and the send.
+      long started = System.nanoTime();
+      UrlGuard.Target target = guard.resolve(UrlGuard.parse(w.url()), sender.deadline());
       byte[] body = d.payload().getBytes(StandardCharsets.UTF_8);
       long timestamp = at.getEpochSecond();
       Map<String, String> headers = new LinkedHashMap<>();
@@ -305,7 +307,7 @@ public class WebhookService {
       headers.put("X-DSP-Webhook-Id", w.id());
       headers.put(WebhookSender.TIMESTAMP_HEADER, Long.toString(timestamp));
       headers.put(WebhookSender.SIGNATURE_HEADER, WebhookSender.sign(w.secret(), timestamp, body));
-      WebhookSender.Result r = sender.send(target, headers, body);
+      WebhookSender.Result r = sender.send(target, headers, body, sender.deadline().minusNanos(System.nanoTime() - started));
       if (r.delivered()) {
         deliveries.record(d.attempted(at, r.status(), null, Deliveries.DELIVERED, d.nextAttemptAt()));
         return;

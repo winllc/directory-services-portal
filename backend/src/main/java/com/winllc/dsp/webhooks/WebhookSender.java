@@ -85,6 +85,13 @@ public class WebhookSender {
   }
 
   public Result send(UrlGuard.Target target, Map<String, String> headers, byte[] body) {
+    return send(target, headers, body, deadline);
+  }
+
+  /** Sends within {@code budget} (what is left of the attempt's deadline after the name lookup). */
+  public Result send(UrlGuard.Target target, Map<String, String> headers, byte[] body, Duration budget) {
+    Duration limit = budget.compareTo(deadline) < 0 ? budget : deadline;
+    if (limit.isNegative() || limit.isZero()) return new Result(0, "No time left within " + deadline.toSeconds() + " s");
     Socket watched = new Socket();
     java.util.concurrent.atomic.AtomicBoolean expired = new java.util.concurrent.atomic.AtomicBoolean();
     ScheduledFuture<?> watchdog = WATCHDOG.schedule(() -> {
@@ -94,7 +101,7 @@ public class WebhookSender {
       } catch (IOException ignored) {
         // closing is all it can do
       }
-    }, deadline.toMillis(), TimeUnit.MILLISECONDS);
+    }, limit.toMillis(), TimeUnit.MILLISECONDS);
     Result result;
     try {
       result = sendOn(watched, target, headers, body);
@@ -107,7 +114,7 @@ public class WebhookSender {
 
   private Result sendOn(Socket socketToUse, UrlGuard.Target target, Map<String, String> headers, byte[] body) {
     try (Socket raw = socketToUse) {
-      raw.connect(new InetSocketAddress(target.address(), target.port()), (int) Math.min(connectTimeout.toMillis(), deadline.toMillis()));
+      raw.connect(new InetSocketAddress(target.address(), target.port()), (int) Math.max(1, Math.min(connectTimeout.toMillis(), deadline.toMillis())));
       raw.setSoTimeout((int) readTimeout.toMillis());
       try (SSLSocket socket = (SSLSocket) tls.getSocketFactory().createSocket(raw, target.host(), target.port(), true)) {
         SSLParameters params = socket.getSSLParameters();
