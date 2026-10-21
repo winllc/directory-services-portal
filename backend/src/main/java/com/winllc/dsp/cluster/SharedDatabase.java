@@ -18,7 +18,6 @@ import org.springframework.context.annotation.ConditionContext;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.convert.support.GenericConversionService;
-import org.springframework.core.serializer.support.DeserializingConverter;
 import org.springframework.core.serializer.support.SerializingConverter;
 import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -115,7 +114,7 @@ public class SharedDatabase {
 
   /**
    * Sessions in {@code spring_session}. Attributes are Java-serialized with this application's
-   * class loader; expired sessions are removed by {@code SharedSessionCleanup} (which audits idle
+   * class loader and read back through {@link SessionAttributes}' allow-list; expired sessions are removed by {@code SharedSessionCleanup} (which audits idle
    * timeouts first), not by the repository's own job.
    */
   @Bean
@@ -124,7 +123,8 @@ public class SharedDatabase {
     ClassLoader loader = SharedDatabase.class.getClassLoader();
     GenericConversionService conversion = new GenericConversionService();
     conversion.addConverter(Object.class, byte[].class, new SerializingConverter());
-    conversion.addConverter(byte[].class, Object.class, new DeserializingConverter(loader));
+    // Only the classes sessions hold are read back (an allow-list); anything else reads as absent.
+    conversion.addConverter(byte[].class, Object.class, new SessionAttributes(loader));
     repo.setConversionService(conversion);
     Duration idle = ens.getSession().getIdleTimeout();
     if (idle != null && !idle.isZero()) repo.setDefaultMaxInactiveInterval(idle);
