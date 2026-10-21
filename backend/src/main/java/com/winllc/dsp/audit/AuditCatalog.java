@@ -25,21 +25,25 @@ public final class AuditCatalog {
     // Permissions on directories (grants to users and groups).
     ACTIONS.put("grant.save", "account");
     ACTIONS.put("grant.revoke", "account");
+    // Integration API tokens (credentials for other systems).
+    ACTIONS.put("api.token-created", "account");
+    ACTIONS.put("api.token-revoked", "account");
     for (String a : List.of("entry.create", "entry.update", "entry.self_update", "entry.delete",
         "form.create", "form.update", "form.delete", "definition.create", "definition.update", "definition.delete",
         "schema.import", "schema.attribute_type.save", "schema.attribute_type.delete", "schema.object_class.save",
-        "schema.object_class.delete", "analysis.export", "data.exported")) {
+        "schema.object_class.delete", "analysis.export", "data.exported", "data.imported")) {
       ACTIONS.put(a, "data");
     }
     for (String a : List.of("dashboard.create", "dashboard.update", "dashboard.delete",
-        "analysis.create", "analysis.update", "analysis.delete")) {
+        "analysis.create", "analysis.update", "analysis.delete",
+        "webhook.created", "webhook.updated", "webhook.deleted", "webhook.secret-rotated")) {
       ACTIONS.put(a, "configuration");
     }
     // license.install: the name used before ens-audit/1, kept on migrated history.
     for (String a : List.of("license.installed", "license.rejected", "license.mode-changed", "license.install")) {
       ACTIONS.put(a, "license");
     }
-    for (String a : List.of("system.started", "system.stopped", "job.completed", "job.failed")) ACTIONS.put(a, "system");
+    for (String a : List.of("system.started", "system.stopped", "job.completed", "job.failed", "webhook.delivery-failed")) ACTIONS.put(a, "system");
     for (String a : List.of("audit.exported", "audit.verified", "audit.token-created", "audit.token-revoked", "audit.pruned",
         "audit.delivery-failed", "audit.delivery-recovered")) {
       ACTIONS.put(a, "audit");
@@ -64,7 +68,7 @@ public final class AuditCatalog {
       case "license" -> "license";
       case "system", "job" -> "system";
       case "audit" -> "audit";
-      case "settings", "dashboard" -> "configuration";
+      case "settings", "dashboard", "webhook" -> "configuration";
       default -> "data";
     };
   }

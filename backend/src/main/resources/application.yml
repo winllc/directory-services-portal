@@ -54,6 +54,17 @@ management:
     diskspace:
       path: ${portal.data-dir}
 
+# The OpenAPI 3 document of the integration API only (no Swagger UI): /api/v1/openapi (JSON) and
+# /api/v1/openapi.yaml. Keys are sorted so the generated document is stable.
+springdoc:
+  api-docs:
+    path: /api/v1/openapi
+    version: openapi_3_0
+  packages-to-scan: com.winllc.dsp.integration
+  paths-to-match: /api/v1/**
+  writer-with-order-by-keys: true
+  show-actuator: false
+
 # Structured JSON logs: LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs (Boot's own setting; the audit lines
 # on the ens.audit logger stay raw ens-audit/1 JSON either way).
 
@@ -152,6 +163,27 @@ portal:
       signing-key-file: ${SSO_SAML_SIGNING_KEY_FILE:}
       signing-certificate-file: ${SSO_SAML_SIGNING_CERT_FILE:}
       clock-skew: ${SSO_SAML_CLOCK_SKEW:2m}
+  # The integration API (/api/v1, API tokens), outbound webhooks, and entry import and export
+  # (see README, Integration API).
+  integration:
+    api:
+      # Requests per minute per token unless the token sets its own (per API replica).
+      rate-limit-per-minute: ${API_RATE_LIMIT_PER_MINUTE:120}
+      max-token-days: ${API_TOKEN_MAX_DAYS:365}
+    webhooks:
+      enabled: ${WEBHOOKS_ENABLED:true}
+      # Host names (exact or *.example.com, ";"-separated) whose webhooks may reach private,
+      # loopback or link-local addresses. Cloud metadata addresses are refused regardless.
+      allowed-hosts: ${WEBHOOK_ALLOWED_HOSTS:}
+      max-attempts: ${WEBHOOK_MAX_ATTEMPTS:8}
+      connect-timeout: ${WEBHOOK_CONNECT_TIMEOUT:5s}
+      read-timeout: ${WEBHOOK_READ_TIMEOUT:10s}
+      log-retention: ${WEBHOOK_LOG_RETENTION:30d}
+    transfer:
+      export-max-entries: ${EXPORT_MAX_ENTRIES:10000}
+      import-max-bytes: ${IMPORT_MAX_BYTES:5242880}
+      import-max-rows: ${IMPORT_MAX_ROWS:5000}
+      bulk-max-members: ${BULK_MAX_MEMBERS:5000}
   # Optional fixed banner at the top and bottom of every page (off while the text is empty).
   banner:
     text: ${BANNER_TEXT:}
