@@ -301,12 +301,13 @@ class TransferTest extends ApiTestSupport {
   void changesAndExportsGroupMembersInBulk() throws Exception {
     Client admin = login("admin");
     List<String> add = List.of("uid=bob,ou=people," + B, "uid=dave,ou=people," + B, "uid=erin,ou=people," + B);
+    long updatesBefore = actions(admin, "entry.update").stream().filter(ENGINEERING::equals).count();
     MvcResult r = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", add, "remove", List.of(ALICE)));
     assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
     assertThat(body(r).get("added").size()).isEqualTo(3);
     assertThat(body(r).get("removed").size()).isEqualTo(1);
-    // One audited change of the group.
-    assertThat(actions(admin, "entry.update")).containsOnlyOnce(ENGINEERING);
+    // One audited change of the group (other tests in this context also change it).
+    assertThat(actions(admin, "entry.update").stream().filter(ENGINEERING::equals).count()).isEqualTo(updatesBefore + 1);
 
     String csv = admin.get("/api/directories/groups/members/export" + q(ENGINEERING)).getResponse().getContentAsString(StandardCharsets.UTF_8);
     assertThat(csv).startsWith(Csv.BOM + "member\r\n").contains("\"uid=bob,ou=people,dc=example,dc=com\"").doesNotContain(ALICE);
