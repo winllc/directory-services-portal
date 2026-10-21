@@ -143,12 +143,13 @@
       <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
-    <!-- Generates CA and client certificates for the X.509 authentication tests. -->
+    <!-- Needed at run time: OpenSAML, Shibboleth, Nimbus JOSE and the OIDC SDK use its certificate and
+         PEM classes (it was test-scoped, which dropped it and bcutil from the jar). The tests also use it
+         to generate certificates. 1.86 rather than OpenSAML's 1.84 (CVE-2026-8763, CVE-2026-13506). -->
     <dependency>
       <groupId>org.bouncycastle</groupId>
       <artifactId>bcpkix-jdk18on</artifactId>
       <version>1.86</version>
-      <scope>test</scope>
     </dependency>
   </dependencies>
 
