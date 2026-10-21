@@ -1,0 +1,310 @@
+package com.winllc.dsp.webhooks;
+
+import com.winllc.dsp.audit.AuditEvent;
+import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.cluster.Cluster;
+import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.integration.IntegrationProperties;
+import com.winllc.dsp.ldap.Dns;
+import com.winllc.dsp.service.EntryChanged;
+import com.winllc.dsp.service.Memberships;
+import com.winllc.dsp.util.LogSafe;
+import jakarta.annotation.PreDestroy;
+import java.net.InetAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import javax.net.ssl.SSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Service;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * Outbound webhooks. Every entry change the portal makes ({@link EntryChanged}) becomes events,
+ * queued for each enabled webhook that subscribes to them:
+ *
+ * <ul>
+ *   <li>{@code entry.changed}: an entry was created, updated (or renamed) or deleted;
+ *   <li>{@code group.membership_changed}: a member, uniqueMember or memberUid value was added or removed;
+ *   <li>{@code form.submitted}: an entry form was saved (create, update, or a user's own profile).
+ * </ul>
+ *
+ * <p>A background thread sends due deliveries (signed, see {@link WebhookSender#sign}), checking
+ * the URL again with {@link UrlGuard} each time, and retries failures with growing pauses (30 s,
+ * 2 min, 10 min, 30 min, 1 h, 3 h, 6 h) up to WEBHOOK_MAX_ATTEMPTS; a delivery that runs out is
+ * marked failed and audited ({@code webhook.delivery-failed}).
+ */
+@Service
+public class WebhookService {
+  private static final Logger log = LoggerFactory.getLogger(WebhookService.class);
+  static final Duration LEASE = Duration.ofMinutes(2);
+  private static final Duration[] BACKOFF = {Duration.ofSeconds(30), Duration.ofMinutes(2), Duration.ofMinutes(10), Duration.ofMinutes(30),
+      Duration.ofHours(1), Duration.ofHours(3), Duration.ofHours(6)};
+  /** Members listed per change in a group.membership_changed event (more: truncated is true). */
+  static final int MAX_MEMBERS = 1000;
+
+  private final Webhooks webhooks;
+  private final Deliveries deliveries;
+  private final IntegrationProperties props;
+  private final AuditLog audit;
+  private final JsonMapper mapper;
+  private volatile UrlGuard guard;
+  private volatile WebhookSender sender;
+  private final ScheduledExecutorService worker;
+  private volatile Instant lastPurge = Instant.EPOCH;
+
+  public WebhookService(Webhooks webhooks, IntegrationProperties props, PortalProperties portal, AuditLog audit, JsonMapper mapper,
+      Cluster cluster) {
+    this.webhooks = webhooks;
+    this.props = props;
+    this.audit = audit;
+    this.mapper = mapper;
+    this.deliveries = cluster.shared() ? new JdbcDeliveries(cluster)
+        : new FileDeliveries(Path.of(portal.getDataDir()).toAbsolutePath().resolve(FileDeliveries.FILE), mapper);
+    this.guard = new UrlGuard(props.getWebhooks().allowedHostList(), InetAddress::getAllByName);
+    try {
+      this.sender = new WebhookSender(SSLContext.getDefault(), props.getWebhooks().getConnectTimeout(), props.getWebhooks().getReadTimeout());
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("TLS is not available", e);
+    }
+    this.worker = Executors.newSingleThreadScheduledExecutor(r -> {
+      Thread t = new Thread(r, "dsp-webhooks");
+      t.setDaemon(true);
+      return t;
+    });
+    worker.scheduleWithFixedDelay(this::dispatchSafely, 2, 2, TimeUnit.SECONDS);
+  }
+
+  @PreDestroy
+  void stop() {
+    worker.shutdownNow();
+  }
+
+  public UrlGuard guard() {
+    return guard;
+  }
+
+  public Deliveries deliveries() {
+    return deliveries;
+  }
+
+  /** For tests: another resolver or trust store (e.g. a local HTTPS server). */
+  public void use(UrlGuard guard, WebhookSender sender) {
+    this.guard = guard;
+    this.sender = sender;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Events
+  // ---------------------------------------------------------------------------
+
+  @EventListener
+  public void onEntryChanged(EntryChanged change) {
+    try {
+      List<Webhooks.Webhook> hooks = webhooks.all().stream().filter(Webhooks.Webhook::enabled).toList();
+      if (hooks.isEmpty()) return;
+      List<Map.Entry<String, Map<String, Object>>> events = events(change);
+      List<Deliveries.Delivery> queued = new ArrayList<>();
+      for (Map.Entry<String, Map<String, Object>> e : events) {
+        String type = e.getKey();
+        String payload = null;
+        String eventId = null;
+        for (Webhooks.Webhook w : hooks) {
+          if (!w.wants(type, change.definitionId())) continue;
+          if (payload == null) {
+            eventId = "evt_" + UUID.randomUUID();
+            payload = payload(eventId, type, actor(change), e.getValue());
+          }
+          queued.add(newDelivery(w.id(), eventId, type, payload));
+        }
+      }
+      deliveries.enqueue(queued);
+    } catch (RuntimeException e) {
+      log.error("Could not queue webhooks for the change of {}: {}", LogSafe.of(change.dn()), LogSafe.of(e.getMessage()));
+    }
+  }
+
+  /** Queues a ping for one webhook; returns the delivery's id. */
+  public String ping(Webhooks.Webhook w, String by) {
+    String eventId = "evt_" + UUID.randomUUID();
+    Map<String, Object> data = new LinkedHashMap<>();
+    data.put("message", "A test event from the Directory Services Portal");
+    data.put("webhookId", w.id());
+    Map<String, Object> actor = new LinkedHashMap<>();
+    actor.put("username", by);
+    Deliveries.Delivery d = newDelivery(w.id(), eventId, Webhooks.PING, payload(eventId, Webhooks.PING, actor, data));
+    deliveries.enqueue(List.of(d));
+    return d.id();
+  }
+
+  private static Deliveries.Delivery newDelivery(String webhookId, String eventId, String type, String payload) {
+    Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+    return new Deliveries.Delivery(UUID.randomUUID().toString(), webhookId, eventId, type, payload, Deliveries.PENDING, 0, now, now, null, null,
+        null, null);
+  }
+
+  private static Map<String, Object> actor(EntryChanged c) {
+    Map<String, Object> actor = new LinkedHashMap<>();
+    actor.put("username", c.actor());
+    actor.put("authMethod", c.authMethod());
+    if (c.apiClientId() != null) actor.put("apiClientId", c.apiClientId());
+    return actor;
+  }
+
+  /** The events one change makes, in order, with their data. */
+  static List<Map.Entry<String, Map<String, Object>>> events(EntryChanged c) {
+    List<Map.Entry<String, Map<String, Object>>> out = new ArrayList<>();
+    Map<String, Object> entry = new LinkedHashMap<>();
+    entry.put("operation", c.operation());
+    entry.put("definitionId", c.definitionId());
+    entry.put("dn", c.dn());
+    if (c.previousDn() != null) entry.put("previousDn", c.previousDn());
+    entry.put("name", c.name());
+    entry.put("attributes", c.changes().stream().map(AuditEvent.Change::attribute).toList());
+    out.add(Map.entry("entry.changed", entry));
+
+    if (!EntryChanged.DELETE.equals(c.operation())) {
+      for (AuditEvent.Change ch : c.changes()) {
+        String attr = ch.attribute().toLowerCase(Locale.ROOT);
+        if (!Memberships.MEMBER_ATTRIBUTES.contains(attr)) continue;
+        boolean dn = !attr.equals("memberuid");
+        List<String> added = ch.after().stream().filter(v -> ch.before().stream().noneMatch(b -> same(b, v, dn))).toList();
+        List<String> removed = ch.before().stream().filter(v -> ch.after().stream().noneMatch(a -> same(a, v, dn))).toList();
+        if (added.isEmpty() && removed.isEmpty()) continue;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("definitionId", c.definitionId());
+        m.put("dn", c.dn());
+        m.put("name", c.name());
+        m.put("attribute", ch.attribute());
+        m.put("added", added.stream().limit(MAX_MEMBERS).toList());
+        m.put("removed", removed.stream().limit(MAX_MEMBERS).toList());
+        m.put("truncated", added.size() > MAX_MEMBERS || removed.size() > MAX_MEMBERS);
+        out.add(Map.entry("group.membership_changed", m));
+      }
+      Map<String, Object> form = new LinkedHashMap<>();
+      form.put("definitionId", c.definitionId());
+      form.put("formId", c.formId());
+      form.put("operation", c.self() ? "self_update" : c.operation());
+      form.put("dn", c.dn());
+      form.put("name", c.name());
+      out.add(Map.entry("form.submitted", form));
+    }
+    return out;
+  }
+
+  private static boolean same(String a, String b, boolean dn) {
+    return dn ? Dns.equal(a, b) || a.equalsIgnoreCase(b) : a.equalsIgnoreCase(b);
+  }
+
+  private String payload(String eventId, String type, Map<String, Object> actor, Map<String, Object> data) {
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("id", eventId);
+    body.put("type", type);
+    body.put("createdAt", Instant.now().truncatedTo(ChronoUnit.MILLIS).toString());
+    Map<String, Object> source = new LinkedHashMap<>();
+    source.put("product", audit.product());
+    source.put("version", audit.version());
+    source.put("installationId", audit.installationId());
+    body.put("source", source);
+    body.put("actor", actor);
+    body.put("data", data);
+    return mapper.writeValueAsString(body);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delivery
+  // ---------------------------------------------------------------------------
+
+  private void dispatchSafely() {
+    try {
+      dispatch();
+    } catch (RuntimeException e) {
+      log.warn("Webhook delivery run failed: {}", LogSafe.of(e.getMessage()));
+    }
+  }
+
+  /** Sends the deliveries that are due; returns how many were attempted. */
+  public int dispatch() {
+    if (!props.getWebhooks().isEnabled()) return 0;
+    Instant now = Instant.now();
+    if (Duration.between(lastPurge, now).compareTo(Duration.ofHours(1)) >= 0) {
+      lastPurge = now;
+      deliveries.purge(now.minus(props.getWebhooks().getLogRetention()));
+    }
+    int count = 0;
+    for (Deliveries.Delivery d : deliveries.claim(now, 20, LEASE)) {
+      attempt(d);
+      count++;
+    }
+    return count;
+  }
+
+  private void attempt(Deliveries.Delivery d) {
+    Instant at = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+    Webhooks.Webhook w = webhooks.get(d.webhookId());
+    if (w == null || !w.enabled()) {
+      deliveries.record(d.attempted(at, null, w == null ? "The webhook was deleted" : "The webhook is disabled", Deliveries.FAILED, d.nextAttemptAt()));
+      return;
+    }
+    Integer status = null;
+    String error;
+    try {
+      UrlGuard.Target target = guard.resolve(UrlGuard.parse(w.url()));
+      byte[] body = d.payload().getBytes(StandardCharsets.UTF_8);
+      long timestamp = at.getEpochSecond();
+      Map<String, String> headers = new LinkedHashMap<>();
+      headers.put("X-DSP-Event", d.eventType());
+      headers.put("X-DSP-Event-Id", d.eventId());
+      headers.put("X-DSP-Delivery", d.id());
+      headers.put("X-DSP-Webhook-Id", w.id());
+      headers.put(WebhookSender.TIMESTAMP_HEADER, Long.toString(timestamp));
+      headers.put(WebhookSender.SIGNATURE_HEADER, WebhookSender.sign(w.secret(), timestamp, body));
+      WebhookSender.Result r = sender.send(target, headers, body);
+      if (r.delivered()) {
+        deliveries.record(d.attempted(at, r.status(), null, Deliveries.DELIVERED, d.nextAttemptAt()));
+        return;
+      }
+      status = r.status() == 0 ? null : r.status();
+      error = r.error() != null ? r.error() : "HTTP " + r.status();
+    } catch (UrlGuard.Refused e) {
+      error = "Refused: " + e.getMessage();
+    }
+    error = error.length() > 900 ? error.substring(0, 900) : error;
+    int max = Math.max(1, props.getWebhooks().getMaxAttempts());
+    if (d.attempts() >= max) {
+      deliveries.record(d.attempted(at, status, error, Deliveries.FAILED, d.nextAttemptAt()));
+      log.warn("Webhook {} ({}): giving up on delivery {} of {} after {} attempts: {}", LogSafe.of(w.name()), w.id(), d.id(), d.eventType(),
+          d.attempts(), LogSafe.of(error));
+      audit.event("webhook.delivery-failed").system().target("webhook", w.id(), w.name()).detail("deliveryId", d.id())
+          .detail("eventType", d.eventType()).detail("attempts", d.attempts()).detail("host", host(w.url())).failed(error);
+      return;
+    }
+    Duration pause = BACKOFF[Math.min(d.attempts() - 1, BACKOFF.length - 1)];
+    deliveries.record(d.attempted(at, status, error, Deliveries.PENDING, at.plus(pause)));
+  }
+
+  /** The URL's host, for logs and the audit trail (never its path or query, which may hold a key). */
+  public static String host(String url) {
+    try {
+      String h = URI.create(url).getHost();
+      return h == null ? "?" : h;
+    } catch (RuntimeException e) {
+      return "?";
+    }
+  }
+}

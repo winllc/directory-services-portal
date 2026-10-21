@@ -46,8 +46,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * Directory entry operations through a definition. Every operation is confined to the
@@ -68,12 +71,14 @@ public class EntryService {
   private final DirectoryOptions options;
   private final Licensing licensing;
   private final MeterRegistry meters;
+  private final ApplicationEventPublisher events;
 
   public record ListQuery(String q, Integer page, Integer pageSize, String sort, String order) {}
 
   public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options,
-      Licensing licensing, MeterRegistry meters) {
+      Licensing licensing, MeterRegistry meters, ApplicationEventPublisher events) {
     this.directory = directory;
+    this.events = events;
     this.meters = meters;
     this.licensing = licensing;
     this.options = options;
@@ -345,6 +350,8 @@ public class EntryService {
     directory.add(dn, attributes);
     // Recorded as soon as the directory accepts it: reading the entry back can still fail.
     event.success();
+    List<AuditEvent.Change> created = attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList();
+    publish(user, EntryChanged.CREATE, def, form, dn, null, titles.isEmpty() ? rdnValues.get(0) : titles.get(0), created, false);
     return loadEntry(def, form, dn);
   }
 
@@ -423,6 +430,7 @@ public class EntryService {
       List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
       String name = titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0);
       event.target("entry", targetDn, name).success();
+      publish(user, EntryChanged.UPDATE, def, form, targetDn, Dns.equal(targetDn, current.dn()) ? null : current.dn(), name, recorded, self);
       // A password set through a form: the user's own change, or an administrator's reset.
       List<String> secrets = recorded.stream().map(AuditEvent.Change::attribute).filter(a -> HIDDEN.contains(a.toLowerCase())).toList();
       if (!secrets.isEmpty()) {
@@ -444,6 +452,8 @@ public class EntryService {
       audit.requireWritable();
       directory.delete(current.dn());
       event.success();
+      publish(user, EntryChanged.DELETE, def, form(def), current.dn(), null, title(def, current),
+          current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList(), false);
       return null;
     });
   }
@@ -476,6 +486,23 @@ public class EntryService {
     } catch (AuditUnavailableException e) {
       count(operation, "failure");
       throw e;
+    }
+  }
+
+  /** Tells listeners (webhooks) about a change; a listener's failure never fails the change. */
+  private void publish(SessionUser user, String operation, DirectoryDefinition def, FormDefinition form, String dn, String previousDn,
+      String name, List<AuditEvent.Change> changes, boolean self) {
+    String apiClient = null;
+    if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes a
+        && a.getRequest().getAttribute(AuditLog.API_CLIENT) instanceof AuditLog.ApiClient c) {
+      apiClient = c.id();
+    }
+    try {
+      events.publishEvent(new EntryChanged(operation, def.id(), form.id(), dn, previousDn, name, List.copyOf(changes), self,
+          user == null ? null : user.username(), user == null ? null : user.authMethod(), apiClient));
+    } catch (RuntimeException e) {
+      org.slf4j.LoggerFactory.getLogger(EntryService.class).error("Could not pass on the change of {}: {}",
+          com.winllc.dsp.util.LogSafe.of(dn), com.winllc.dsp.util.LogSafe.of(e.getMessage()));
     }
   }
 

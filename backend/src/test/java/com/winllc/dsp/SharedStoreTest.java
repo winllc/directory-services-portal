@@ -175,6 +175,41 @@ class SharedStoreTest extends ApiTestSupport {
     }
   }
 
+  @Autowired com.winllc.dsp.integration.IntegrationProperties integration;
+  @Autowired com.winllc.dsp.webhooks.Webhooks webhooks;
+  @Autowired com.winllc.dsp.webhooks.WebhookService webhookService;
+
+  @Test
+  void apiTokensAndWebhookDeliveriesLiveInTheDatabase() throws Exception {
+    Browser admin = signIn("admin");
+    MvcResult created = admin.send(json(post("/api/admin/api-tokens"), Map.of("name", "db", "scopes", List.of("entries:read"))));
+    assertThat(status(created)).isEqualTo(201);
+    String id = body(created).get("token").get("id").asString();
+    String secret = body(created).get("secret").asString();
+    assertThat(jdbc.queryForObject("SELECT content FROM dsp_document WHERE name = 'api-tokens'", String.class)).contains(id).doesNotContain(secret);
+    assertThat(status(mvc.perform(get("/api/v1/directories").header("Authorization", "Bearer " + secret)).andReturn())).isEqualTo(200);
+    // Revoked on another replica: refused here at once (no session, nothing cached about the token itself).
+    new com.winllc.dsp.integration.ApiTokens(props, mapper, otherReplica()).revoke(id, "admin");
+    assertThat(status(mvc.perform(get("/api/v1/directories").header("Authorization", "Bearer " + secret)).andReturn())).isEqualTo(401);
+
+    // The outbox: each due delivery is claimed by one replica only.
+    integration.getWebhooks().setEnabled(false);
+    try {
+      var hook = webhooks.create("db", "https://hooks.example/x", List.of("entry.changed"), List.of(), true, "admin");
+      assertThat(jdbc.queryForObject("SELECT content FROM dsp_document WHERE name = 'webhooks'", String.class)).contains(hook.webhook().id());
+      String delivery = webhookService.ping(webhooks.get(hook.webhook().id()), "admin");
+      assertThat(jdbc.queryForObject("SELECT status FROM dsp_webhook_delivery WHERE id = ?", String.class, delivery)).isEqualTo("pending");
+      var replicaB = new com.winllc.dsp.webhooks.JdbcDeliveries(otherReplica());
+      var claimed = replicaB.claim(java.time.Instant.now(), 10, Duration.ofMinutes(2));
+      assertThat(claimed).extracting(d -> d.id()).contains(delivery);
+      assertThat(webhookService.deliveries().claim(java.time.Instant.now(), 10, Duration.ofMinutes(2))).extracting(d -> d.id()).doesNotContain(delivery);
+      webhooks.delete(hook.webhook().id());
+      webhookService.deliveries().cancel(hook.webhook().id(), "test over");
+    } finally {
+      integration.getWebhooks().setEnabled(true);
+    }
+  }
+
   @Test
   void configurationChangesReachEveryReplicaWithoutLosingAny() {
     ConfigStore other = new ConfigStore(mapper, props, otherReplica(), database);
