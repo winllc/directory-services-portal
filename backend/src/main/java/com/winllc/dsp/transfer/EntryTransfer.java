@@ -246,28 +246,30 @@ public class EntryTransfer {
   }
 
   /**
-   * Refuses LDIF with URL-valued attributes ({@code attr:< file:///...} or {@code http://...}):
-   * the LDIF reader would fetch them, so an import could read the server's own files (the data
-   * directory, /proc, keys) into an entry. UnboundID's reader has no option to turn this off, so
-   * the text is checked first: continuation lines (starting with a space or tab) are unfolded, and
-   * any non-comment line whose first colon is followed by {@code <} refuses the whole file.
+   * Refuses LDIF that could make the reader fetch something: a value given as a URL
+   * ({@code attr:< file:///...} or {@code http://...}) would be read by UnboundID's LDIF reader,
+   * which has no option to turn that off. So the text is checked first, strictly: continuation
+   * lines (a single leading space, RFC 2849) are unfolded; a line starting with a tab is refused;
+   * and any non-comment line containing {@code :<} anywhere (attribute values, and control lines
+   * such as {@code control: 1.2.3 true:< file:///...}) refuses the file. Nothing is read, and the
+   * message names only the line, never a path. A value that really contains ":<" can be given
+   * base64-encoded ({@code attr:: ...}).
    */
   static void refuseUrlValues(String text) {
     String[] lines = text.split("\r?\n|\r", -1);
     StringBuilder logical = new StringBuilder();
     int start = 0;
     for (int i = 0; i <= lines.length; i++) {
-      boolean continuation = i < lines.length && !lines[i].isEmpty() && (lines[i].charAt(0) == ' ' || lines[i].charAt(0) == '\t');
-      if (continuation) {
+      if (i < lines.length && !lines[i].isEmpty() && lines[i].charAt(0) == '\t') {
+        throw ApiException.badRequest("LDIF line " + (i + 1) + ": lines may not start with a tab (continue a line with a single space)");
+      }
+      if (i < lines.length && !lines[i].isEmpty() && lines[i].charAt(0) == ' ') {
         logical.append(lines[i], 1, lines[i].length());
         continue;
       }
-      if (logical.length() > 0 && logical.charAt(0) != '#') {
-        int colon = logical.indexOf(":");
-        if (colon >= 0 && colon + 1 < logical.length() && logical.charAt(colon + 1) == '<') {
-          throw ApiException.badRequest("LDIF line " + (start + 1) + ": values given as a URL (\"" + logical.substring(0, colon)
-              + ":<\") are not accepted; put the value in the file");
-        }
+      if (logical.length() > 0 && logical.charAt(0) != '#' && logical.indexOf(":<") >= 0) {
+        throw ApiException.badRequest("LDIF line " + (start + 1) + ": values given as a URL (\":<\") are not accepted; give the value itself, "
+            + "base64-encoded with \"::\" if it contains \":<\"");
       }
       if (i == lines.length) break;
       logical.setLength(0);

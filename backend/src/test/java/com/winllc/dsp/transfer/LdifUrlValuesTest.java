@@ -39,23 +39,40 @@ class LdifUrlValuesTest {
         "dn: cn=a,ou=x,dc=example,dc=com\ncn: a\ndescription:< http://169.254.169.254/latest/meta-data/\n",
         "dn: cn=a,ou=x,dc=example,dc=com\ncn:< file:///etc/passwd\n",
         "dn:< file:///etc/hostname\ncn: a\n",
-        "dn: cn=a,ou=x,dc=example,dc=com\nchangetype: add\ncn: a\ndescription:< " + url + "\n")) {
+        "dn: cn=a,ou=x,dc=example,dc=com\nchangetype: add\ncn: a\ndescription:< " + url + "\n",
+        // A control's value, and ":<" later on the line.
+        "dn: cn=a,ou=x,dc=example,dc=com\ncontrol: 1.2.3 true:< " + url + "\nchangetype: add\ncn: a\n",
+        "dn: cn=a,ou=x,dc=example,dc=com\ncn: a\ndescription: x :< " + url + "\n",
+        "dn: cn=a,ou=x,dc=example,dc=com\ncontrol: 1.2.3 true:\n < " + url + "\nchangetype: add\ncn: a\n")) {
       assertThatThrownBy(() -> EntryTransfer.parseLdif(form(), ldif, 100)).as(ldif)
           .isInstanceOf(ApiException.class).hasMessageContaining("URL");
     }
   }
 
   @Test
-  void acceptsOrdinaryValuesThatMerelyContainTheCharacters() {
+  void refusesTabLedLinesAndNeverNamesThePath() throws Exception {
+    Path secret = dir.resolve("secret.txt");
+    Files.writeString(secret, "TOP-SECRET-CONTENT");
+    String url = secret.toUri().toString();
+    assertThatThrownBy(() -> EntryTransfer.parseLdif(form(), "dn: cn=a,ou=x,dc=example,dc=com\ncn: a\ndescription:\n\t< " + url + "\n", 100))
+        .isInstanceOf(ApiException.class).hasMessageContaining("tab").hasMessageNotContaining(secret.toString());
+    for (String missing : List.of(url, "file:///nonexistent/dsp-" + System.nanoTime())) {
+      assertThatThrownBy(() -> EntryTransfer.parseLdif(form(), "dn: cn=a,ou=x,dc=example,dc=com\ncn: a\ndescription:< " + missing + "\n", 100))
+          .hasMessage("LDIF line 3: values given as a URL (\":<\") are not accepted; give the value itself, base64-encoded with \"::\" if it "
+              + "contains \":<\"");
+    }
+  }
+
+  @Test
+  void acceptsCommentsAndBase64ValuesWithTheCharacters() {
     String ldif = """
         # a comment:< file:///etc/passwd is just text
         dn: cn=a,ou=x,dc=example,dc=com
         cn: a
-        description: see :< file:///nothing (a value, not a URL reference)
-        description2:: OmRlc2NyaXB0aW9uOjwgZmlsZTovLy8=
+        description:: c2VlIDo8IGZpbGU6Ly8vbm90aGluZw==
         """;
     assertThatCode(() -> EntryTransfer.parseLdif(form(), ldif, 100)).doesNotThrowAnyException();
     var rows = EntryTransfer.parseLdif(form(), ldif, 100);
-    assertThat(rows.get(0).values().get("description")).isEqualTo("see :< file:///nothing (a value, not a URL reference)");
+    assertThat(rows.get(0).values().get("description")).isEqualTo("see :< file:///nothing");
   }
 }
