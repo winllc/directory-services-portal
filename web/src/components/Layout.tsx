@@ -25,6 +25,7 @@ import {
   UserCircle2,
   Users,
   UsersRound,
+  Workflow,
   X,
 } from 'lucide-react';
 import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
@@ -86,6 +87,9 @@ export function Layout() {
 
   return (
     <div className={cx('app-shell', open && 'nav-open')}>
+      <a className="skip-link" href="#main">
+        Skip to main content
+      </a>
       <aside className="sidebar" aria-label="Main navigation">
         <div className="brand">
           <div className="brand-logo">
@@ -155,6 +159,9 @@ export function Layout() {
               <NavItem to="/admin/audit" icon={<History size={18} />}>
                 Audit log
               </NavItem>
+              <NavItem to="/admin/integrations" icon={<Workflow size={18} />}>
+                Integrations
+              </NavItem>
               <NavItem to={LICENSE_PATH} icon={<BadgeCheck size={18} />}>
                 License
               </NavItem>
@@ -203,7 +210,7 @@ export function Layout() {
           </div>
         </header>
         <LicenseNotices />
-        <main className="content" id="main">
+        <main className="content" id="main" tabIndex={-1}>
           <Outlet />
         </main>
       </div>

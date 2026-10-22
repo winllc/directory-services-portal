@@ -9,7 +9,7 @@ import { isWatched } from '../../lib/jobWatch';
 import { cx, useToast } from '../ui';
 import { ProgressBar, elapsed, jobDetail, useTick } from './JobProgress';
 
-const KIND: Record<Job['kind'], string> = { analysis: 'Analysis', metrics: 'Metrics' };
+const KIND: Record<Job['kind'], string> = { analysis: 'Analysis', metrics: 'Metrics', import: 'Import' };
 
 function StatusIcon({ job }: { job: Job }) {
   switch (job.status) {

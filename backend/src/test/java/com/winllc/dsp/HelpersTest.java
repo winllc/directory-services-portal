@@ -9,8 +9,10 @@ import com.winllc.dsp.model.DropdownSource;
 import com.winllc.dsp.model.FormDefinition;
 import com.winllc.dsp.model.FormField;
 import com.winllc.dsp.model.OptionItem;
+import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.schema.FormLinter;
 import com.winllc.dsp.schema.SchemaIndex;
+import com.winllc.dsp.service.EntryChanged;
 import com.winllc.dsp.service.FormValidator;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,15 @@ class HelpersTest {
       field("dept", "departmentNumber", "dropdown", false, false, false, false, null,
           new DropdownSource.Static(List.of(new OptionItem("A", null), new OptionItem("B", null)))),
       field("badge", "acmeBadgeNumber", "text", false, false, true, false, null, null)), null, null);
+
+  @Test
+  void entryChangeActorIsTheUserAndTheApiClient() {
+    SessionUser bob = new SessionUser("bob", "uid=bob,dc=x", "Bob", null, List.of(), false, "x509", "CN=Bob");
+    assertThat(EntryChanged.Actor.of(bob, null)).isEqualTo(new EntryChanged.Actor("bob", "x509", null));
+    assertThat(EntryChanged.Actor.of(bob, "tok-1")).isEqualTo(new EntryChanged.Actor("bob", "x509", "tok-1"));
+    // No user (a change the system made): no username or sign-in method.
+    assertThat(EntryChanged.Actor.of(null, null)).isEqualTo(new EntryChanged.Actor(null, null, null));
+  }
 
   @Test
   void dnHelpersEscapeAndCompareSafely() {

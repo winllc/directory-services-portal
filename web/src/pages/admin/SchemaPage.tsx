@@ -365,7 +365,8 @@ export function SchemaPage() {
       </div>
 
       <div className="split">
-        <div className="table-wrap split-list">
+        {/* Scrolls on its own: focusable, so keyboard users can scroll it. */}
+        <div className="table-wrap split-list" tabIndex={0} role="region" aria-label={tab === 'classes' ? 'Object classes' : 'Attribute types'}>
           <table className="table table-compact">
             <thead>
               {tab === 'classes' ? (

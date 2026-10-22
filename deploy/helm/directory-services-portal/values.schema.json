@@ -1180,6 +1180,23 @@
                   }
                 }
               }
+            },
+            "webhooks": {
+              "type": "object",
+              "properties": {
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "cidrs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         }
@@ -1332,6 +1349,73 @@
         },
         "idpAdminSessionLifetime": {
           "type": "string"
+        }
+      }
+    },
+    "integrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rateLimitPerMinute": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxTokenDays": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "webhooks": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowedHosts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(\\*\\.)?[A-Za-z0-9.-]+$"
+              }
+            },
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "runBudget": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ms|s|m)$"
+            }
+          }
+        },
+        "transfer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "exportMaxEntries": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "importMaxBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "importMaxRows": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "bulkMaxMembers": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         }
       }
     }

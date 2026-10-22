@@ -1,0 +1,1078 @@
+{
+  "openapi" : "3.0.1",
+  "info" : {
+    "description" : "Directory search and read, entry changes and group membership for other systems. Authenticate with an API token an administrator created (Administration > Integrations): Authorization: Bearer dspat_... Each call acts as the token's creator, with their current permissions narrowed by the token's scopes and directories, and is audited.",
+    "license" : {
+      "name" : "LicenseRef-ENS-Commercial"
+    },
+    "title" : "Directory Services Portal integration API",
+    "version" : "1"
+  },
+  "servers" : [ {
+    "url" : "/"
+  } ],
+  "paths" : {
+    "/api/v1/directories" : {
+      "get" : {
+        "description" : "Scope entries:read or groups:read.",
+        "operationId" : "directories",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/Directory"
+                  }
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "List the directories this token can reach",
+        "tags" : [ "Directories" ]
+      }
+    },
+    "/api/v1/directories/{id}" : {
+      "get" : {
+        "description" : "Scope entries:read or groups:read.",
+        "operationId" : "directory",
+        "parameters" : [ {
+          "description" : "Definition id or slug",
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DirectoryDetail"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "A directory and its form's fields",
+        "tags" : [ "Directories" ]
+      }
+    },
+    "/api/v1/directories/{id}/entries" : {
+      "get" : {
+        "description" : "Scope entries:read. Every word of q must match one of the directory's search attributes (substring). Pages of up to 200; at most the first 1000 matches are returned (truncated is then true).",
+        "operationId" : "search",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "q",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }, {
+          "in" : "query",
+          "name" : "pageSize",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }, {
+          "in" : "query",
+          "name" : "sort",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "order",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/EntryListResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "Search a directory's entries",
+        "tags" : [ "Entries" ]
+      },
+      "post" : {
+        "description" : "Scope entries:write. Values are validated against the directory's form.",
+        "operationId" : "create",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreateEntry"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DirectoryEntry"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "Create an entry",
+        "tags" : [ "Entries" ]
+      }
+    },
+    "/api/v1/directories/{id}/entry" : {
+      "delete" : {
+        "description" : "Scope entries:delete.",
+        "operationId" : "delete",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "The entry's DN",
+          "in" : "query",
+          "name" : "dn",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "Delete an entry",
+        "tags" : [ "Entries" ]
+      },
+      "get" : {
+        "description" : "Scope entries:read.",
+        "operationId" : "read",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "The entry's DN",
+          "in" : "query",
+          "name" : "dn",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DirectoryEntry"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "Read one entry",
+        "tags" : [ "Entries" ]
+      },
+      "patch" : {
+        "description" : "Scope entries:write. Only the attributes given change; an empty list clears one.",
+        "operationId" : "update",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "The entry's DN",
+          "in" : "query",
+          "name" : "dn",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UpdateEntry"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DirectoryEntry"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "Change an entry",
+        "tags" : [ "Entries" ]
+      }
+    },
+    "/api/v1/directories/{id}/members" : {
+      "get" : {
+        "description" : "Scope groups:read. attribute defaults to the form's member, uniqueMember or memberUid field.",
+        "operationId" : "members",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "The entry's DN",
+          "in" : "query",
+          "name" : "dn",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "attribute",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Members"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "A group's members",
+        "tags" : [ "Groups" ]
+      },
+      "post" : {
+        "description" : "Scope groups:write. One change of the group entry; members already present (or already absent) are skipped.",
+        "operationId" : "changeMembers",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "The entry's DN",
+          "in" : "query",
+          "name" : "dn",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MembershipChange"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Change"
+                }
+              }
+            },
+            "description" : "OK"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Invalid input (details names the fields)"
+          },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No, unknown, expired or revoked API token (code token_required, token_unknown, token_expired, token_revoked)"
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "The token lacks a scope (code insufficient_scope), its creator lacks the permission, or the license doesn't allow it"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "No such directory or entry, or one the token can't reach"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Error"
+                }
+              }
+            },
+            "description" : "Over the token's rate limit (code rate_limited); see Retry-After"
+          }
+        },
+        "security" : [ {
+          "apiToken" : [ ]
+        } ],
+        "summary" : "Add and remove group members",
+        "tags" : [ "Groups" ]
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "Change" : {
+        "type" : "object",
+        "properties" : {
+          "added" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "attribute" : {
+            "type" : "string"
+          },
+          "dn" : {
+            "type" : "string"
+          },
+          "partial" : {
+            "type" : "boolean"
+          },
+          "removed" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
+      "CreateEntry" : {
+        "required" : [ "values" ],
+        "type" : "object",
+        "properties" : {
+          "parentDn" : {
+            "maxLength" : 1024,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "values" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "object"
+            }
+          }
+        }
+      },
+      "Directory" : {
+        "type" : "object",
+        "properties" : {
+          "access" : {
+            "type" : "string"
+          },
+          "description" : {
+            "type" : "string"
+          },
+          "id" : {
+            "type" : "string"
+          },
+          "name" : {
+            "type" : "string"
+          },
+          "readOnly" : {
+            "type" : "boolean"
+          },
+          "slug" : {
+            "type" : "string"
+          }
+        }
+      },
+      "DirectoryDetail" : {
+        "type" : "object",
+        "properties" : {
+          "directory" : {
+            "$ref" : "#/components/schemas/Directory"
+          },
+          "fields" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/Field"
+            }
+          },
+          "objectClasses" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "rdnAttribute" : {
+            "type" : "string"
+          }
+        }
+      },
+      "DirectoryEntry" : {
+        "type" : "object",
+        "properties" : {
+          "attributes" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "array",
+              "items" : {
+                "type" : "string"
+              }
+            }
+          },
+          "dn" : {
+            "type" : "string"
+          }
+        }
+      },
+      "EntryListResponse" : {
+        "type" : "object",
+        "properties" : {
+          "entries" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DirectoryEntry"
+            }
+          },
+          "page" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "pageSize" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "total" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "truncated" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "Error" : {
+        "type" : "object",
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "description" : "A machine-readable reason, when there is one"
+          },
+          "details" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "string"
+            },
+            "description" : "Per-field messages"
+          },
+          "error" : {
+            "type" : "string",
+            "description" : "A message for people"
+          }
+        }
+      },
+      "Field" : {
+        "type" : "object",
+        "properties" : {
+          "attribute" : {
+            "type" : "string"
+          },
+          "format" : {
+            "type" : "string"
+          },
+          "label" : {
+            "type" : "string"
+          },
+          "multiValued" : {
+            "type" : "boolean"
+          },
+          "readOnly" : {
+            "type" : "boolean"
+          },
+          "required" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "Members" : {
+        "type" : "object",
+        "properties" : {
+          "attribute" : {
+            "type" : "string"
+          },
+          "dn" : {
+            "type" : "string"
+          },
+          "members" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
+      "MembershipChange" : {
+        "type" : "object",
+        "properties" : {
+          "add" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "attribute" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "remove" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
+      "UpdateEntry" : {
+        "required" : [ "values" ],
+        "type" : "object",
+        "properties" : {
+          "values" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "object"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes" : {
+      "apiToken" : {
+        "bearerFormat" : "dspat_",
+        "description" : "An API token. Scopes: entries:read, entries:write, entries:delete, groups:read, groups:write",
+        "scheme" : "bearer",
+        "type" : "http"
+      }
+    }
+  }
+}

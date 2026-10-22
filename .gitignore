@@ -14,3 +14,4 @@ certs/
 *private.pem
 !backend/src/test/resources/ens-license-fixtures/*.lic
 /license/
+playwright-report/

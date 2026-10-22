@@ -3,7 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Database, IdCard, KeyRound, LogIn } from 'lucide-react';
 import { useServerInfo } from '../api/hooks';
 import { useAuth } from '../lib/auth';
-import { Alert, Button, FormRow } from '../components/ui';
+import { Alert, Button, FormRow, usePageTitle } from '../components/ui';
 import { ConsentNotice } from '../components/ConsentNotice';
 
 export function LoginPage() {
@@ -11,6 +11,7 @@ export function LoginPage() {
   const info = useServerInfo();
   const navigate = useNavigate();
   const location = useLocation();
+  usePageTitle('Sign in');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

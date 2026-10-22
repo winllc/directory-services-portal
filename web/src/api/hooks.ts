@@ -21,6 +21,15 @@ import type {
   AuditStatus,
   AuditToken,
   AuditVerification,
+  ApiToken,
+  ApiTokenSettings,
+  GroupMembers,
+  ImportResult,
+  MembershipChangeResult,
+  Webhook,
+  WebhookDelivery,
+  WebhookInput,
+  WebhookSettings,
   CustomSchema,
   DefinitionSummary,
   DirectoryDefinition,
@@ -74,6 +83,12 @@ export const keys = {
   analyses: ['admin', 'analyses'] as const,
   analysis: (id: string) => ['admin', 'analysis', id] as const,
   analysisResult: (id: string) => ['admin', 'analysis-result', id] as const,
+  apiTokens: ['admin', 'api-tokens'] as const,
+  apiTokenSettings: ['admin', 'api-token-settings'] as const,
+  webhooks: ['admin', 'webhooks'] as const,
+  webhookSettings: ['admin', 'webhook-settings'] as const,
+  webhookDeliveries: (id: string) => ['admin', 'webhook-deliveries', id] as const,
+  members: (id: string, dn: string) => ['members', id, dn] as const,
   jobs: ['jobs'] as const,
   job: (id: string) => ['jobs', id] as const,
   jobResult: (id: string) => ['jobs', id, 'result'] as const,
@@ -404,6 +419,8 @@ export function useCreateAuditToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => api.post<{ token: AuditToken; secret: string }>('/api/admin/audit/tokens', { name }),
+    // The answer holds the token's value: never kept in the mutation cache once the page let go of it.
+    gcTime: 0,
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.auditTokens }),
   });
 }
@@ -687,4 +704,177 @@ export function useAnalysisMutations() {
       onSuccess: () => qc.invalidateQueries({ queryKey: keys.jobs }),
     }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Integrations: API tokens and webhooks
+// ---------------------------------------------------------------------------
+
+export const useApiTokens = () => useQuery({ queryKey: keys.apiTokens, queryFn: () => api.get<ApiToken[]>('/api/admin/api-tokens') });
+
+export const useApiTokenSettings = () =>
+  useQuery({ queryKey: keys.apiTokenSettings, queryFn: () => api.get<ApiTokenSettings>('/api/admin/api-tokens/settings'), staleTime: 60_000 });
+
+export interface ApiTokenRequest {
+  name: string;
+  scopes: string[];
+  definitionIds: string[];
+  expiresInDays: number;
+  rateLimitPerMinute?: number;
+}
+
+export function useCreateApiToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ApiTokenRequest) => api.post<{ token: ApiToken; secret: string }>('/api/admin/api-tokens', body),
+    // The answer holds the token's value: never kept in the mutation cache once the page let go of it.
+    gcTime: 0,
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.apiTokens }),
+  });
+}
+
+export function useRevokeApiToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del<ApiToken>(`/api/admin/api-tokens/${encodeURIComponent(id)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.apiTokens }),
+  });
+}
+
+export const useWebhooks = () => useQuery({ queryKey: keys.webhooks, queryFn: () => api.get<Webhook[]>('/api/admin/webhooks') });
+
+export const useWebhookSettings = () =>
+  useQuery({ queryKey: keys.webhookSettings, queryFn: () => api.get<WebhookSettings>('/api/admin/webhooks/settings'), staleTime: 60_000 });
+
+export const useWebhookDeliveries = (id: string | undefined) =>
+  useQuery({
+    queryKey: keys.webhookDeliveries(id ?? ''),
+    queryFn: () => api.get<WebhookDelivery[]>(`/api/admin/webhooks/${encodeURIComponent(id!)}/deliveries`, { background: true }),
+    enabled: !!id,
+    refetchInterval: (q) => (q.state.data?.some((d) => d.status === 'pending') ? 3000 : false),
+  });
+
+export function useWebhookMutations() {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: keys.webhooks });
+  const url = (id: string) => `/api/admin/webhooks/${encodeURIComponent(id)}`;
+  return {
+    // Answers with a signing secret are dropped from the mutation cache at once (gcTime 0; the
+    // page also resets the mutation after taking the secret).
+    create: useMutation({
+      mutationFn: (body: WebhookInput) => api.post<{ webhook: Webhook; secret: string }>('/api/admin/webhooks', body),
+      onSuccess: refresh,
+      gcTime: 0,
+    }),
+    update: useMutation({ mutationFn: ({ id, body }: { id: string; body: WebhookInput }) => api.put<Webhook>(url(id), body), onSuccess: refresh }),
+    rotate: useMutation({ mutationFn: (id: string) => api.post<{ webhook: Webhook; secret: string }>(`${url(id)}/rotate-secret`), onSuccess: refresh, gcTime: 0 }),
+    remove: useMutation({ mutationFn: (id: string) => api.del(url(id)), onSuccess: refresh }),
+    test: useMutation({
+      mutationFn: (id: string) => api.post<{ deliveryId: string }>(`${url(id)}/test`),
+      onSuccess: (_r, id) => qc.invalidateQueries({ queryKey: keys.webhookDeliveries(id) }),
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Export, import and group members
+// ---------------------------------------------------------------------------
+
+/**
+ * Downloads a file the server makes on request: a POST with the CSRF header (the export is
+ * audited, so another site must not be able to start it), saved under the name from
+ * Content-Disposition.
+ */
+async function download(url: string, fallbackName: string) {
+  const res = await fetch(url, { method: 'POST', headers: { 'X-DSP-Request': '1' }, credentials: 'same-origin' });
+  if (!res.ok) {
+    let message = `Export failed (${res.status})`;
+    try {
+      message = ((await res.json()) as { error?: string }).error ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message);
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const name = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? fallbackName;
+  saveBlob(await res.blob(), name);
+  return { count: Number(res.headers.get('X-DSP-Export-Count') ?? 0), truncated: res.headers.get('X-DSP-Export-Truncated') === 'true' };
+}
+
+/** Download a directory's entries matching the search (all of them without one). The server records the export. */
+export const downloadEntries = (definitionId: string, format: 'csv' | 'ldif', q?: string) =>
+  download(`/api/directories/${encodeURIComponent(definitionId)}/export${qs({ format, q })}`, `export.${format}`);
+
+export const downloadMembers = (definitionId: string, dn: string, format: 'csv' | 'ldif', attribute?: string) =>
+  download(`/api/directories/${encodeURIComponent(definitionId)}/members/export?${dnParam(dn)}${attribute ? `&attribute=${encodeURIComponent(attribute)}` : ''}&format=${format}`,
+    `members.${format}`);
+
+/** Waits for a background job's result (polling once a second). */
+async function jobResult<T>(response: T | PendingResponse): Promise<T> {
+  if (!isPending(response)) return response;
+  const id = response.job.id;
+  const stop = watchJob(id);
+  try {
+    for (;;) {
+      const job = await api.get<Job>(`/api/jobs/${encodeURIComponent(id)}`, { background: true });
+      if (job.status === 'succeeded') {
+        const r = await api.get<{ result: T }>(`/api/jobs/${encodeURIComponent(id)}/result`, { background: true });
+        await api.post('/api/jobs/seen', { ids: [id] }, { background: true });
+        return r.result;
+      }
+      if (!jobActive(job)) throw new Error(job.status === 'cancelled' ? 'The import was cancelled.' : `The import failed: ${job.error ?? 'unknown error'}`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  } finally {
+    stop();
+  }
+}
+
+export interface ImportRequest {
+  definitionId: string;
+  format: 'csv' | 'ldif';
+  mode: 'upsert' | 'create' | 'update';
+  dryRun: boolean;
+  text: string;
+}
+
+export function useImportEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ definitionId, format, mode, dryRun, text }: ImportRequest) =>
+      jobResult(
+        await api.postText<ImportResult | PendingResponse>(
+          `/api/directories/${encodeURIComponent(definitionId)}/import${qs({ format, mode, dryRun: dryRun ? 'true' : undefined })}`,
+          text,
+          format === 'csv' ? 'text/csv; charset=utf-8' : undefined,
+        ),
+      ),
+    onSuccess: (r, v) => {
+      if (!r.dryRun) {
+        qc.invalidateQueries({ queryKey: ['entries', v.definitionId] });
+        qc.invalidateQueries({ queryKey: ['entry', v.definitionId] });
+      }
+    },
+  });
+}
+
+export const useGroupMembers = (definitionId: string | undefined, dn: string, enabled = true) =>
+  useQuery({
+    queryKey: keys.members(definitionId ?? '', dn),
+    queryFn: () => api.get<GroupMembers>(`/api/directories/${encodeURIComponent(definitionId!)}/members?${dnParam(dn)}`),
+    enabled: !!definitionId && enabled,
+    retry: false,
+  });
+
+export function useChangeMembers(definitionId: string, dn: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { attribute?: string; add: string[]; remove: string[] }) =>
+      api.post<MembershipChangeResult>(`/api/directories/${encodeURIComponent(definitionId)}/members?${dnParam(dn)}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.members(definitionId, dn) });
+      qc.invalidateQueries({ queryKey: ['entry', definitionId] });
+    },
+  });
 }

@@ -137,6 +137,42 @@ public class AuthService {
     return toUser(entry, user.dn(), user.username(), user.authMethod(), user.certificateSubject(), true);
   }
 
+  /** Account-lock attributes: 389-DS/Red Hat DS, Active Directory, and the password policy overlay. */
+  static final List<String> LOCK_ATTRIBUTES = List.of("nsAccountLock", "userAccountControl", "pwdAccountLockedTime");
+  private static final int ACCOUNTDISABLE = 0x2;
+
+  /** A re-read user, or why their account may not be used (then {@code user} is null). */
+  public record Checked(SessionUser user, String locked) {}
+
+  /**
+   * As {@link #refresh}, and also refuses an account the directory marks disabled or locked
+   * ({@code nsAccountLock: true}, Active Directory's ACCOUNTDISABLE flag in userAccountControl,
+   * or a {@code pwdAccountLockedTime}). Null when the entry no longer exists.
+   */
+  public Checked refreshActive(SessionUser user) {
+    List<String> attrs = new java.util.ArrayList<>(userAttributes());
+    attrs.addAll(LOCK_ATTRIBUTES);
+    DirectoryEntry entry = directory.get(user.dn(), attrs);
+    if (entry == null) return null;
+    String locked = lockReason(entry);
+    if (locked != null) return new Checked(null, locked);
+    return new Checked(toUser(entry, user.dn(), user.username(), user.authMethod(), user.certificateSubject(), true), null);
+  }
+
+  static String lockReason(DirectoryEntry entry) {
+    if ("true".equalsIgnoreCase(entry.first("nsAccountLock"))) return "nsAccountLock";
+    String uac = entry.first("userAccountControl");
+    if (uac != null) {
+      try {
+        if ((Long.parseLong(uac.trim()) & ACCOUNTDISABLE) != 0) return "userAccountControl ACCOUNTDISABLE";
+      } catch (NumberFormatException e) {
+        return "unreadable userAccountControl";
+      }
+    }
+    if (!entry.values("pwdAccountLockedTime").isEmpty()) return "pwdAccountLockedTime";
+    return null;
+  }
+
   private List<String> userAttributes() {
     return List.of("cn", "displayName", "mail", props.getUsernameAttribute(), "memberOf");
   }

@@ -63,6 +63,9 @@ spec:
             # Fully qualified: nginx resolves it at request time without DNS search domains.
             - name: API_URL
               value: {{ printf "http://%s.%s.svc.%s:%v" (include "dsp.apiName" .) .Release.Namespace $v.clusterDomain (include "dsp.str" $v.api.service.port) | quote }}
+            # The largest upload nginx accepts: the API's import limit, at least 5 MiB.
+            - name: MAX_BODY_SIZE
+              value: {{ max 5242880 (int64 $v.integrations.transfer.importMaxBytes) | quote }}
             {{- if $v.server.publicUrl }}
             # X-Forwarded-Host for the API: the configured public host, not the client's Host.
             - name: PUBLIC_HOST

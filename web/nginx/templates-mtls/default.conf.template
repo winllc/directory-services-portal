@@ -32,8 +32,9 @@ server {
     ssl_protocols           TLSv1.2 TLSv1.3;
     root /usr/share/nginx/html;
 
-    # Schema imports can be large.
-    client_max_body_size 5m;
+    # Schema and entry imports can be large: MAX_BODY_SIZE (5m by default; at least the API's
+    # IMPORT_MAX_BYTES).
+    client_max_body_size ${DSP_MAX_BODY_SIZE};
 
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
