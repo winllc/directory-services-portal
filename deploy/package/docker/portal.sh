@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Manage the Directory Services Portal @VERSION@ deployment in this directory.
+# Manage the Directory Services Portal @VERSION@ deployment in this directory, with Docker or
+# Podman (CONTAINER_ENGINE in .env, or in the environment; see engine.sh).
 #
 #   ./portal.sh up                 start or update (applies .env changes), wait until healthy
 #   ./portal.sh down               stop and remove the containers (data is kept)
@@ -19,23 +20,36 @@ VERSION="@VERSION@"
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 [ -f .env ] || die "No .env here; run ./install.sh first."
-dc() { docker compose "$@"; }
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '"'; }
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  up|down|restart|status|logs|backup|restore|license)
+    # shellcheck source=engine.sh
+    . ./engine.sh
+    case "$cmd" in up|status) ;; *) ENGINE_QUIET=1 ;; esac
+    engine_select
+    ;;
+esac
+dc() { compose "$@"; }
 
 urls() {
-  local files; files="$(env_value COMPOSE_FILE)"
-  local host; host="$(hostname -f 2>/dev/null || hostname)"
-  case "$files" in *mtls*) echo "    https://$host:$(env_value HTTPS_PORT)" ;; esac
-  case "$files" in *publish*) echo "    http://$host:$(env_value WEB_PORT)" ;; esac
-  case "$files" in *mtls*|*publish*) ;; *) echo "    (no port published: route your reverse proxy to the web service on port 8080)" ;; esac
+  local files; files=":$(env_value COMPOSE_FILE):"
+  local host; host="$(env_value WEB_BIND)"
+  case "$host" in ""|0.0.0.0|::) host="$(hostname -f 2>/dev/null || hostname)" ;; *:*) host="[$host]" ;; esac
+  case "$files" in *:docker-compose.mtls.yml:*) echo "    https://$host:$(env_value HTTPS_PORT)" ;; esac
+  case "$files" in *:docker-compose.no-publish.yml:*) ;; *) echo "    http://$host:$(env_value WEB_PORT)" ;; esac
+  case "$files" in
+    *:docker-compose.mtls.yml:*) ;;
+    *:docker-compose.no-publish.yml:*) echo "    (no port published: route your reverse proxy to the web service on port 8080)" ;;
+  esac
 }
 
 wait_healthy() {
-  local id status
-  id="$(dc ps -q api)"
+  local id status i
+  id="$(engine_service_container api)"
   [ -n "$id" ] || die "The API container did not start; see ./portal.sh logs api"
-  for _ in $(seq 1 90); do
-    status="$(docker inspect -f '{{.State.Health.Status}}' "$id" 2>/dev/null || echo unknown)"
+  for i in $(seq 0 89); do
+    if [ $((i % 8)) -eq 0 ]; then status="$(engine_health "$id" run)"; else status="$(engine_health "$id")"; fi
     case "$status" in
       healthy) return 0 ;;
       unhealthy) die "The API is not ready: it can't reach the directory, write its audit log or its data disk is full; see ./portal.sh logs api" ;;
@@ -45,7 +59,6 @@ wait_healthy() {
   die "The API did not become ready in time (directory, audit log, data disk); see ./portal.sh logs api"
 }
 
-cmd="${1:-help}"; shift || true
 case "$cmd" in
   up)
     dc up -d --remove-orphans
@@ -96,5 +109,5 @@ case "$cmd" in
     esac
     ;;
   version) echo "$VERSION" ;;
-  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

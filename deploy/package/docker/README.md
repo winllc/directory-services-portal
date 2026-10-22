@@ -1,41 +1,105 @@
 # Directory Services Portal @VERSION@: deployment package
 
-Everything needed to run the portal on a host with Docker; no source code, build tools or
-internet access are required. Built @BUILD_DATE@ from @GIT_REVISION@.
+Everything needed to run the portal on a host with Docker or Podman; no source code, build tools
+or internet access are required. Built @BUILD_DATE@ from @GIT_REVISION@.
 
 | Contents | |
 |---|---|
 | `install.sh` | verifies the package, loads the images, writes `.env` |
 | `upgrade.sh` | upgrades a running deployment to this version, keeping its settings and data |
 | `portal.sh` | start, stop, status, logs, backup, restore and license install |
+| `engine.sh` | picks Docker or Podman and its compose command (used by the scripts above) |
 | `env.template` | every setting, documented (copied to `.env` by the installer) |
-| `docker-compose*.yml` | the services, and optional overlays for HTTP, HTTPS/X.509 and a demo OpenLDAP |
+| `docker-compose.yml` | the services, with the web tier published on the host (HTTP, `0.0.0.0:8080` by default) |
+| `docker-compose.no-publish.yml` | the same without the published port, for a proxy on the compose network |
+| `docker-compose.*.yml` | optional overlays for HTTPS/X.509 and a demo OpenLDAP |
 | `images/` | the container images (Red Hat UBI 9 based) |
 | `license/` | optional drop-in for your ENS Solutions license (`license/license.lic`), copied in by the installer |
 | `scripts/generate-dev-certs.sh` | throw-away certificates for trying HTTPS and X.509 sign-in |
 
-Requirements: Linux with Docker Engine 20.10+ and Docker Compose v2, about 2 GB of disk.
+Requirements: Linux with about 2 GB of disk and either
+
+- **Docker** Engine 20.10+ with Docker Compose v2 (`docker compose`; the old `docker-compose`
+  1.29 is used when v2 is missing, best effort), or
+- **Podman** 4.0+ with podman-compose 1.1+ (`pip install --user podman-compose`, or your
+  distribution's package), rootful or rootless; `podman compose` is used when podman-compose
+  is not installed. See [Docker or Podman](#docker-or-podman).
 
 ## Install
 
 ```bash
 tar xzf directory-services-portal-@VERSION@*.tar.gz
 cd directory-services-portal-@VERSION@
-./install.sh --http 8080          # plain HTTP on port 8080, e.g. behind your TLS proxy
+./install.sh                      # plain HTTP on 0.0.0.0:8080 (every interface), e.g. behind your TLS proxy
 vi .env                           # LDAP connection and administrators
 ./portal.sh up
 ```
 
+By default the web tier is published on **all interfaces** (`WEB_BIND=0.0.0.0`) on port 8080
+(`WEB_PORT`), over plain HTTP: anyone who can reach the host can reach the portal, and the
+installer says so. Put a TLS-terminating proxy in front, or use `--https`. To keep it to this
+host (e.g. for a proxy on the same host), install with `--bind 127.0.0.1`, or set
+`WEB_BIND=127.0.0.1` in `.env` and run `./portal.sh up`.
+
 Other ways to publish it:
 
 ```bash
-./install.sh --https 443          # HTTPS (+ optional X.509 sign-in); put certs in ./certs
-./install.sh                      # nothing published: route a proxy on the compose network to web:8080
-./install.sh --demo --http        # try it: built-in demo directory, users admin/alice/... password "password"
-./install.sh --demo-openldap --http   # demo with the bundled OpenLDAP (if this package includes it)
+./install.sh --http 8081          # plain HTTP on another port
+./install.sh --https 8443         # HTTPS only (+ optional X.509 sign-in); put certs in ./certs
+./install.sh --https 8443 --http  # HTTPS, and HTTP on 8080 redirecting to it
+./install.sh --no-publish         # nothing published: route a proxy on the compose network to web:8080
+./install.sh --demo               # try it: built-in demo directory, users admin/alice/... password "password"
+./install.sh --demo-openldap      # demo with the bundled OpenLDAP (if this package includes it)
 ```
 
+`--no-publish` uses `docker-compose.no-publish.yml` instead of `docker-compose.yml` (the same
+services without the published port; `COMPOSE_FILE` in `.env`). Your proxy joins the
+`directory-services-portal_default` network and forwards to `http://web:8080`.
+
 The installer never overwrites an existing `.env`; `--force-env` recreates it (keeping a copy).
+
+### Docker or Podman
+
+The scripts use Docker if its daemon answers, else Podman, and say which engine and compose
+command they chose. `--engine docker|podman` (install.sh, upgrade.sh) or the `CONTAINER_ENGINE`
+environment variable chooses explicitly; the installer records the engine in `.env`
+(`CONTAINER_ENGINE`), and `portal.sh` keeps using it. Each engine has its own containers and
+volumes: switching an installed portal to the other engine starts it with empty data (move the
+data with `./portal.sh backup` and `./portal.sh restore`).
+
+With Podman (4.0 or later; podman-compose 1.1 or later):
+
+- **Rootless** works: the images run as unprivileged users, and the portal's data is in named
+  volumes, so there is nothing to `chown`. Rootless Podman can't publish ports below 1024 (the
+  defaults, 8080 and 8443, are fine); for 443, use `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`
+  (persist it in `/etc/sysctl.d/`), or a proxy, and the installer warns about it.
+- **Keep it running after logout** (rootless): `sudo loginctl enable-linger $USER`.
+- **Start at boot**: Podman has no daemon restarting `restart: unless-stopped` containers. Run
+  `./portal.sh up` from a systemd unit (for rootless, a user unit, `systemctl --user`):
+
+  ```ini
+  [Unit]
+  Description=Directory Services Portal
+  Wants=network-online.target
+  After=network-online.target
+
+  [Service]
+  Type=oneshot
+  RemainAfterExit=yes
+  WorkingDirectory=/opt/directory-services-portal
+  ExecStart=/opt/directory-services-portal/portal.sh up
+  ExecStop=/opt/directory-services-portal/portal.sh down
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+
+  (`WantedBy=default.target` for a user unit.) `podman generate systemd --new` or Quadlet units
+  work too, but then systemd, not `./portal.sh`, owns the containers.
+- **SELinux** (RHEL, Fedora): the certificate files in `./certs` are mounted with `:Z`/`:z`, so
+  Podman relabels them; nothing else is bind-mounted.
+- **Healthchecks**: Podman runs them from systemd timers; `./portal.sh up` also runs the API's
+  check itself while it waits, so hosts without systemd work as well.
 
 ## Configure
 
@@ -82,7 +146,7 @@ Install it either way:
 The license lives in the `ens-license` volume (`/var/lib/ens/directory-portal` in the api
 container), together with this **installation id** (shown on the license screen; you enter it on
 the ENS portal to bind a license to this installation) and the license revisions seen. Upgrades
-keep the volume; `docker compose down -v` would delete it, and a new installation id would mean
+keep the volume; removing the volumes (`docker compose down -v`, `podman volume rm`) would delete it, and a new installation id would mean
 re-binding the license. A renewed license takes effect as soon as it is installed.
 
 What the license unlocks (each a feature on the license, shown ticked or not on the license
@@ -99,7 +163,7 @@ certificates in `./certs` and asks browsers for an (optional) client certificate
 | File | |
 |---|---|
 | `certs/server.pem` | server certificate (with chain) |
-| `certs/server.key` | its private key, readable by uid 1001 (`chmod 644`, or `chgrp 0` + `chmod 640`) |
+| `certs/server.key` | its private key, readable by uid 1001 (`chmod 644`, or `chgrp 0` + `chmod 640`; rootless Podman: `podman unshare chown 1001:0 certs/server.key` + `chmod 640`) |
 | `certs/ca.pem` | CA(s) that issue user certificates |
 
 Set `X509_ENABLED=true` (done by the installer) and adjust `X509_USER_FILTER` to map certificates to
@@ -130,7 +194,7 @@ API container (a compose override) and set `ENS_X509_CRL_DIR` to it.
 ```
 
 The portal's data (forms, directory definitions, permissions, dashboards, analyses, the audit
-log) is in the Docker volume `directory-services-portal_portal-data`. The directory data stays
+log) is in the volume `directory-services-portal_portal-data` (Docker or Podman). The directory data stays
 in your LDAP server. With `ENS_AUDIT_FILE` set in `.env`, the rolling audit file is in the
 `ens-audit` volume (`/var/log/ens` in the container) for a log forwarder to read; Splunk HEC and
 syslog delivery are configured in `.env` too (see the main README, Audit logging).
@@ -153,6 +217,18 @@ license volume (`ens-license`: installed license and installation id) are reused
 `license/license.lic` is copied in only if the volume has no license yet.
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
 backup.
+
+From a package before Podman support, the upgrade keeps what the portal publishes and where:
+earlier, `docker-compose.yml` published nothing and `docker-compose.publish.yml` published
+`WEB_PORT`. Now `docker-compose.yml` publishes it, so `upgrade.sh` (through `install.sh`)
+rewrites `COMPOSE_FILE` in `.env`: without `docker-compose.publish.yml` it uses
+`docker-compose.no-publish.yml` instead of `docker-compose.yml` (still nothing published),
+with it the file is dropped (the same `WEB_BIND:WEB_PORT`). `WEB_BIND`, `WEB_PORT` and
+`HTTPS_PORT` are not changed, so an installation bound to `127.0.0.1` stays local; only new
+installations get the `0.0.0.0` default. It also adds `CONTAINER_ENGINE=docker`, so the portal
+stays on Docker (`.env.bak-<time>` keeps the previous `.env`). Nothing needs doing by hand. To
+publish an upgraded installation that published nothing, set `COMPOSE_FILE` to start with
+`docker-compose.yml` and run `./portal.sh up`.
 
 Settings a release adds are not written into an existing `.env` (except `X509_PROXY_SECRET`):
 they take their defaults, and older names keep working (`SESSION_TTL_MINUTES`, `COOKIE_SECURE`,
