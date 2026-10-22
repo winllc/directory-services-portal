@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronDown, Plus, X } from 'lucide-react';
 import type { FormField, OptionItem } from '@dsp/shared';
 import { rdnValue } from '@dsp/shared';
@@ -205,6 +205,10 @@ function MultiSelect({ field, values, onChange, options, optionsLoading, disable
   const [active, setActive] = useState(0);
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  // Closing on blur waits a moment so a click on an option still lands; the timer is dropped on
+  // refocus and on unmount, so it never sets state on a component that has gone.
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(blurTimer.current), []);
 
   const available = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -281,8 +285,13 @@ function MultiSelect({ field, values, onChange, options, optionsLoading, disable
               setOpen(true);
               setActive(0);
             }}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            onFocus={() => {
+              clearTimeout(blurTimer.current);
+              setOpen(true);
+            }}
+            onBlur={() => {
+              blurTimer.current = setTimeout(() => setOpen(false), 150);
+            }}
             onKeyDown={onKeyDown}
           />
         )}
