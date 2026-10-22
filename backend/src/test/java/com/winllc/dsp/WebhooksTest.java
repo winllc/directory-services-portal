@@ -159,6 +159,8 @@ class WebhooksTest extends ApiTestSupport {
     assertThat(event.get("data").get("added").toString()).contains(BOB);
     assertThat(event.get("data").get("removed").size()).isZero();
     assertThat(event.get("actor").get("username").asString()).isEqualTo("admin");
+    assertThat(event.get("actor").get("authMethod").asString()).isEqualTo("password");
+    assertThat(event.get("actor").has("apiClientId")).isFalse();
 
     Received entry = received.stream().filter(x -> "entry.changed".equals(x.header("X-DSP-Event"))).findFirst().orElseThrow();
     assertThat(mapper.readTree(entry.body()).get("data").get("operation").asString()).isEqualTo("update");

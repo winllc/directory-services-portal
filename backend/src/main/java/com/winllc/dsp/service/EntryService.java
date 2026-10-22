@@ -642,7 +642,7 @@ public class EntryService {
     }
     try {
       events.publishEvent(new EntryChanged(operation, def.id(), form.id(), dn, previousDn, name, List.copyOf(changes), self,
-          user == null ? null : user.username(), user == null ? null : user.authMethod(), apiClient));
+          EntryChanged.Actor.of(user, apiClient)));
     } catch (RuntimeException e) {
       org.slf4j.LoggerFactory.getLogger(EntryService.class).error("Could not pass on the change of {}: {}",
           com.winllc.dsp.util.LogSafe.of(dn), com.winllc.dsp.util.LogSafe.of(e.getMessage()));

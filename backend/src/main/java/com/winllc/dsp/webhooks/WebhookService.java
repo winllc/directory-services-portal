@@ -220,9 +220,10 @@ public class WebhookService {
 
   private static Map<String, Object> actor(EntryChanged c) {
     Map<String, Object> actor = new LinkedHashMap<>();
-    actor.put("username", c.actor());
-    actor.put("authMethod", c.authMethod());
-    if (c.apiClientId() != null) actor.put("apiClientId", c.apiClientId());
+    EntryChanged.Actor a = c.actor();
+    actor.put("username", a.username());
+    actor.put("authMethod", a.authMethod());
+    if (a.apiClientId() != null) actor.put("apiClientId", a.apiClientId());
     return actor;
   }
 
