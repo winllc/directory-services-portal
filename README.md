@@ -45,9 +45,9 @@ Customers install the portal in one of two supported ways, both from a release (
 The installation guide covers both: <https://winllc.github.io/ens-apps-documentation/directory-services-portal/install/>.
 
 ```bash
-# Docker host: verify the download (see Releases), then
+# Docker or Podman host: verify the download (see Releases), then
 tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-portal-<version>
-./install.sh --http 8080         # or --https 443 (X.509 sign-in), or nothing published
+./install.sh                     # HTTP on 0.0.0.0:8080; or --https 8443 (X.509 sign-in), --no-publish
 vi .env                          # LDAP connection and administrators
 ./portal.sh up                   # also: status, logs, backup, restore, license, down
 
@@ -154,7 +154,7 @@ A customer verifies a download (with the ENS release signing key imported) befor
 gpg --verify SHA256SUMS.asc SHA256SUMS
 sha256sum -c SHA256SUMS          # add --ignore-missing if only the tarball was downloaded
 tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-portal-<version>
-./install.sh --http 8080         # first install; upgrades: ./upgrade.sh ../directory-services-portal-<old>
+./install.sh                     # first install; upgrades: ./upgrade.sh ../directory-services-portal-<old>
 ```
 
 ## Licensing
