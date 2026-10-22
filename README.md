@@ -134,21 +134,20 @@ locally too):
 | `SHA256SUMS` | checksums of the files above |
 | `SHA256SUMS.asc` | GPG detached signature of `SHA256SUMS` (when a signing key is configured) |
 
-**The GitHub Release.** Once the `image` job has succeeded on a tag, the `github-release` job
-attaches these files to the tag's GitHub Release, `directory-services-portal-<version>.tar.gz` first. Make the release on
-GitHub (Releases > Draft a new release, with a new `vX.Y.Z` tag) and CI adds the files to it; push a
-tag without a release and CI creates one with generated notes (a pre-release for a `-suffix` tag).
-Either way the notes start with a short "Deployment package" section naming the file to download:
-GitHub adds its own "Source code" archives to every release and they can't be removed. The job needs
-no configuration; the repository is public, so the release files are public downloads.
+**Releases are delivered from the S3 bucket**, not from GitHub Releases: nothing is attached to a
+GitHub Release, whose own "Source code" archives are not an installable package. On a release tag the
+`image` job first checks that `RELEASE_S3_BUCKET` and the AWS credentials below are set, and fails
+before anything is built or published if they aren't. Customers get the files from the bucket, for
+example through a presigned link (`aws s3 presign`, valid for up to 7 days) or a download site in front
+of it.
 
 The files are uploaded to `s3://<bucket>/directory-services-portal/<version>/`, and for versions
 without a `-suffix` `directory-services-portal/latest.txt` is set to the version. They are also
 kept as the workflow artifact `release-directory-services-portal-<version>` (30 days). Every
 pull request does a dry run (version `0.0.0-pr<number>`, artifact kept 3 days, never
 uploaded; the chart is packaged but not pushed). The `helm` job lints the chart and validates
-its output with kubeconform on every push, for each values file in its `ci/` directory. Signing and upload are skipped, with a note in the job summary, until configured
-(repository Settings > Secrets and variables > Actions):
+its output with kubeconform on every push, for each values file in its `ci/` directory. Signing is skipped, with a note in the job summary, until a key is configured;
+a release tag needs the bucket and its credentials (repository Settings > Secrets and variables > Actions):
 
 | | Name | |
 |---|---|---|
