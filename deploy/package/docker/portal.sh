@@ -27,7 +27,7 @@ case "$cmd" in
     # shellcheck source=engine.sh
     . ./engine.sh
     case "$cmd" in up|status) ;; *) ENGINE_QUIET=1 ;; esac
-    engine_select
+    engine_select ""  # no --engine here: CONTAINER_ENGINE or .env
     ;;
 esac
 dc() { compose "$@"; }

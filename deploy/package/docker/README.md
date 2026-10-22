@@ -72,7 +72,8 @@ With Podman (4.0 or later; podman-compose 1.1 or later):
 - **Rootless** works: the images run as unprivileged users, and the portal's data is in named
   volumes, so there is nothing to `chown`. Rootless Podman can't publish ports below 1024 (the
   defaults, 8080 and 8443, are fine); for 443, use `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`
-  (persist it in `/etc/sysctl.d/`), or a proxy, and the installer warns about it.
+  (persist it in `/etc/sysctl.d/`), or a proxy, and the installer warns about it. On a host
+  still on cgroups v1, rootless Podman ignores the memory limits (and says so).
 - **Keep it running after logout** (rootless): `sudo loginctl enable-linger $USER`.
 - **Start at boot**: Podman has no daemon restarting `restart: unless-stopped` containers. Run
   `./portal.sh up` from a systemd unit (for rootless, a user unit, `systemctl --user`):
