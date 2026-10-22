@@ -253,12 +253,86 @@ jobs:
           if helm template dsp "$CHART" -f "$d" --set 'integrations.webhooks.allowedHosts={bad host}' > /dev/null 2>&1; then echo "accepted a bad host"; exit 1; fi
           echo "integration settings OK"
 
+  bundle:
+    # The Docker/Podman deployment package: lint its scripts, and check that every documented
+    # way of installing it gives a valid compose configuration, publishing the expected ports,
+    # with both Docker Compose and podman-compose.
+    runs-on: ubuntu-latest
+    env:
+      PODMAN_COMPOSE_VERSION: "1.6.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Lint the package scripts
+        run: |
+          shellcheck --version
+          shellcheck -x --source-path=SCRIPTDIR deploy/package/docker/*.sh
+          shellcheck -S warning scripts/package.sh deploy/package/native/install.sh
+
+      - name: Install podman-compose
+        run: |
+          python3 -m venv "$RUNNER_TEMP/compose"
+          "$RUNNER_TEMP/compose/bin/pip" install -q "podman-compose==$PODMAN_COMPOSE_VERSION" pyyaml
+          echo "$RUNNER_TEMP/compose/bin" >> "$GITHUB_PATH"
+
+      - name: Validate the compose files with Docker and Podman
+        run: |
+          podman --version; podman-compose version; docker compose version
+          scripts/package.sh --no-images --skip-build --with-openldap --registry ghcr.io/winllc \
+            --version 0.0.0-ci --output "$RUNNER_TEMP/pkg" --keep
+          cd "$RUNNER_TEMP/pkg/directory-services-portal-0.0.0-ci-docker"
+          # The web tier's published ports, as host_ip:published:target (both config formats).
+          cat > "$RUNNER_TEMP/ports.py" <<'PY'
+          import sys, yaml
+          ports = yaml.safe_load(sys.stdin)["services"]["web"].get("ports") or []
+          norm = lambda p: f'{p.get("host_ip", "")}:{p["published"]}:{p["target"]}' if isinstance(p, dict) else str(p).removesuffix("/tcp")
+          print(" ".join(sorted(norm(p) for p in ports)))
+          PY
+          config() { # config ENGINE FILES: the merged configuration
+            local args=() f files
+            IFS=: read -ra files <<<"$2"
+            for f in "${files[@]}"; do args+=(-f "$f"); done
+            if [ "$1" = docker ]; then docker compose "${args[@]}" config; else podman-compose "${args[@]}" config; fi
+          }
+          check() { # check ENGINE EXPECTED-PORTS INSTALL-OPTIONS...
+            local engine="$1" want="$2" got; shift 2
+            echo "::group::$engine: ./install.sh $*"
+            CONTAINER_ENGINE="$engine" ./install.sh --force-env "$@"   # runs "compose config -q"
+            got="$(config "$engine" "$(sed -n 's/^COMPOSE_FILE=//p' .env)" | python3 "$RUNNER_TEMP/ports.py")"
+            echo "::endgroup::"
+            [ "$got" = "$want" ] || { echo "$engine, install.sh $*: published \"$got\", expected \"$want\""; exit 1; }
+          }
+          for engine in docker podman; do
+            check "$engine" "0.0.0.0:8080:8080"
+            check "$engine" "0.0.0.0:8081:8080" --http 8081
+            check "$engine" "127.0.0.1:8080:8080" --bind 127.0.0.1
+            check "$engine" "" --no-publish
+            check "$engine" "0.0.0.0:8443:8443" --https
+            check "$engine" "0.0.0.0:8080:8080 0.0.0.0:8443:8443" --https --http
+            check "$engine" "0.0.0.0:8080:8080" --demo
+            grep -qx "CONTAINER_ENGINE=$engine" .env
+            # The demo OpenLDAP overlay (install.sh --demo-openldap needs its image).
+            for files in docker-compose.yml:docker-compose.openldap.yml docker-compose.no-publish.yml:docker-compose.openldap.yml; do
+              config "$engine" "$files" > /dev/null
+            done
+          done
+          # An .env from a package before Podman support keeps what it published, and Docker.
+          for old in docker-compose.yml:docker-compose.publish.yml=docker-compose.yml \
+                     docker-compose.yml=docker-compose.no-publish.yml \
+                     docker-compose.yml:docker-compose.mtls.yml=docker-compose.no-publish.yml:docker-compose.mtls.yml; do
+            sed -e '/^CONTAINER_ENGINE=/d' -e "s|^COMPOSE_FILE=.*|COMPOSE_FILE=${old%%=*}|" -e 's|^WEB_BIND=.*|WEB_BIND=127.0.0.1|' -i .env
+            ./install.sh
+            grep -qx "COMPOSE_FILE=${old#*=}" .env
+            grep -qx 'CONTAINER_ENGINE=docker' .env
+            grep -qx 'WEB_BIND=127.0.0.1' .env
+          done
+
   image:
     # Builds both images on every push, checks the pair starts and answers through the web
     # tier, and publishes what it just checked. Nothing is published from a pull request: a
     # fork's token cannot write packages, and unreviewed code is not for the registry.
     runs-on: ubuntu-latest
-    needs: [api-test, web-test, accessibility, helm]
+    needs: [api-test, web-test, accessibility, helm, bundle]
 
     permissions:
       contents: write
@@ -359,6 +433,31 @@ jobs:
           docker logs api
           docker logs web
           exit 1
+
+      - name: Check the deployment package with Podman
+        run: |
+          # The docker package runs on Podman too: install the images just built with Podman
+          # (rootful; rootless needs a systemd user session for cgroup limits), start them with
+          # ./portal.sh up (it waits for the API's healthcheck) and reach the port from the host.
+          python3 -m venv "$RUNNER_TEMP/podman-compose"
+          "$RUNNER_TEMP/podman-compose/bin/pip" install -q "podman-compose==1.6.0"
+          docker tag dsp-api:ci localhost/dsp-api:ci
+          docker tag dsp-web:ci localhost/dsp-web:ci
+          scripts/package.sh --skip-build --api-image localhost/dsp-api:ci --web-image localhost/dsp-web:ci \
+            --version 0.0.0-podman --output "$RUNNER_TEMP/podman-pkg" --keep
+          cd "$RUNNER_TEMP/podman-pkg/directory-services-portal-0.0.0-podman-docker"
+          as_root() { sudo env "PATH=$RUNNER_TEMP/podman-compose/bin:$PATH" "$@"; }
+          # 8080 is taken by the containers of the previous step.
+          as_root ./install.sh --engine podman --demo --http 18080
+          as_root ./portal.sh up || { sudo podman logs directory-services-portal_api_1 2>&1 | tail -n 100; exit 1; }
+          curl -fsS http://127.0.0.1:18080/api/health
+          curl -fsS -o /dev/null http://127.0.0.1:18080/
+          sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 0.0.0.0:18080'
+          as_root ./portal.sh backup "$RUNNER_TEMP/podman-backup.tar.gz"
+          tar -tzf "$RUNNER_TEMP/podman-backup.tar.gz" > /dev/null
+          as_root ./portal.sh down
+          sudo podman volume rm directory-services-portal_portal-data directory-services-portal_ens-license directory-services-portal_ens-audit
+          rm -f "$RUNNER_TEMP"/podman-pkg/*.tar.gz
 
       - name: Scan the images
         run: |

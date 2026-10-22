@@ -5,12 +5,14 @@
 #   scripts/package.sh [options]
 #
 #   --target docker|native|all  what to package (default: docker)
-#       docker  container images (docker save) + compose files + installer + portal.sh
+#       docker  container images (docker save) + compose files + installer + portal.sh, for
+#               Docker or Podman
 #       native  API jar + built web client + systemd unit + nginx site + installer
 #   --version VERSION           package/image version (default: package.json version + git revision)
 #   --output DIR                where to write the archives (default: dist/)
 #   --with-openldap             also include the demo OpenLDAP image (docker)
-#   --registry PREFIX           name images PREFIX/directory-services-portal-*:VERSION
+#   --registry PREFIX           name images PREFIX/directory-services-portal-*:VERSION (default
+#                               localhost/...: fully qualified, as Podman needs)
 #   --no-images                 don't embed the images: the package pulls them from --registry
 #   --push                      push the images to --registry (after building)
 #   --skip-build                package images / build output that already exist
@@ -34,7 +36,7 @@ TEMPLATES="$ROOT/deploy/package"
 target=docker; version=""; out="$ROOT/dist"; with_ldap=""; registry=""; no_images=""; skip_build=""; platform=""; keep=""; push=""
 api_ref=""; web_ref=""
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 need() { [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"; }
@@ -76,7 +78,8 @@ fi
 [[ "$version" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$ ]] || die "Invalid version \"$version\" (letters, digits, . _ -)"
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 name="directory-services-portal-$version"
-prefix="${registry:+$registry/}"
+# Fully qualified image names: Podman has no default registry to resolve short names against.
+prefix="${registry:-localhost}/"
 API_IMAGE="${prefix}directory-services-portal-api:$version"
 WEB_IMAGE="${prefix}directory-services-portal-web:$version"
 [ -z "$api_ref" ] || API_IMAGE="$api_ref"
@@ -141,9 +144,18 @@ package_docker() {
 
   say "Assembling $name (docker)"
   mkdir -p "$dir/scripts" "$dir/license"
-  for f in docker-compose.yml docker-compose.publish.yml docker-compose.mtls.yml env.template install.sh upgrade.sh portal.sh README.md license/README.txt; do
+  for f in docker-compose.yml docker-compose.mtls.yml env.template engine.sh install.sh upgrade.sh portal.sh README.md license/README.txt; do
     render "$TEMPLATES/docker/$f" "$dir/$f"
   done
+  # docker-compose.no-publish.yml: docker-compose.yml without the web tier's published port, for a
+  # proxy on the compose network (an overlay can't remove a port with every compose version).
+  sed -e '/^    # >>> published port/,/^    # <<< published port/d' \
+      -e '1a\
+# docker-compose.no-publish.yml: docker-compose.yml without the published port. Nothing is\
+# published on the host: route your reverse proxy, attached to the compose network, to web:8080.' \
+      "$dir/docker-compose.yml" > "$dir/docker-compose.no-publish.yml"
+  chmod 644 "$dir/docker-compose.no-publish.yml"
+  if grep -q 'ports:' "$dir/docker-compose.no-publish.yml"; then die "docker-compose.no-publish.yml still publishes a port"; fi
   [ -n "$with_ldap" ] && render "$TEMPLATES/docker/docker-compose.openldap.yml" "$dir/docker-compose.openldap.yml"
   install -m 755 "$ROOT/scripts/generate-dev-certs.sh" "$dir/scripts/"
 

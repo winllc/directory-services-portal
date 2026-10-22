@@ -1,6 +1,8 @@
 # HTTPS on the web tier (HTTPS_PORT, default 8443), with optional X.509 client-certificate
 # sign-in. Needs certs/server.pem, certs/server.key (readable by uid 1001) and certs/ca.pem
 # (the CA that issues user certificates). Plain HTTP on 8080 redirects to HTTPS.
+# The certificate files are relabelled for SELinux (Podman on RHEL/Fedora): "Z" for the web
+# container's own files, "z" for ca.pem, which both containers read.
 services:
   web:
     environment:
@@ -10,9 +12,9 @@ services:
       X509_HEADER: X-SSL-Client-Cert
       X509_EDGE_TERMINATION: "false"
     volumes:
-      - ./certs/server.pem:/etc/nginx/tls/server.pem:ro
-      - ./certs/server.key:/etc/nginx/tls/server.key:ro
-      - ./certs/ca.pem:/etc/nginx/tls/ca.pem:ro
+      - ./certs/server.pem:/etc/nginx/tls/server.pem:ro,Z
+      - ./certs/server.key:/etc/nginx/tls/server.key:ro,Z
+      - ./certs/ca.pem:/etc/nginx/tls/ca.pem:ro,z
     ports:
       - "${WEB_BIND:-0.0.0.0}:${HTTPS_PORT:-8443}:8443"
 
@@ -26,4 +28,4 @@ services:
       X509_TRUSTED_PROXIES: "10.0.0.0/8;172.16.0.0/12;192.168.0.0/16"
       X509_TRUSTED_CA_FILE: /certs/ca.pem
     volumes:
-      - ./certs/ca.pem:/certs/ca.pem:ro
+      - ./certs/ca.pem:/certs/ca.pem:ro,z

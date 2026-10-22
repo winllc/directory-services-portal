@@ -9,6 +9,8 @@
 #     --no-backup    don't back up the portal data before upgrading
 #     --no-start     prepare everything but don't restart the portal
 #     --skip-verify  don't check SHA256SUMS
+#     --engine ENGINE  docker or podman; default: CONTAINER_ENGINE in .env (an .env from a package
+#                    before Podman support: docker). Published ports and addresses are kept.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -20,13 +22,14 @@ OPENLDAP_IMAGE="@OPENLDAP_IMAGE@"
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
-prev=""; backup=1; start=1; install_args=()
+prev=""; backup=1; start=1; install_args=(); engine=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-backup) backup="" ;;
     --no-start) start="" ;;
     --skip-verify) install_args+=(--skip-verify) ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --engine) [ -n "${2:-}" ] || die "--engine needs docker or podman"; install_args+=(--engine "$2"); engine="$2"; shift ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "Unknown option: $1 (see --help)" ;;
     *) [ -z "$prev" ] || die "Only one previous directory"; prev="$1" ;;
   esac
@@ -52,8 +55,12 @@ fi
 [ -f .env ] || die "No .env here. Run ./upgrade.sh <directory of the running version>, or ./install.sh for a first install."
 
 # Verify the package and load its images (install.sh keeps the existing .env, adding the X.509
-# proxy secret if it has none).
+# proxy secret if it has none, and updates an .env from before Podman support: same ports).
 ./install.sh --no-license ${install_args[@]+"${install_args[@]}"} >/dev/null
+
+# shellcheck source=engine.sh
+. ./engine.sh
+engine_select "$engine"
 
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '"'; }
 setenv() { # setenv KEY VALUE: replace (or add) the KEY= line in .env
@@ -63,7 +70,7 @@ setenv() { # setenv KEY VALUE: replace (or add) the KEY= line in .env
 
 # --- Back up the data with the running version ------------------------------------
 project="$(env_value COMPOSE_PROJECT_NAME)"; project="${project:-directory-services-portal}"
-if [ -n "$backup" ] && docker volume inspect "${project}_portal-data" >/dev/null 2>&1; then
+if [ -n "$backup" ] && "$ENGINE" volume inspect "${project}_portal-data" >/dev/null 2>&1; then
   mkdir -p backups
   ./portal.sh backup "backups/pre-upgrade-$VERSION-$(date +%Y%m%d-%H%M%S).tar.gz"
 fi
@@ -72,9 +79,9 @@ fi
 cp -p .env ".env.bak-$(date +%Y%m%d%H%M%S)"
 setenv API_IMAGE "$API_IMAGE"
 setenv WEB_IMAGE "$WEB_IMAGE"
-if docker image inspect "$OPENLDAP_IMAGE" >/dev/null 2>&1; then setenv OPENLDAP_IMAGE "$OPENLDAP_IMAGE"; fi
+if "$ENGINE" image inspect "$OPENLDAP_IMAGE" >/dev/null 2>&1; then setenv OPENLDAP_IMAGE "$OPENLDAP_IMAGE"; fi
 mkdir -p license
-docker compose config -q || die "The compose configuration is invalid; check .env."
+compose config -q || die "The compose configuration is invalid; check .env."
 say "Settings now use $API_IMAGE and $WEB_IMAGE"
 
 # The license volume is kept as is. A license.lic here is copied in only if it has none yet.

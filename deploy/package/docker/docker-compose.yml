@@ -1,12 +1,15 @@
 # Directory Services Portal @VERSION@ (standalone package).
 # Settings live in .env (created by ./install.sh). Start with ./portal.sh up
 #
-#   web  nginx serving the client on port 8080 and proxying /api to the api service
+#   web  nginx serving the client on port 8080 and proxying /api to the api service; published
+#        on the host as WEB_BIND:WEB_PORT (default 0.0.0.0:8080, plain HTTP)
 #   api  the Spring Boot API (never published on the host)
 #
-# Neither service publishes a port unless docker-compose.publish.yml (WEB_PORT) or
-# docker-compose.mtls.yml (HTTPS_PORT) is listed in COMPOSE_FILE in .env.
-name: ${COMPOSE_PROJECT_NAME:-directory-services-portal}
+# For Docker Compose v2 and podman-compose 1.1+. docker-compose.mtls.yml adds HTTPS (HTTPS_PORT).
+# docker-compose.no-publish.yml, used instead of this file, is the same without the published
+# port (for a reverse proxy on the compose network).
+# The project name is COMPOSE_PROJECT_NAME in .env (no top-level "name:": docker-compose v1
+# rejects it).
 
 services:
   api:
@@ -76,6 +79,12 @@ services:
       MAX_BODY_SIZE: ${MAX_BODY_SIZE:-5m}
     expose:
       - "8080"
+    # >>> published port: plain HTTP on the host, on every interface unless WEB_BIND in .env says
+    # otherwise. Put a TLS proxy in front, or use docker-compose.mtls.yml. Rootless Podman needs
+    # WEB_PORT >= 1024. (docker-compose.no-publish.yml is this file without these lines.)
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    # <<< published port
     healthcheck:
       # Any answer will do (with docker-compose.mtls.yml port 8080 redirects to HTTPS).
       test: ["CMD-SHELL", "curl -so /dev/null http://localhost:8080/ || exit 1"]
