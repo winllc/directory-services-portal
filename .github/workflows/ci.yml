@@ -335,9 +335,9 @@ jobs:
     needs: [api-test, web-test, accessibility, helm, bundle]
 
     permissions:
-      contents: write
+      contents: read
       packages: write
-      # Attach bundle assets to GitHub Releases and keylessly sign images and the chart.
+      # Keylessly sign images and the chart. (The github-release job attaches the bundle to the release.)
       id-token: write
 
     env:
@@ -641,19 +641,6 @@ jobs:
           compression-level: 0
           retention-days: ${{ steps.bundle.outputs.release == 'true' && 30 || 3 }}
 
-      - name: Publish bundle assets to the GitHub Release
-        id: github-release
-        if: always() && steps.bundle.outputs.release == 'true' && steps.release-bundle.outcome == 'success' && steps.sign.outcome != 'failure'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          OUT: ${{ steps.bundle.outputs.dir }}
-        run: |
-          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$TAG"
-          fi
-          gh release upload "$TAG" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
-
       - name: Upload the bundle to the release bucket
         id: upload
         if: always() && steps.bundle.outputs.release == 'true' && steps.release-bundle.outcome == 'success' && steps.sign.outcome != 'failure' && env.S3_BUCKET != '' && env.HAS_AWS == 'true'
@@ -683,7 +670,6 @@ jobs:
           RELEASE: ${{ steps.bundle.outputs.release }}
           OUT: ${{ steps.bundle.outputs.dir }}
           SIGN_OUTCOME: ${{ steps.sign.outcome }}
-          GITHUB_RELEASE_OUTCOME: ${{ steps.github-release.outcome }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           {
@@ -700,8 +686,7 @@ jobs:
             if [ "$SIGN_OUTCOME" = success ]; then echo "- Signed: yes (\`SHA256SUMS.asc\`)"
             elif [ "$HAS_GPG" != true ]; then echo "- Signed: **no**, the \`RELEASE_GPG_PRIVATE_KEY\` secret is not set"
             else echo "- Signed: **no**, signing $SIGN_OUTCOME"; fi
-            if [ "$GITHUB_RELEASE_OUTCOME" = success ]; then echo "- GitHub Release: assets uploaded to \`$TAG\`"
-            elif [ "$RELEASE" = true ]; then echo "- GitHub Release: upload $GITHUB_RELEASE_OUTCOME"; fi
+            if [ "$RELEASE" = true ]; then echo "- GitHub Release: attached to \`$TAG\` by the github-release job"; fi
             if [ "$UPLOAD_OUTCOME" = success ]; then
               echo "- Uploaded to \`s3://$S3_BUCKET/directory-services-portal/$VERSION/\`"
               if [[ "$VERSION" != *-* ]]; then echo "  and \`latest.txt\` set to $VERSION"; fi
@@ -710,4 +695,72 @@ jobs:
             elif [ "$HAS_AWS" != true ]; then echo "- Not uploaded: the \`AWS_ACCESS_KEY_ID\` secret is not set"
             else echo "- Not uploaded: upload $UPLOAD_OUTCOME"; fi
             echo "- Workflow artifact: \`release-directory-services-portal-$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  github-release:
+    # On a v* tag, once the image job has built, checked and signed the release: its files attached to the
+    # tag's GitHub Release, the deployment package first, so customers download the package from the
+    # release page. A release made on GitHub keeps its notes; a tag pushed without one gets a release with
+    # generated notes (a pre-release for vX.Y.Z-suffix). Either way the notes start with a short
+    # "Deployment package" section, because GitHub adds "Source code" archives to every release and they
+    # can't be removed. A job of its own, so only this short job holds a token that can write releases.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch the release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-directory-services-portal-*
+          path: release
+          merge-multiple: true
+
+      - name: Attach them to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          package="directory-services-portal-$version.tar.gz"
+          ls -l release
+          [ -f "release/$package" ] || { echo "::error::release/$package is missing"; exit 1; }
+          marker='<!-- deployment-package -->'
+          {
+            echo "$marker"
+            echo "## Deployment package"
+            echo
+            echo "**Download \`$package\`** from the assets below. It is the deployment package for Docker or Podman:"
+            echo "the install and upgrade scripts, the compose file, \`env.template\` and the images, so the server"
+            echo "needs no registry access. Unpack it and follow its \`README.md\`."
+            echo
+            echo "For a server without containers, \`directory-services-portal-$version-native.tar.gz\` is the native (systemd) package."
+            echo
+            echo "Check the download against \`SHA256SUMS\` (signed in \`SHA256SUMS.asc\` when that is attached)."
+            echo "The Helm chart and the images' SBOMs are attached too. The \"Source code\" archives are GitHub's"
+            echo "automatic copy of the repository, not something to install."
+          } > "$RUNNER_TEMP/package-notes.md"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Made on GitHub (or by an earlier run): keep its notes, with the package section first, once.
+            gh release view "$TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+            if ! grep -qF "$marker" "$RUNNER_TEMP/notes.md"; then
+              { cat "$RUNNER_TEMP/package-notes.md"; echo; cat "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/new-notes.md"
+              gh release edit "$TAG" --notes-file "$RUNNER_TEMP/new-notes.md"
+            fi
+          else
+            prerelease=()
+            [[ "$version" != *-* ]] || prerelease=(--prerelease)
+            # --generate-notes appends GitHub's generated notes to the package section.
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes \
+              --notes-file "$RUNNER_TEMP/package-notes.md" "${prerelease[@]}"
+          fi
+          files=("release/$package")
+          for f in release/*; do [ "$f" = "release/$package" ] || files+=("$f"); done
+          gh release upload "$TAG" "${files[@]}" --clobber
+          {
+            echo "### GitHub Release $TAG"
+            echo
+            for f in "${files[@]}"; do echo "- \`$(basename "$f")\` ($(du -h "$f" | cut -f1))"; done
           } >> "$GITHUB_STEP_SUMMARY"
