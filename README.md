@@ -92,6 +92,29 @@ one replica and the `Recreate` strategy). What is new and optional:
   add them from the template only if you use them. The native package reads the same variables
   from `portal.env`.
 
+### Upgrade notes: integration API, webhooks, import and export, accessibility
+
+Nothing needs changing: no API token or webhook exists until an administrator creates one, and
+every new setting has a safe default. What is new:
+
+- [The integration API](#integration-api-apiv1) (`/api/v1`, API tokens) and its OpenAPI document
+  (`/api/v1/openapi`). The web tier already forwards `/api/`. Tokens are stored as SHA-256 in
+  `DATA_DIR/api-tokens.json`, or in the shared database.
+- [Webhooks](#webhooks): HTTPS only, and never to private, loopback, link-local or metadata
+  addresses unless the host is in `WEBHOOK_ALLOWED_HOSTS`. Alone, they are kept in
+  `DATA_DIR/webhooks.json` and `webhook-deliveries.json` (both owner-readable only: the first holds
+  the signing secrets, so back up and protect `DATA_DIR` as before); with the shared database, in
+  the database (new table `dsp_webhook_delivery`, Flyway migration V3, applied at start). A
+  NetworkPolicy or firewall must let the API reach the receivers on 443 (the chart's
+  `networkPolicy.egress.webhooks`).
+- [Import and export](#import-and-export) on directory pages. The web tier's upload limit is now
+  `MAX_BODY_SIZE` (default `5m`, as before); raise it together with `IMPORT_MAX_BYTES`. The native
+  package's nginx site keeps `client_max_body_size 5m`; edit it there.
+- [Accessibility](#accessibility): darker secondary text, underlined links in text, 3:1 form-field
+  borders, a skip link and a title per page.
+- The release bundle's `env.template` lists the new variables (`API_*`, `WEBHOOK*`, `EXPORT_*`,
+  `IMPORT_*`, `BULK_MAX_MEMBERS`, `MAX_BODY_SIZE`); `upgrade.sh` keeps your `.env`.
+
 ## Releases
 
 Cut a release by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`. The CI `image` job
@@ -177,7 +200,7 @@ evaluation license from your account on the ENS portal.
 | Mode | When | What works |
 |---|---|---|
 | unlicensed | no license, or one that is invalid, for another product, bound to another installation, superseded by a newer revision or not yet valid | sign-in/out, `/api/info`, `/api/health`, the license endpoints and the [audit log](#audit-logging) (`/api/admin/audit/**`, `/admin/audit`, `/api/audit/events`). Every other API call answers `403 {"error": "<why>", "code": "license_required", "state": "MISSING"}`; the web client takes administrators to the license screen and shows everyone else a "not licensed, ask your administrator" page |
-| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics, exports); anything else answers `403` with `"code": "license_read_only"`, except sign-in/out, the license upload and the audit log (verify, export, API tokens). A banner says so |
+| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics) and the directory and group-member exports; anything else answers `403` with `"code": "license_read_only"`, except sign-in/out, the license upload and the audit log (verify, export, API tokens). A banner says so |
 | full | valid, or expired within its grace period (administrators get a renewal reminder) | the features the license lists |
 
 Evaluation licenses show a banner on every page. **Memory/demo mode** (`DIRECTORY_MODE=memory`,
@@ -321,6 +344,9 @@ access wherever portal users should be able to edit.
   deleted.
 - **My profile** shows every definition that can locate the user, and lets them edit their own
   self-service fields.
+- **Export** a directory's entries, or the current search's, as CSV or LDIF; **import** CSV or LDIF
+  (checked first) where the user may write; export and change a group's members in bulk. See
+  [Import and export](#import-and-export).
 
 ### Metrics
 *Metrics* (every signed-in user)
@@ -428,6 +454,161 @@ Analyses, and metrics that take a while, run on the server independently of the 
   for `JOBS_RETAIN_MINUTES`.
 - Tasks live in the API's memory: a restart cancels running ones (saved analysis results on disk
   are kept). Run a single API instance.
+
+### Integration API (`/api/v1`)
+*Administration → Integrations → API tokens*
+
+Other systems search and read directories, change entries and manage group members through a
+versioned REST API, described by an OpenAPI 3 document at **`/api/v1/openapi`** (`.yaml` for YAML;
+public, its server is `PORTAL_PUBLIC_URL`). CI generates it with the tests and keeps a copy in
+[`backend/openapi/dsp-api-v1.json`](backend/openapi/dsp-api-v1.json).
+
+| Call | Scope |
+| --- | --- |
+| `GET /api/v1/directories`, `GET /api/v1/directories/{id}` (fields of its form) | `entries:read` or `groups:read` |
+| `GET /api/v1/directories/{id}/entries?q=&page=&pageSize=`, `GET …/entry?dn=` | `entries:read` |
+| `POST …/entries` `{parentDn, values}`, `PATCH …/entry?dn=` `{values}` | `entries:write` |
+| `DELETE …/entry?dn=` | `entries:delete` |
+| `GET …/members?dn=[&attribute=]`, `POST …/members?dn=` `{add: [], remove: []}` | `groups:read`, `groups:write` |
+
+```bash
+curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/directories/staff/entries?q=smith"
+```
+
+- **API tokens**: an administrator creates one with a name, scopes, an expiry (at most
+  `API_TOKEN_MAX_DAYS`, default 365), optionally a list of directories and its own rate limit. The
+  value (`dspat_…`) is shown once; only its SHA-256 is kept. Tokens can be revoked at once; the
+  list shows each token's last use. Creating and revoking are audited (`api.token-created`,
+  `api.token-revoked`).
+- **Never more than its creator**: a token acts as the administrator who created it, with their
+  rights *as the directory has them at the time of the call* (read again at most once a minute), narrowed by
+  its scopes and directories. If they lose a permission or their entry, so does the token, and a
+  creator whose account the directory marks disabled or locked (`nsAccountLock: true`, Active
+  Directory's ACCOUNTDISABLE flag in `userAccountControl`, or `pwdAccountLockedTime`) makes every
+  call fail with 401 `token_owner_disabled` until the account is enabled again.
+  Rights a single sign-on provider asserted at their sign-in don't carry over. Every call goes
+  through the same checks, namespace, form validation and audit trail as the portal's pages; the
+  audit events of a token's changes name it (`details.apiClientId`, `authMethod: api-token`).
+- **Only for `/api/v1`**: a token opens nothing else, and `/api/v1` accepts nothing but a token
+  (no session cookie), which is why it needs no CSRF header. No session is created; the token is
+  never logged. Missing, unknown, expired or revoked tokens get 401 (and an `access.denied` audit
+  event, collapsed like other denials); a missing scope 403 `insufficient_scope`.
+- **Rate limit**: `API_RATE_LIMIT_PER_MINUTE` (default 120) per token unless the token sets its
+  own; over it, 429 with `Retry-After`. The count is kept in each API replica's memory, so with
+  several replicas a token can make up to the limit on each. An address that presents more than
+  `API_FAILED_TOKEN_LIMIT_PER_MINUTE` (30) unknown, expired or revoked tokens a minute gets 429
+  instead of 401 for further bad ones. Only failures count, and a request with a valid token is
+  never refused by it; the address is the client's as the web tier forwards it (the same one
+  sign-in throttling uses), so integrations behind one proxy don't lock each other out.
+
+### Webhooks
+*Administration → Integrations → Webhooks*
+
+The portal sends an HTTPS `POST` (JSON) to each enabled webhook subscribed to an event, for
+changes made in the portal, through the API or by an import:
+
+| Event | When |
+| --- | --- |
+| `entry.changed` | an entry was created, updated (or renamed) or deleted (`data.operation`, the changed attribute names) |
+| `group.membership_changed` | member, uniqueMember or memberUid values were added or removed (`data.added`, `data.removed`) |
+| `form.submitted` | an entry form was saved: create, update, or a user's own profile (`self_update`) |
+
+A webhook can be limited to some directories. "Send test event" queues a `ping`. Each request
+carries `X-DSP-Event`, `X-DSP-Event-Id`, `X-DSP-Delivery`, `X-DSP-Timestamp` and
+`X-DSP-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<body>" with the webhook's secret>`.
+The secret (`whsec_…`) is shown once when the webhook is created or its secret renewed. Receivers
+should recompute the signature over the raw body, compare in constant time, and reject
+timestamps more than five minutes old:
+
+```python
+expected = hmac.new(secret.encode(), f"{t}.".encode() + body, hashlib.sha256).hexdigest()
+ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
+```
+
+- **Delivery**: a 2xx answer delivers; anything else, including a redirect (never followed), is
+  retried after 30 s, 2 min, 10 min, 30 min, 1 h, 3 h and 6 h, up to `WEBHOOK_MAX_ATTEMPTS`
+  (default 8); then the delivery fails and `webhook.delivery-failed` is audited. Each attempt has
+  an overall deadline, `WEBHOOK_SEND_TIMEOUT` (20 s: name lookup, connect, TLS, request and answer
+  together).
+  A receiver that gives **no answer at all** (connection refused or timed out, TLS failure, no
+  answer within the deadline, or its address refused by the guard below) is backed off as a whole:
+  all of that webhook's due deliveries wait as long as the one just tried, so a dead receiver
+  costs one attempt per backoff step however many deliveries wait for it, and doesn't hold up the
+  others. A receiver that answers with an error status is retried per delivery, as above.
+  Deliveries go out every couple of seconds, oldest first, at most 20 attempts per run; one
+  webhook gets at most 10 attempts and 20 s of a run (so a slow receiver can't take every run),
+  and no attempt starts after `WEBHOOK_RUN_BUDGET` (40 s), so a run ends within that plus one
+  `WEBHOOK_SEND_TIMEOUT`.
+  Delivery is **at least once**: an attempt whose answer was lost is made again with the same
+  `X-DSP-Event-Id`, so receivers should drop events they have already handled. The delivery log
+  (per webhook, with each payload) keeps finished deliveries for `WEBHOOK_LOG_RETENTION` (30 days;
+  alone, also at most the last 2,000). Timeouts: `WEBHOOK_CONNECT_TIMEOUT` (5 s),
+  `WEBHOOK_READ_TIMEOUT` (10 s). Webhooks connect directly (no HTTP proxy).
+- **SSRF guard**: the URL must be `https://` without credentials, and every address its host
+  resolves to must be public: loopback, link-local, private (RFC 1918, IPv6 unique-local),
+  carrier-grade NAT, multicast, reserved and documentation ranges, and IPv6 forms embedding such an
+  IPv4 address, are refused, both when the webhook is saved and again at every delivery, which
+  then connects to exactly the address it checked (so changing DNS answers can't redirect it).
+  `WEBHOOK_ALLOWED_HOSTS` (host names or `*.example.com`, `;`-separated) lets named hosts reach
+  internal addresses; cloud metadata addresses (169.254.169.254, fd00:ec2::254, 169.254.170.2,
+  100.100.100.200, 192.0.0.192) are refused regardless.
+- **Storage**: alone, `DATA_DIR/webhooks.json` and `webhook-deliveries.json` (pending deliveries
+  survive a restart; the outbox file is written every couple of seconds, not per change, so a
+  crash loses at most the deliveries queued in those seconds, and it holds at most 10,000 waiting
+  deliveries: beyond that new ones are dropped, logged and audited as `webhook.delivery-dropped`); with the shared database, the `webhooks` document and the
+  `dsp_webhook_delivery` table, where each due delivery is sent by one replica. Signing secrets
+  are stored as they are (they sign every request), readable only by the portal's user; they are
+  never returned by the API again, logged or audited. Changes to webhooks are audited
+  (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.
+- `WEBHOOKS_ENABLED=false` stops sending (deliveries stay queued) and creating webhooks.
+
+### Import and export
+- **Export**: on a directory page, *Export CSV* or *Export LDIF* downloads the entries matching the
+  search (all of them without one), read page by page from the directory, up to
+  `EXPORT_MAX_ENTRIES` (10,000; the toast says when there were more). Only the attributes of the
+  directory's form, never passwords. CSV: a `dn` column, then one column per field; several
+  values in one cell separated by `|` (`\|` and `\\` inside a value). Cells a spreadsheet would
+  run as a formula (`=`, `+`, `-` or `@` first, also after leading spaces, tabs or line breaks, or a
+  tab or CR first) get a leading `'`, which an import removes again. An apostrophe is removed only
+  before such text, so a value that really starts with `'=` comes back without its apostrophe. Audited as
+  `data.exported`. A group's page exports its members (CSV or LDIF). Both downloads are `POST`
+  requests with the `X-DSP-Request` header (`/api/directories/{id}/export` and
+  `/api/directories/{id}/members/export`, parameters in the query string), so a link, image or
+  form on another site can't start an audited export.
+- **Import** (users with write access): *Import* takes a CSV in the export's layout (a `dn` column
+  is optional: without it, entries are named by the form's naming attribute in the first create
+  container) or LDIF entries (`changetype: add` too; modify, delete and moddn records are
+  refused, and so is any file with `:<` on a line other than a comment, as in a value given as a
+  URL (`attr:< file:///…`, `http://…`, also in a `control:` line), which would make the server read
+  a file or fetch a URL, and any line starting with a tab; give a value that contains `:<`
+  base64-encoded, `attr:: …`). *Check file* runs every row without writing and shows what would be created,
+  updated, left unchanged or refused, with the field messages; *Import* then writes. Existing
+  entries get the values given (an empty cell leaves an attribute alone); others are created;
+  the import can be limited to only creating or only updating. Each entry goes through the same
+  permission checks, namespace, form validation and audit (`entry.create`, `entry.update`) as the
+  entry form; the import itself is audited as `data.imported`. Limits: `IMPORT_MAX_BYTES` (5 MiB;
+  raise the web tier's `MAX_BODY_SIZE` with it) and `IMPORT_MAX_ROWS` (5,000). A long import runs
+  as a background task.
+- **Bulk membership**: on an entry with a member field, *Change members in bulk* adds and removes
+  many members (one per line) in one audited change, up to `BULK_MAX_MEMBERS` (5,000). Sent as
+  value-level adds and deletes with the permissive modify control (never a replace of the list),
+  so another change made at the same time is kept, and so is an Active Directory group of more
+  than 1,500 members, whose members come back in ranges. The same applies to the API. Saving a
+  group in the entry form, an API update and an import row also change member, uniqueMember and
+  memberUid by their difference (value-level adds and deletes), and refuse (409 `ranged_values`)
+  to edit a member list the directory returned in ranges, which only the bulk change can add to
+  or remove from.
+- Not yet (Wave 4): import as an unattended scheduled job, LDIF modify and delete records,
+  multi-select bulk edit and delete in the list, clearing attributes by import, and lifting the
+  1,000-entry cap of the list view.
+
+### Accessibility
+The web client is checked against WCAG 2.1 A and AA with axe-core in CI (`accessibility` job:
+23 pages and 3 dialogs, light and dark colour schemes, plus keyboard checks); a serious or
+critical violation fails the build. See the [self-audit](docs/accessibility/wcag-2.1-aa-self-audit.md)
+and the [draft VPAT 2.5](docs/accessibility/vpat-2.5-draft.md) (a self-assessment for ENS to
+review before publication). Run it locally with `npm run build -w web && npm run test:a11y -w web`
+(starts the API from its test classes with the demo directory, and `vite preview`).
 
 ### Audit logging
 *Administration → Audit log* (`/admin/audit`, administrators only: `ROLE_ADMIN`)
@@ -1164,6 +1345,7 @@ helm template dsp deploy/helm/directory-services-portal -f deploy/helm/directory
 ```bash
 npm test            # backend: JUnit + MockMvc against the embedded LDAP server; web: Vitest
 npm run typecheck   # shared + web TypeScript
+npm run test:a11y -w web   # axe-core accessibility checks (after npm run build -w web)
 npm run build       # web bundle + Spring Boot jar
 cd backend && ./mvnw spring-boot:run   # API only
 ```
@@ -1176,6 +1358,9 @@ Layout:
   - `web/`: REST controllers and DTOs
   - `store/`: the JSON config store
   - `x509/`: client-certificate parsing, validation and user mapping
+  - `integration/`: the integration API (`/api/v1`), API tokens, rate limit and OpenAPI setup
+  - `webhooks/`: webhooks, the SSRF guard, signed delivery and the delivery log
+  - `transfer/`: CSV and LDIF export and import
   - `metrics/`: metric widgets, aggregation engine and the out-of-the-box overviews
   - `analysis/`: directory comparisons and data-quality checks, and their stored results
   - `jobs/`: background tasks (worker pools, progress, cancellation)

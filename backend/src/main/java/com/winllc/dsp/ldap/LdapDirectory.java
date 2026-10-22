@@ -325,6 +325,25 @@ public class LdapDirectory implements AutoCloseable {
     });
   }
 
+  /**
+   * Adds and deletes values with the permissive modify control (non-critical): servers that know it
+   * (Active Directory, OpenLDAP, 389-DS, the embedded server) skip values already present or
+   * already absent, so a change built from a partial read (Active Directory's ranged member
+   * retrieval) or one racing another change never fails on them, and never replaces the attribute.
+   */
+  public void modifyValues(String dn, List<Modification> changes) {
+    timed("modify", () -> {
+      if (changes.isEmpty()) return;
+      try {
+        com.unboundid.ldap.sdk.ModifyRequest request = new com.unboundid.ldap.sdk.ModifyRequest(dn, changes);
+        request.addControl(new com.unboundid.ldap.sdk.controls.PermissiveModifyRequestControl(false));
+        pool().modify(request);
+      } catch (LDAPException e) {
+        throw wrap(e);
+      }
+    });
+  }
+
   /** Change the entry's RDN (keeping its parent). Returns the new DN. */
   public String rename(String dn, RDN newRdn) {
     return timed("rename", () -> {

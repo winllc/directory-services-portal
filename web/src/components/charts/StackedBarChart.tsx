@@ -89,6 +89,7 @@ export function StackedBarChart({ rows, series, matrix, label }: { rows: BarDatu
                     <path
                       key={j}
                       tabIndex={0}
+                      role="img"
                       aria-label={`${r.label}, ${series[j].label}: ${exact(v)}`}
                       className={active && active !== id ? 'viz-dim' : undefined}
                       d={j === lastNonZero ? barPath(segX, y, w, BAR, true) : `M${segX},${y}h${w}v${BAR}h${-w}Z`}

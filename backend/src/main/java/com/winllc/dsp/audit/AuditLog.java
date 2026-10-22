@@ -61,6 +61,11 @@ public class AuditLog {
   private static final Logger auditLogger = LoggerFactory.getLogger(LOGGER);
   static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
   private static final String REQUEST_ID = AuditLog.class.getName() + ".requestId";
+  /** Request attribute: the integration API token a request was made with ({@link ApiClient}). */
+  public static final String API_CLIENT = AuditLog.class.getName() + ".apiClient";
+
+  /** The API token behind a request, recorded as {@code details.apiClientId} and {@code apiClientName}. */
+  public record ApiClient(String id, String name) {}
 
   private final JsonMapper mapper;
   private final AuditStore store;
@@ -283,6 +288,10 @@ public class AuditLog {
         } else {
           who = request != null ? new AuditEvent.Actor("anonymous", null, null, List.of()) : AuditEvent.Actor.SYSTEM;
         }
+      }
+      if (request != null && request.getAttribute(API_CLIENT) instanceof ApiClient client) {
+        d.put("apiClientId", client.id());
+        d.put("apiClientName", AuditDetails.truncate(client.name()));
       }
       d.putAll(details);
       AuditEvent.Source src = sourceSet ? source : request == null ? null

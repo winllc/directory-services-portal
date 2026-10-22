@@ -509,6 +509,121 @@ export interface AuditToken {
 }
 
 // ---------------------------------------------------------------------------
+// Integrations: API tokens, webhooks
+// ---------------------------------------------------------------------------
+
+export type ApiTokenStatus = 'active' | 'expired' | 'revoked';
+
+/** An integration API token (/api/v1), as administrators see it: never its value or hash. */
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  /** Empty: every directory its creator can reach. */
+  definitionIds: string[];
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  rateLimitPerMinute: number | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  revokedBy: string | null;
+  status: ApiTokenStatus;
+}
+
+export interface ApiTokenSettings {
+  scopes: { id: string; description: string }[];
+  maxTokenDays: number;
+  defaultRateLimitPerMinute: number;
+}
+
+export interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  events: string[];
+  definitionIds: string[];
+  enabled: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WebhookInput {
+  name: string;
+  url: string;
+  events: string[];
+  definitionIds: string[];
+  enabled: boolean;
+}
+
+export interface WebhookSettings {
+  enabled: boolean;
+  eventTypes: string[];
+  allowedHosts: string[];
+  maxAttempts: number;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  eventId: string;
+  eventType: string;
+  status: 'pending' | 'delivered' | 'failed';
+  attempts: number;
+  createdAt: string;
+  lastAttemptAt: string | null;
+  lastStatus: number | null;
+  lastError: string | null;
+  deliveredAt: string | null;
+  nextAttemptAt: string | null;
+  payload: string;
+}
+
+// ---------------------------------------------------------------------------
+// Import, export and group members
+// ---------------------------------------------------------------------------
+
+export interface ImportRow {
+  /** CSV line or LDIF record number. */
+  row: number;
+  dn: string | null;
+  operation: 'create' | 'update' | 'unchanged' | 'error';
+  attributes: string[];
+  error: string | null;
+  details: Record<string, string> | null;
+  /** LDIF attributes that are not fields of the directory's form. */
+  ignored: string[];
+}
+
+export interface ImportResult {
+  format: 'csv' | 'ldif';
+  mode: 'create' | 'update' | 'upsert';
+  dryRun: boolean;
+  total: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  rows: ImportRow[];
+}
+
+export interface GroupMembers {
+  dn: string;
+  attribute: string;
+  members: string[];
+}
+
+export interface MembershipChangeResult {
+  dn: string;
+  attribute: string;
+  added: string[];
+  removed: string[];
+  /** The directory returned the group's members in ranges: the values were sent as requested. */
+  partial: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Metrics
 // ---------------------------------------------------------------------------
 
@@ -848,7 +963,7 @@ export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancell
 /** A computation running on the server independently of the page that started it. */
 export interface Job {
   id: string;
-  kind: 'analysis' | 'metrics';
+  kind: 'analysis' | 'metrics' | 'import';
   title: string;
   status: JobStatus;
   /** What the job is about, e.g. { type: 'analysis', id: 'an-…' }. */

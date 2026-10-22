@@ -5,6 +5,7 @@ import { firstAttr, getAttr, rdnValue } from '@dsp/shared';
 import { useDefinition, useEntry, useEntryMutations } from '../api/hooks';
 import { EntryDetails } from '../components/EntryDetails';
 import { EntryForm } from '../components/EntryForm';
+import { MembersCard } from '../components/MembersCard';
 import { DefinitionIcon } from '../components/Layout';
 import { DirectoryNotFound } from '../components/DirectoryNotFound';
 import { useUser } from '../lib/auth';
@@ -153,6 +154,7 @@ export function EntryPage() {
           </div>
         </Card>
       )}
+      {!editing && <MembersCard definitionId={definition.id} dn={e.dn} form={form} attributes={e.attributes} canWrite={canWrite} />}
 
       <ConfirmDialog
         open={confirmDelete}

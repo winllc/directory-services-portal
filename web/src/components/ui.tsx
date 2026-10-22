@@ -76,7 +76,17 @@ export function Card({ title, actions, children, className, subtitle }: { title?
   );
 }
 
+export const APP_TITLE = 'Directory Services Portal';
+
+/** Names the browser tab after the page (WCAG 2.4.2): "<page> · Directory Services Portal". */
+export function usePageTitle(title: string | undefined) {
+  useEffect(() => {
+    document.title = title ? `${title} · ${APP_TITLE}` : APP_TITLE;
+  }, [title]);
+}
+
 export function PageHeader({ title, subtitle, actions, icon }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; icon?: ReactNode }) {
+  usePageTitle(typeof title === 'string' ? title : undefined);
   return (
     <div className="page-header">
       <div className="page-header-main">

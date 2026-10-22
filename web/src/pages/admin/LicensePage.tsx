@@ -33,8 +33,8 @@ function InstallationId({ id, error }: { id?: string; error?: string }) {
   const [copied, setCopied] = useState(false);
   if (!id) return <Alert tone="danger" title="No installation id">{error ?? 'The installation id is not available.'}</Alert>;
   return (
-    <div className="installation-id">
-      <code aria-label="Installation id">{id}</code>
+    <div className="installation-id" role="group" aria-label="Installation id">
+      <code>{id}</code>
       <Button
         size="sm"
         icon={copied ? <Check size={14} /> : <Copy size={14} />}

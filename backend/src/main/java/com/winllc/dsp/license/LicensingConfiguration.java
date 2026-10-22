@@ -39,7 +39,8 @@ public class LicensingConfiguration implements WebMvcConfigurer {
 
   /** Reachable whatever the license says. */
   static final String[] OPEN_PATHS = {"/api/auth/**", "/api/info", "/api/health", "/api/license", "/api/admin/license",
-      "/api/admin/audit", "/api/admin/audit/**", "/api/audit/**"};
+      "/api/admin/audit", "/api/admin/audit/**", "/api/audit/**",
+      "/api/v1/openapi", "/api/v1/openapi.yaml"};
 
   private final ObjectProvider<Licensing> licensing;
   private final ObjectProvider<BuildProperties> build;

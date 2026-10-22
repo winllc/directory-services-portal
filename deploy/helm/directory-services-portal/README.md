@@ -373,6 +373,13 @@ From the release with single sign-on and the shared database, nothing changes un
 more than 1 with the conditions above, and `api.updateStrategy` (empty: automatic) and
 `api.podDisruptionBudget` are new.
 
+From the release with the integration API, webhooks and entry import and export, nothing needs
+changing: `integrations.*` has safe defaults, no API token or webhook exists until an administrator
+creates one, and the web tier's upload limit (`MAX_BODY_SIZE`) follows
+`integrations.transfer.importMaxBytes` (5 MiB as before). With `database.url` the upgrade adds the
+`dsp_webhook_delivery` table (Flyway V3). With `networkPolicy.enabled`, the API pods get the
+`networkPolicy.egress.webhooks` rule (443 anywhere by default; narrow it to your receivers).
+
 From the release with the platform baseline, the API's probes moved from `/api/health` to
 Spring Boot's liveness and readiness groups on the metrics port (`metrics.enabled`, default on):
 a pod is not Ready while the directory is unreachable or the audit log can't be written. API
@@ -535,6 +542,20 @@ Existing claims (`existingClaim`) are never touched.
 Fixed by the chart: `DATA_DIR=/data`, `PORT=3001`, `SERVER_FORWARD_HEADERS_STRATEGY=framework`, the
 `ENS_LICENSE_*` paths, and the web tier's `API_URL`.
 
+### Integrations: API tokens, webhooks, import and export
+
+| Value | Env | Default |
+| --- | --- | --- |
+| `integrations.api.rateLimitPerMinute` | `API_RATE_LIMIT_PER_MINUTE` | `120` (per token, per replica) |
+| `integrations.api.maxTokenDays` | `API_TOKEN_MAX_DAYS` | `365` |
+| `integrations.webhooks.enabled` | `WEBHOOKS_ENABLED` | `true` |
+| `integrations.webhooks.allowedHosts` | `WEBHOOK_ALLOWED_HOSTS` | `[]` (public addresses only; metadata addresses never) |
+| `integrations.webhooks.maxAttempts` | `WEBHOOK_MAX_ATTEMPTS` | `8` |
+| `integrations.webhooks.runBudget` | `WEBHOOK_RUN_BUDGET` | `40s` (no attempt starts later in a delivery run) |
+| `integrations.transfer.exportMaxEntries` | `EXPORT_MAX_ENTRIES` | `10000` |
+| `integrations.transfer.importMaxBytes` | `IMPORT_MAX_BYTES` (and the web tier's `MAX_BODY_SIZE`) | `5242880` |
+| `integrations.transfer.importMaxRows` / `.bulkMaxMembers` | `IMPORT_MAX_ROWS` / `BULK_MAX_MEMBERS` | `5000` / `5000` |
+
 ### Audit logging (ens-audit/1)
 
 | Value | Env | Default |
@@ -602,6 +623,7 @@ proxy secret.
 | `networkPolicy.egress.audit.ports` / `.cidrs` | `[443, 514, 6514, 8088]` / `[0.0.0.0/0]` | Splunk, syslog (UDP added for `protocol: udp`), OCSP/CRL |
 | `networkPolicy.egress.database.ports` / `.cidrs` | `[5432]` / `[0.0.0.0/0]` | with `database.url` |
 | `networkPolicy.egress.sso.ports` / `.cidrs` | `[443]` / `[0.0.0.0/0]` | with single sign-on |
+| `networkPolicy.egress.webhooks.ports` / `.cidrs` | `[443]` / `[0.0.0.0/0]` | with `integrations.webhooks.enabled` |
 | `networkPolicy.egress.extra` | `[]` | more egress rules |
 | `tests.enabled` | `true` | the `helm test` pod (web image, curls `/api/health` through the web tier) |
 

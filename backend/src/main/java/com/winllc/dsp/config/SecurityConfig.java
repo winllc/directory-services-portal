@@ -1,6 +1,12 @@
 package com.winllc.dsp.config;
 
 import com.winllc.dsp.audit.AccessDenials;
+import com.winllc.dsp.integration.ApiRateLimiter;
+import com.winllc.dsp.integration.ApiTokenFilter;
+import com.winllc.dsp.integration.ApiTokenOwners;
+import com.winllc.dsp.integration.ApiTokens;
+import com.winllc.dsp.integration.IntegrationApi;
+import com.winllc.dsp.integration.IntegrationProperties;
 import com.winllc.dsp.service.SessionService;
 import com.winllc.dsp.sso.SsoSecurity;
 import org.springframework.context.annotation.Bean;
@@ -26,8 +32,9 @@ import org.springframework.security.web.header.writers.StaticHeadersWriter;
  * resulting {@code SessionUser} is stored in the HTTP session. Administrators get ROLE_ADMIN.
  *
  * <p>The SIEM pull API ({@code /api/audit/**}) has its own chain: no session, no CSRF header; its
- * controller checks the {@code Authorization: Bearer} audit token. Every 403 is audited
- * ({@link AccessDenials}).
+ * controller checks the {@code Authorization: Bearer} audit token. So has the integration API
+ * ({@code /api/v1/**}): only an API token authenticates there ({@link ApiTokenFilter}), never a
+ * session cookie, which is why it needs no CSRF header. Every 403 is audited ({@link AccessDenials}).
  *
  * <p>Both chains send the ENS baseline security headers. The web tier (nginx) sends the same set
  * for the client's pages and replaces these on {@code /api} responses.
@@ -62,6 +69,34 @@ public class SecurityConfig {
   @Bean
   SecurityContextRepository securityContextRepository() {
     return new HttpSessionSecurityContextRepository();
+  }
+
+  /** The integration API: API tokens only, stateless; its OpenAPI document is public. */
+  @Bean
+  @Order(0)
+  SecurityFilterChain integrationApiFilterChain(HttpSecurity http, EnsProperties ens, ApiTokens tokens, ApiTokenOwners owners,
+      ApiRateLimiter limiter, IntegrationProperties props, AccessDenials denials) throws Exception {
+    http
+        .securityMatcher(IntegrationApi.BASE + "/**")
+        .csrf(AbstractHttpConfigurer::disable)
+        .formLogin(AbstractHttpConfigurer::disable)
+        .httpBasic(AbstractHttpConfigurer::disable)
+        .logout(AbstractHttpConfigurer::disable)
+        .requestCache(AbstractHttpConfigurer::disable)
+        .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .securityContext(sc -> sc.securityContextRepository(new NullSecurityContextRepository()))
+        .addFilterAfter(new ApiTokenFilter(tokens, owners, limiter, props, denials), SecurityContextHolderFilter.class)
+        .authorizeHttpRequests(auth -> auth
+            .requestMatchers(HttpMethod.GET, IntegrationApi.OPENAPI_PATH, IntegrationApi.OPENAPI_PATH + ".yaml").permitAll()
+            .anyRequest().hasAuthority(ApiTokenFilter.ROLE))
+        .exceptionHandling(e -> e
+            .authenticationEntryPoint((req, res, ex) -> JsonErrors.write(res, 401, "API token required", "token_required"))
+            .accessDeniedHandler((req, res, ex) -> {
+              denials.denied(req, "forbidden", "Access denied");
+              JsonErrors.write(res, 403, "Access denied");
+            }))
+        .headers(baselineHeaders(ens));
+    return http.build();
   }
 
   @Bean

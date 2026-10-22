@@ -11,3 +11,5 @@ certs
 **/*.lic
 **/*private.pem
 license
+**/test-results
+**/playwright-report

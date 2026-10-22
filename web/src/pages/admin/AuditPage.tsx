@@ -612,6 +612,7 @@ function TokensTab() {
         setCreated(r);
         setCopied(false);
         setName('');
+        create.reset();
       },
     });
   };

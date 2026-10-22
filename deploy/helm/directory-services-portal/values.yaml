@@ -614,6 +614,34 @@ route:
     # Reencrypt: the CA that signed tls's server certificate.
     destinationCACertificate: ""
 
+# --- Integrations: API tokens, webhooks, import and export (see the README, Integration API) ----
+integrations:
+  api:
+    # API_RATE_LIMIT_PER_MINUTE: requests per minute per API token, unless the token sets its own
+    # (counted per API replica).
+    rateLimitPerMinute: 120
+    # API_TOKEN_MAX_DAYS: the longest lifetime an administrator may give a token.
+    maxTokenDays: 365
+  webhooks:
+    # WEBHOOKS_ENABLED: false stops sending (deliveries stay queued) and creating webhooks.
+    enabled: true
+    # WEBHOOK_ALLOWED_HOSTS: host names (or *.example.com) whose webhooks may reach private, loopback
+    # or link-local addresses, e.g. an in-cluster receiver. Cloud metadata addresses are refused
+    # regardless. Empty: public addresses only.
+    allowedHosts: []
+    maxAttempts: 8
+    # WEBHOOK_RUN_BUDGET: how long one delivery run (every couple of seconds) starts attempts for;
+    # a run ends within this plus one send timeout (20 s). A receiver that gives no answer is backed
+    # off as a whole, and one webhook gets at most 10 attempts and 20 s of a run.
+    runBudget: 40s
+  transfer:
+    exportMaxEntries: 10000
+    # IMPORT_MAX_BYTES: the largest import file. The web tier's upload limit (MAX_BODY_SIZE) follows
+    # it (at least 5 MiB).
+    importMaxBytes: 5242880
+    importMaxRows: 5000
+    bulkMaxMembers: 5000
+
 networkPolicy:
   enabled: false
   # Who may reach the web tier (NetworkPolicy peers). Empty: anyone. With edge-terminated X.509
@@ -639,6 +667,10 @@ networkPolicy:
       cidrs: [0.0.0.0/0]
     # The single sign-on providers' discovery, keys, token endpoint and metadata (when configured).
     sso:
+      ports: [443]
+      cidrs: [0.0.0.0/0]
+    # Outbound webhooks (when integrations.webhooks.enabled): narrow to the receivers' addresses.
+    webhooks:
       ports: [443]
       cidrs: [0.0.0.0/0]
     # Further egress rules for the API, as NetworkPolicy egress entries.
