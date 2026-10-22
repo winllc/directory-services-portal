@@ -134,13 +134,20 @@ locally too):
 | `SHA256SUMS` | checksums of the files above |
 | `SHA256SUMS.asc` | GPG detached signature of `SHA256SUMS` (when a signing key is configured) |
 
+**Releases are delivered from the S3 bucket**, not from GitHub Releases: nothing is attached to a
+GitHub Release, whose own "Source code" archives are not an installable package. On a release tag the
+`image` job first checks that `RELEASE_S3_BUCKET` and the AWS credentials below are set, and fails
+before anything is built or published if they aren't. Customers get the files from the bucket, for
+example through a presigned link (`aws s3 presign`, valid for up to 7 days) or a download site in front
+of it.
+
 The files are uploaded to `s3://<bucket>/directory-services-portal/<version>/`, and for versions
 without a `-suffix` `directory-services-portal/latest.txt` is set to the version. They are also
 kept as the workflow artifact `release-directory-services-portal-<version>` (30 days). Every
 pull request does a dry run (version `0.0.0-pr<number>`, artifact kept 3 days, never
 uploaded; the chart is packaged but not pushed). The `helm` job lints the chart and validates
-its output with kubeconform on every push, for each values file in its `ci/` directory. Signing and upload are skipped, with a note in the job summary, until configured
-(repository Settings > Secrets and variables > Actions):
+its output with kubeconform on every push, for each values file in its `ci/` directory. Signing is skipped, with a note in the job summary, until a key is configured;
+a release tag needs the bucket and its credentials (repository Settings > Secrets and variables > Actions):
 
 | | Name | |
 |---|---|---|

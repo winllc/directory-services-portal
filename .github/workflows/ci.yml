@@ -335,9 +335,9 @@ jobs:
     needs: [api-test, web-test, accessibility, helm, bundle]
 
     permissions:
-      contents: write
+      contents: read
       packages: write
-      # Attach bundle assets to GitHub Releases and keylessly sign images and the chart.
+      # Keylessly sign images and the chart.
       id-token: write
 
     env:
@@ -351,6 +351,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check that the release bucket is configured
+        # Releases reach customers from the S3 bucket only. On a release tag this fails before anything is
+        # built or published, rather than leaving the release in a workflow artifact nobody can reach.
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          missing=()
+          [ -n "$S3_BUCKET" ] || missing+=("the RELEASE_S3_BUCKET variable")
+          [ "$HAS_AWS" = true ] || missing+=("the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY secrets")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            for m in "${missing[@]}"; do echo "::error::A release needs $m (Settings > Secrets and variables > Actions)"; done
+            exit 1
+          fi
+          echo "Release goes to s3://$S3_BUCKET"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -641,19 +655,6 @@ jobs:
           compression-level: 0
           retention-days: ${{ steps.bundle.outputs.release == 'true' && 30 || 3 }}
 
-      - name: Publish bundle assets to the GitHub Release
-        id: github-release
-        if: always() && steps.bundle.outputs.release == 'true' && steps.release-bundle.outcome == 'success' && steps.sign.outcome != 'failure'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          OUT: ${{ steps.bundle.outputs.dir }}
-        run: |
-          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$TAG"
-          fi
-          gh release upload "$TAG" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
-
       - name: Upload the bundle to the release bucket
         id: upload
         if: always() && steps.bundle.outputs.release == 'true' && steps.release-bundle.outcome == 'success' && steps.sign.outcome != 'failure' && env.S3_BUCKET != '' && env.HAS_AWS == 'true'
@@ -683,7 +684,6 @@ jobs:
           RELEASE: ${{ steps.bundle.outputs.release }}
           OUT: ${{ steps.bundle.outputs.dir }}
           SIGN_OUTCOME: ${{ steps.sign.outcome }}
-          GITHUB_RELEASE_OUTCOME: ${{ steps.github-release.outcome }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           {
@@ -700,8 +700,6 @@ jobs:
             if [ "$SIGN_OUTCOME" = success ]; then echo "- Signed: yes (\`SHA256SUMS.asc\`)"
             elif [ "$HAS_GPG" != true ]; then echo "- Signed: **no**, the \`RELEASE_GPG_PRIVATE_KEY\` secret is not set"
             else echo "- Signed: **no**, signing $SIGN_OUTCOME"; fi
-            if [ "$GITHUB_RELEASE_OUTCOME" = success ]; then echo "- GitHub Release: assets uploaded to \`$TAG\`"
-            elif [ "$RELEASE" = true ]; then echo "- GitHub Release: upload $GITHUB_RELEASE_OUTCOME"; fi
             if [ "$UPLOAD_OUTCOME" = success ]; then
               echo "- Uploaded to \`s3://$S3_BUCKET/directory-services-portal/$VERSION/\`"
               if [[ "$VERSION" != *-* ]]; then echo "  and \`latest.txt\` set to $VERSION"; fi
