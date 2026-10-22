@@ -13,7 +13,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <ul>
  *   <li>UNLICENSED: 403 {@code license_required}; the web client then shows the license screen to
  *       administrators and a "not licensed" page to everyone else.</li>
- *   <li>READ_ONLY: GET, HEAD and OPTIONS work; anything else gets 403 {@code license_read_only}.</li>
+ *   <li>READ_ONLY: GET, HEAD and OPTIONS work, and so do handlers marked {@link ReadOnlyAllowed}
+ *       (downloads sent as POST); anything else gets 403 {@code license_read_only}.</li>
  *   <li>{@link RequiresFeature}: 403 {@code feature_not_licensed} unless the license unlocks one of
  *       its features.</li>
  * </ul>
@@ -34,7 +35,7 @@ class LicenseInterceptor implements HandlerInterceptor {
     switch (check.mode()) {
       case UNLICENSED -> throw LicenseRequiredException.unlicensed(check);
       case READ_ONLY -> {
-        if (!SAFE.contains(request.getMethod())) throw LicenseRequiredException.readOnly(check);
+        if (!SAFE.contains(request.getMethod()) && !readOnlyAllowed(handler)) throw LicenseRequiredException.readOnly(check);
       }
       case FULL -> {}
     }
@@ -48,5 +49,9 @@ class LicenseInterceptor implements HandlerInterceptor {
       }
     }
     return true;
+  }
+
+  private static boolean readOnlyAllowed(Object handler) {
+    return handler instanceof HandlerMethod method && method.hasMethodAnnotation(ReadOnlyAllowed.class);
   }
 }

@@ -780,8 +780,13 @@ export function useWebhookMutations() {
 // Export, import and group members
 // ---------------------------------------------------------------------------
 
+/**
+ * Downloads a file the server makes on request: a POST with the CSRF header (the export is
+ * audited, so another site must not be able to start it), saved under the name from
+ * Content-Disposition.
+ */
 async function download(url: string, fallbackName: string) {
-  const res = await fetch(url, { credentials: 'same-origin' });
+  const res = await fetch(url, { method: 'POST', headers: { 'X-DSP-Request': '1' }, credentials: 'same-origin' });
   if (!res.ok) {
     let message = `Export failed (${res.status})`;
     try {

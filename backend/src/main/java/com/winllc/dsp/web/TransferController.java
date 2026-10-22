@@ -4,6 +4,7 @@ import com.winllc.dsp.integration.IntegrationProperties;
 import com.winllc.dsp.jobs.Job;
 import com.winllc.dsp.jobs.JobService;
 import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.ReadOnlyAllowed;
 import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.SessionUser;
@@ -71,8 +72,14 @@ public class TransferController {
         .body(content);
   }
 
-  /** The directory's entries matching {@code q} (all of them without it), up to EXPORT_MAX_ENTRIES. */
-  @GetMapping("/export")
+  /**
+   * The directory's entries matching {@code q} (all of them without it), up to EXPORT_MAX_ENTRIES.
+   * A POST, so that it carries the CSRF header ({@code X-DSP-Request}): an audited export of a
+   * whole directory is never started by a link or an image on another site. Allowed while the
+   * license is read-only (it only reads).
+   */
+  @PostMapping("/export")
+  @ReadOnlyAllowed
   public ResponseEntity<String> export(@AuthenticationPrincipal SessionUser user, @PathVariable String id,
       @RequestParam(required = false) String q, @RequestParam(required = false) String format) {
     if (q != null && q.length() > 256) throw ApiException.badRequest("Search text is too long");
@@ -88,7 +95,9 @@ public class TransferController {
     return memberships.read(user, entries.definition(id), DirectoryController.dnParam(dn), attribute);
   }
 
-  @GetMapping("/members/export")
+  /** A group's members as a file; a POST like {@link #export}. */
+  @PostMapping("/members/export")
+  @ReadOnlyAllowed
   public ResponseEntity<String> exportMembers(@AuthenticationPrincipal SessionUser user, @PathVariable String id,
       @RequestParam(required = false) String dn, @RequestParam(required = false) String attribute, @RequestParam(required = false) String format) {
     EntryTransfer.Format f = EntryTransfer.Format.parse(format);

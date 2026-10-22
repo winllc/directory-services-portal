@@ -98,6 +98,8 @@ class LicenseModesTest extends ApiTestSupport {
       assertThat(status(admin.get("/api/definitions"))).isEqualTo(200);
       assertThat(status(admin.get(STAFF))).isEqualTo(200);
       assertThat(status(admin.get("/api/metrics/sources"))).isEqualTo(200);
+      // Exports only read: they are POSTs (for the CSRF header) and still work.
+      assertThat(status(admin.post("/api/directories/staff/export?format=csv", null))).isEqualTo(200);
       MvcResult r = admin.put("/api/admin/forms/form-staff", Map.of());
       assertThat(status(r)).isEqualTo(403);
       assertThat(body(r).get("code").asString()).isEqualTo("license_read_only");

@@ -50,7 +50,7 @@ class TransferTest extends ApiTestSupport {
   void exportsSearchResultsAsCsvWithAFormulaGuard() throws Exception {
     Client admin = login("admin");
     assertThat(status(admin.put("/api/directories/staff/entry" + q(ALICE), Map.of("values", Map.of("title", "=HYPERLINK(\"http://x\")"))))).isEqualTo(200);
-    MvcResult r = admin.get("/api/directories/staff/export?format=csv");
+    MvcResult r = admin.post("/api/directories/staff/export?format=csv", null);
     assertThat(status(r)).isEqualTo(200);
     assertThat(r.getResponse().getHeader("Content-Disposition")).startsWith("attachment").contains("staff-").contains(".csv");
     assertThat(r.getResponse().getContentType()).startsWith("text/csv");
@@ -61,19 +61,39 @@ class TransferTest extends ApiTestSupport {
     int rows = csv.split("\r\n").length - 1;
     assertThat(Integer.parseInt(r.getResponse().getHeader("X-DSP-Export-Count"))).isEqualTo(rows).isGreaterThan(3);
     // A search narrows the export.
-    String one = admin.get("/api/directories/staff/export?q=alice").getResponse().getContentAsString(StandardCharsets.UTF_8);
+    String one = admin.post("/api/directories/staff/export?q=alice", null).getResponse().getContentAsString(StandardCharsets.UTF_8);
     assertThat(one.split("\r\n")).hasSize(2);
     assertThat(actions(admin, "data.exported")).contains("def-staff");
     // Readers export; people without access don't.
     Client alice = login("alice");
-    assertThat(status(alice.get("/api/directories/devices/export"))).isEqualTo(200);
-    assertThat(status(alice.get("/api/directories/partners/export"))).isEqualTo(403);
+    assertThat(status(alice.post("/api/directories/devices/export", null))).isEqualTo(200);
+    assertThat(status(alice.post("/api/directories/partners/export", null))).isEqualTo(403);
+  }
+
+  @Test
+  void exportsNeedTheCsrfHeader() throws Exception {
+    Client admin = login("admin");
+    long before = actions(admin, "data.exported").stream().filter("def-staff"::equals).count();
+    // What another site could send with the victim's cookie: a link or image (GET), or a form post
+    // (no custom header). Neither exports, and nothing is recorded as exported.
+    assertThat(status(admin.get("/api/directories/staff/export?format=csv"))).isEqualTo(405);
+    assertThat(status(admin.get("/api/directories/groups/members/export" + q(ENGINEERING)))).isEqualTo(405);
+    for (String url : List.of("/api/directories/staff/export", "/api/directories/groups/members/export" + q(ENGINEERING))) {
+      MvcResult r = admin.send(post(URI.create(url)).header("Origin", "https://attacker.example").header("Sec-Fetch-Site", "cross-site")
+          .contentType("application/x-www-form-urlencoded").content("format=csv"));
+      assertThat(status(r)).as(url).isEqualTo(403);
+      assertThat(r.getResponse().getContentAsString()).doesNotContain("uid=");
+    }
+    assertThat(actions(admin, "data.exported").stream().filter("def-staff"::equals).count()).isEqualTo(before);
+    // The portal's own request (with the header) works.
+    assertThat(status(admin.post("/api/directories/staff/export?format=csv", null))).isEqualTo(200);
+    assertThat(actions(admin, "data.exported").stream().filter("def-staff"::equals).count()).isEqualTo(before + 1);
   }
 
   @Test
   void exportsLdifThatReadsBack() throws Exception {
     Client admin = login("admin");
-    MvcResult r = admin.get("/api/directories/devices/export?format=ldif");
+    MvcResult r = admin.post("/api/directories/devices/export?format=ldif", null);
     assertThat(r.getResponse().getHeader("Content-Disposition")).contains(".ldif");
     String ldif = r.getResponse().getContentAsString(StandardCharsets.UTF_8);
     int count = 0;
@@ -90,7 +110,7 @@ class TransferTest extends ApiTestSupport {
   @Test
   void importsCsvWithADryRunFirst() throws Exception {
     Client admin = login("admin");
-    String csv = admin.get("/api/directories/devices/export").getResponse().getContentAsString(StandardCharsets.UTF_8);
+    String csv = admin.post("/api/directories/devices/export", null).getResponse().getContentAsString(StandardCharsets.UTF_8);
     List<List<String>> lines = new ArrayList<>();
     Csv.parse(csv, 1000, new boolean[1]).forEach(rec -> lines.add(new ArrayList<>(rec.cells())));
     // Change one device's asset tag, add a new device (no dn: named by its cn), and a bad row.
@@ -137,7 +157,7 @@ class TransferTest extends ApiTestSupport {
     assertThat(actions(admin, "entry.update")).contains(changedDn);
     assertThat(actions(admin, "data.imported")).hasSize(importsBefore + 1).first().isEqualTo("def-devices");
     // An exported file imports unchanged.
-    String again = admin.get("/api/directories/devices/export").getResponse().getContentAsString(StandardCharsets.UTF_8);
+    String again = admin.post("/api/directories/devices/export", null).getResponse().getContentAsString(StandardCharsets.UTF_8);
     JsonNode same = imported(admin, "/api/directories/devices/import?dryRun=true", "text/csv", again);
     assertThat(same.get("unchanged").asInt()).isEqualTo(same.get("total").asInt());
   }
@@ -309,9 +329,9 @@ class TransferTest extends ApiTestSupport {
     // One audited change of the group (other tests in this context also change it).
     assertThat(actions(admin, "entry.update").stream().filter(ENGINEERING::equals).count()).isEqualTo(updatesBefore + 1);
 
-    String csv = admin.get("/api/directories/groups/members/export" + q(ENGINEERING)).getResponse().getContentAsString(StandardCharsets.UTF_8);
+    String csv = admin.post("/api/directories/groups/members/export" + q(ENGINEERING), null).getResponse().getContentAsString(StandardCharsets.UTF_8);
     assertThat(csv).startsWith(Csv.BOM + "member\r\n").contains("\"uid=bob,ou=people,dc=example,dc=com\"").doesNotContain(ALICE);
-    String ldif = admin.get("/api/directories/groups/members/export" + q(ENGINEERING) + "&format=ldif").getResponse().getContentAsString();
+    String ldif = admin.post("/api/directories/groups/members/export" + q(ENGINEERING) + "&format=ldif", null).getResponse().getContentAsString();
     assertThat(ldif).contains("dn: " + ENGINEERING).contains("member: uid=bob");
 
     // A reader can't change members.

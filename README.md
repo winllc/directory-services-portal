@@ -200,7 +200,7 @@ evaluation license from your account on the ENS portal.
 | Mode | When | What works |
 |---|---|---|
 | unlicensed | no license, or one that is invalid, for another product, bound to another installation, superseded by a newer revision or not yet valid | sign-in/out, `/api/info`, `/api/health`, the license endpoints and the [audit log](#audit-logging) (`/api/admin/audit/**`, `/admin/audit`, `/api/audit/events`). Every other API call answers `403 {"error": "<why>", "code": "license_required", "state": "MISSING"}`; the web client takes administrators to the license screen and shows everyone else a "not licensed, ask your administrator" page |
-| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics, exports); anything else answers `403` with `"code": "license_read_only"`, except sign-in/out, the license upload and the audit log (verify, export, API tokens). A banner says so |
+| read-only | expired past its grace period, or a perpetual license whose maintenance ended before this release was built | `GET`/`HEAD`/`OPTIONS` (browsing, search, metrics) and the directory and group-member exports; anything else answers `403` with `"code": "license_read_only"`, except sign-in/out, the license upload and the audit log (verify, export, API tokens). A banner says so |
 | full | valid, or expired within its grace period (administrators get a renewal reminder) | the features the license lists |
 
 Evaluation licenses show a banner on every page. **Memory/demo mode** (`DIRECTORY_MODE=memory`,
@@ -571,7 +571,10 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   run as a formula (`=`, `+`, `-` or `@` first, also after leading spaces, tabs or line breaks, or a
   tab or CR first) get a leading `'`, which an import removes again. An apostrophe is removed only
   before such text, so a value that really starts with `'=` comes back without its apostrophe. Audited as
-  `data.exported`. A group's page exports its members (CSV or LDIF).
+  `data.exported`. A group's page exports its members (CSV or LDIF). Both downloads are `POST`
+  requests with the `X-DSP-Request` header (`/api/directories/{id}/export` and
+  `/api/directories/{id}/members/export`, parameters in the query string), so a link, image or
+  form on another site can't start an audited export.
 - **Import** (users with write access): *Import* takes a CSV in the export's layout (a `dn` column
   is optional: without it, entries are named by the form's naming attribute in the first create
   container) or LDIF entries (`changetype: add` too; modify, delete and moddn records are
