@@ -402,6 +402,7 @@ jobs:
           labels: ${{ steps.api-meta.outputs.labels }}
           build-args: |
             REVISION=${{ github.sha }}
+            PACKAGES_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
@@ -413,6 +414,8 @@ jobs:
           load: true
           tags: dsp-web:ci
           labels: ${{ steps.web-meta.outputs.labels }}
+          build-args: |
+            PACKAGES_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
