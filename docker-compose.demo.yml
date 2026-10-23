@@ -1,0 +1,145 @@
+# A demo of the Directory Services Portal from one command, with nothing to configure: the web
+# client and the API, built from this repository, with the API in memory mode
+# (DIRECTORY_MODE=memory) - its embedded demo directory - and the example forms, directories and
+# permissions seeded (SEED_DEMO_CONFIG).
+#
+#     docker compose -f docker-compose.demo.yml -p dsp-demo up --build
+#
+# No directory server runs beside it: memory mode starts an in-memory LDAP server inside the API
+# process, on a loopback port, loaded with the demo organisation (the acme schema, people, groups
+# and devices). The portal talks to it over LDAP exactly as it would to a real one. Sign in as
+# admin / password (administrator), or alice, bob, erin, dave, frank / password; the sign-in page
+# lists them.
+#
+#   web            nginx serving the React client on 8080, proxying /api to api (one origin)
+#   api            the Spring Boot API on 3001, in memory mode
+#   license-init   copies ./license/license.lic into the license volume, then exits
+#
+# Nothing is published to the host. The demo's credentials are public - printed on its sign-in
+# page - and admin can change everything in the portal, so binding it to the host's interfaces by
+# default would hand that to anything that can reach the machine. web listens on 8080 inside this
+# project's network (dsp-demo_demo) only. Reach it on purpose, either:
+#
+#   1. with a reverse proxy attached to dsp-demo_demo, pointed at web:8080; or
+#   2. with an override file you write yourself, kept out of this repository:
+#
+#          # demo-ports.yml
+#          services:
+#            web:
+#              ports: ["127.0.0.1:8080:8080"]
+#
+#          docker compose -f docker-compose.demo.yml -f demo-ports.yml -p dsp-demo up --build
+#
+#      and open http://localhost:8080.
+#
+# It needs an ENS license: without one you sign in and see only the license screen. Download an
+# evaluation license for the Directory Services Portal from the ENS licensing portal, then either
+# upload it on the license screen (sign in as admin), or save it as ./license/license.lic before
+# "up" (never commit it; .gitignore excludes it): license-init copies it into the demo-license
+# volume when that has no license yet, so a license uploaded on the license screen is never
+# overwritten. The volume also keeps this installation's id.
+#
+# Use -p as above. Without it, compose derives the project from the directory name and this demo
+# would share its network and volumes with docker-compose.yml's OpenLDAP stack.
+#
+# The directory is in memory, so a restart brings back the demo organisation as shipped; forms,
+# directories, permissions and the audit trail are kept in the demo-data volume. To reset all of
+# it, license included:
+#
+#     docker compose -f docker-compose.demo.yml -p dsp-demo down -v
+#
+# THIS IS NOT A PRODUCTION CONFIGURATION. To install the portal, use the release package or the
+# Helm chart (README: Install).
+#
+# Docker and Podman alike (podman-compose works with the same commands): every image is built
+# here (on fully qualified Red Hat UBI 9 bases), and the bind mount carries :Z for SELinux hosts,
+# which Docker without SELinux ignores.
+services:
+  # Copies ./license/license.lic (if present) into the demo-license volume when it has no license
+  # yet, then exits. Runs from the API image, which owns the volume's directory.
+  license-init:
+    build: ./backend
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        if [ -f /seed/license.lic ] && [ ! -f /var/lib/ens/directory-portal/license.lic ]; then
+          cp /seed/license.lic /var/lib/ens/directory-portal/license.lic && echo "Installed ./license/license.lic" \
+            || echo "Could not copy ./license/license.lic (is it readable? chmod 644); upload it on the license screen"
+        elif [ ! -f /var/lib/ens/directory-portal/license.lic ]; then
+          echo "No ./license/license.lic: sign in as admin and upload one on the license screen"
+        fi
+        exit 0
+    volumes:
+      - ./license:/seed:ro,Z
+      - demo-license:/var/lib/ens
+    restart: "no"
+    networks:
+      - demo
+
+  api:
+    build: ./backend
+    # Hardening as in docker-compose.yml: no capabilities or privilege escalation, a read-only
+    # root file system (the API writes only to its volumes and /tmp) and a memory limit.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: ${API_MEMORY_LIMIT:-1536m}
+    depends_on:
+      license-init:
+        condition: service_completed_successfully
+    environment:
+      # The embedded demo directory, with its own admin user, admin group and sign-in hint.
+      DIRECTORY_MODE: memory
+      # Example forms, directories and permissions matching the demo organisation (memory mode's
+      # default, stated so the demo does not depend on it).
+      SEED_DEMO_CONFIG: "true"
+      # Plain HTTP behind web; nothing here terminates TLS.
+      ENS_COOKIE_SECURE: "false"
+      # Honour X-Forwarded-* set by the web proxy, so login throttling sees the client's address.
+      # api is reachable only from this network, so only the proxy can set them.
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+    # The image declares VOLUME /data /var/lib/ens; both are named here, so "down -v" names what it
+    # removes. /data holds the portal's configuration and audit store; /var/lib/ens the license.
+    volumes:
+      - demo-data:/data
+      - demo-license:/var/lib/ens
+    expose:
+      - "3001"
+    restart: unless-stopped
+    networks:
+      - demo
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /opt/app-root/etc/dsp.d
+      - /var/log/nginx
+    mem_limit: ${WEB_MEMORY_LIMIT:-256m}
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:3001
+    # The visitor's entry point. No port published to the host - see the header.
+    expose:
+      - "8080"
+    restart: unless-stopped
+    networks:
+      - demo
+
+networks:
+  demo:
+
+volumes:
+  demo-data:
+  demo-license:

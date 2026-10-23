@@ -34,6 +34,9 @@ LABEL org.opencontainers.image.title="Directory Services Portal API" \
 # also works under an arbitrary UID (OpenShift restricted SCC).
 USER 0
 # Apply the latest Red Hat security and bug-fix updates (UBI minimal: microdnf is its yum).
+# PACKAGES_REFRESH changes on every CI build (the run id), so a cached layer never holds back an
+# update: without it the build cache would keep whichever packages this step first saw.
+ARG PACKAGES_REFRESH=
 RUN microdnf -y update && microdnf clean all && rm -rf /var/cache/yum /var/cache/dnf
 RUN mkdir -p /app /data && chown 185:0 /data && chmod 0770 /data
 # The ENS license is never part of the image. It lives in one persistent, writable directory: the

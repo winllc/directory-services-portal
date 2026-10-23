@@ -256,7 +256,7 @@ jobs:
   bundle:
     # The Docker/Podman deployment package: lint its scripts, and check that every documented
     # way of installing it gives a valid compose configuration, publishing the expected ports,
-    # with both Docker Compose and podman-compose.
+    # with both Docker Compose and podman-compose; and that docker-compose.demo.yml publishes none.
     runs-on: ubuntu-latest
     env:
       PODMAN_COMPOSE_VERSION: "1.6.0"
@@ -326,6 +326,16 @@ jobs:
             grep -qx 'CONTAINER_ENGINE=docker' .env
             grep -qx 'WEB_BIND=127.0.0.1' .env
           done
+
+      - name: The demo compose file publishes no port
+        run: |
+          f=docker-compose.demo.yml
+          docker compose -f "$f" -p dsp-demo config --format json | python3 -c '
+          import json, sys
+          bad = [n for n, s in json.load(sys.stdin)["services"].items() if s.get("ports")]
+          sys.exit("services with ports: %s" % bad if bad else 0)'
+          podman-compose -f "$f" -p dsp-demo config > "$RUNNER_TEMP/demo.yml"
+          ! grep -n 'ports:' "$RUNNER_TEMP/demo.yml"
 
   image:
     # Builds both images on every push, checks the pair starts and answers through the web
@@ -402,6 +412,7 @@ jobs:
           labels: ${{ steps.api-meta.outputs.labels }}
           build-args: |
             REVISION=${{ github.sha }}
+            PACKAGES_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
@@ -413,6 +424,8 @@ jobs:
           load: true
           tags: dsp-web:ci
           labels: ${{ steps.web-meta.outputs.labels }}
+          build-args: |
+            PACKAGES_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
