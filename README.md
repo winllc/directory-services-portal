@@ -211,7 +211,9 @@ evaluation license from your account on the ENS portal.
 | full | valid, or expired within its grace period (administrators get a renewal reminder) | the features the license lists |
 
 Evaluation licenses show a banner on every page. **Memory/demo mode** (`DIRECTORY_MODE=memory`,
-`SEED_DEMO_CONFIG`) needs a license too: an unlicensed demo shows only the license screen.
+`SEED_DEMO_CONFIG`; `docker-compose.demo.yml` runs it in containers, see
+[Demo compose file](#demo-compose-file-embedded-demo-directory-no-ports)) needs a license too: an
+unlicensed demo shows only the license screen.
 
 **Features** (catalog ids; a license lists them as `directory-portal.<id>`; each is checked in
 the API with `@RequiresFeature` or in code, and the web client hides what isn't enabled):
@@ -1250,6 +1252,27 @@ Production build without Docker: `npm run build && npm start`. This builds `web/
 on http://localhost:8080 with `vite preview`, which forwards `/api`. In a real deployment, serve
 `web/dist` from any web server that routes `/api` to the API and falls back to `index.html` for
 other paths. `web/nginx/templates/default.conf.template` is a ready-made example.
+
+### Demo compose file (embedded demo directory, no ports)
+
+`docker-compose.demo.yml` runs the same demo in containers, built from this repository: `web`
+(the visitor's entry point, nginx on port 8080) and `api` in memory mode (`DIRECTORY_MODE=memory`,
+`SEED_DEMO_CONFIG=true`), plus the one-shot `license-init`. There is no OpenLDAP container: memory
+mode runs the embedded demo directory inside the API, with the users in the table above.
+
+```bash
+docker compose -f docker-compose.demo.yml -p dsp-demo up --build
+docker compose -f docker-compose.demo.yml -p dsp-demo down -v     # reset, license included
+```
+
+**It publishes no port.** The demo's credentials are public, printed on its sign-in page, so
+binding it to the host's interfaces is something you choose rather than a default. Reach
+`web:8080` either with a reverse proxy attached to the `dsp-demo_demo` network, or with an
+override file of your own that publishes it (the file's header shows one, on `127.0.0.1:8080`).
+Use `-p` as above so the demo never shares a network or volumes with `docker-compose.yml`. It
+works with Docker and with podman-compose. The license: upload it on the license screen as
+`admin`, or save it as `license/license.lic` before `up` for `license-init` to copy into the
+`demo-license` volume.
 
 ### Docker Compose (demo stack in the source tree)
 
