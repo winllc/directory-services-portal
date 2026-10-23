@@ -30,6 +30,9 @@ ENV API_URL=http://api:3001 \
     NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates
 USER 0
 # Apply the latest Red Hat security and bug-fix updates.
+# PACKAGES_REFRESH changes on every CI build (the run id), so a cached layer never holds back an
+# update: without it the build cache would keep whichever packages this step first saw.
+ARG PACKAGES_REFRESH=
 RUN yum -y update && yum clean all && rm -rf /var/cache/yum /var/cache/dnf
 COPY web/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY web/nginx/templates/ /etc/nginx/templates/
