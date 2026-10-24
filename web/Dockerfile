@@ -12,7 +12,7 @@ COPY --chown=1001:0 shared shared
 COPY --chown=1001:0 web web
 RUN npm run build -w web
 
-FROM registry.access.redhat.com/ubi9/nginx-126:1@sha256:0c3626527f8172f2d54ff67bb25ee286640572ff90a0002bcbe926a9c85ed079
+FROM registry.access.redhat.com/ubi9/nginx-126:1@sha256:c49b0d5562bbefd9dddda53e332c8eb74e82c43b8ef76901147e020296701a4e
 # They replace the base image's own OCI labels (CI adds version and revision).
 LABEL org.opencontainers.image.title="Directory Services Portal web" \
       org.opencontainers.image.description="Web client of the Directory Services Portal, served by nginx, which proxies /api to the API" \
