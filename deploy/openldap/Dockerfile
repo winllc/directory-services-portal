@@ -1,7 +1,7 @@
 # Small OpenLDAP server for the docker compose demo. Built locally from Ubuntu's maintained
 # slapd package, so it runs natively on amd64 and arm64 (e.g. Apple Silicon).
 # Pinned by digest (the tag is for reading); Dependabot proposes new digests.
-FROM ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092
+FROM ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends slapd ldap-utils \
  && rm -rf /var/lib/apt/lists/* /etc/ldap/slapd.d /var/lib/ldap/*
