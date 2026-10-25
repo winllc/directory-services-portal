@@ -336,6 +336,75 @@ class ApiIntegrationTest extends ApiTestSupport {
       assertThat(status(alice.put("/api/me/def-staff/entry" + q("uid=bob,ou=people," + B), Map.of("values", Map.of("mobile", List.of("1")))))).isEqualTo(403);
       assertThat(status(alice.put("/api/me/def-whitepages/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("1")))))).isEqualTo(403);
     }
+
+    /** A definition over the people that finds a user's own entry by an attribute. */
+    private String matchingDefinition(Client admin, String slug, String entryAttribute, String userAttribute) throws Exception {
+      Map<String, Object> def = new HashMap<>(Map.of(
+          "name", "Match " + slug, "slug", slug, "formId", "form-person", "baseDn", "ou=people," + B, "scope", "one", "mode", "readwrite",
+          "everyoneCanRead", false, "listAttributes", List.of("cn"), "searchAttributes", List.of("cn")));
+      def.put("titleAttribute", "cn");
+      def.put("createContainers", List.of("ou=people," + B));
+      def.put("selfMatch", Map.of("type", "attribute", "entryAttribute", entryAttribute, "userAttribute", userAttribute));
+      MvcResult created = admin.post("/api/admin/definitions", def);
+      assertThat(status(created)).as(created.getResponse().getContentAsString()).isEqualTo(201);
+      return body(created).get("id").asString();
+    }
+
+    private JsonNode selfResult(Client user, String slug) throws Exception {
+      for (JsonNode r : body(user.get("/api/me/entries"))) {
+        if (r.get("definition").get("slug").asString().equals(slug)) return r;
+      }
+      throw new AssertionError("no self-service result for " + slug);
+    }
+
+    @Test
+    void attributeMatchingNeedsExactlyOneEntryAndAnAttributeUsersCannotEdit() throws Exception {
+      Client admin = login("admin");
+      List<String> created = new ArrayList<>();
+      try {
+        // A unique, read-only value: alice's own entry, editable as usual.
+        created.add(matchingDefinition(admin, "by-badge", "acmeBadgeNumber", "acmeBadgeNumber"));
+        Client alice = login("alice");
+        JsonNode badge = selfResult(alice, "by-badge");
+        assertThat(badge.get("entries")).hasSize(1);
+        assertThat(badge.get("entries").get(0).get("dn").asString()).isEqualTo(ALICE);
+        assertThat(status(alice.put("/api/me/" + created.get(0) + "/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("+1 555 1234"))))))
+            .isEqualTo(200);
+
+        // A value several entries share identifies nobody: no entry, and no edit.
+        created.add(matchingDefinition(admin, "by-dept", "departmentNumber", "departmentNumber"));
+        JsonNode dept = selfResult(alice, "by-dept");
+        assertThat(dept.get("entries")).isEmpty();
+        assertThat(dept.get("error").asString()).contains("more than one entry");
+        assertThat(status(alice.put("/api/me/" + created.get(1) + "/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("1"))))))
+            .isEqualTo(403);
+
+        // mail is self-editable on the Partners directory: whoever edits theirs could claim another entry.
+        created.add(matchingDefinition(admin, "by-mail", "mail", "mail"));
+        JsonNode mail = selfResult(alice, "by-mail");
+        assertThat(mail.get("entries")).isEmpty();
+        assertThat(mail.get("error").asString()).contains("Self service is turned off").contains("\"mail\"");
+        assertThat(status(alice.put("/api/me/" + created.get(2) + "/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("1"))))))
+            .isEqualTo(403);
+
+        // The entry side, self-editable in the definition's own form (telephoneNumber on the Employee form).
+        created.add(matchingDefinition(admin, "by-phone", "telephoneNumber", "acmeBadgeNumber"));
+        assertThat(selfResult(alice, "by-phone").get("error").asString()).contains("\"telephoneNumber\"");
+
+        // Matching by the user's DN may find several entries: those that name the user (devices).
+        assertThat(selfResult(alice, "devices").get("entries")).hasSize(2);
+
+        // The form linter says so before a form makes a match attribute self-editable.
+        MvcResult form = admin.post("/api/admin/forms", Map.of("name", "Contact card", "objectClasses", List.of("top", "inetOrgPerson"),
+            "rdnAttribute", "uid", "fields", List.of(field("1", "uid", "User", Map.of("required", true)), field("2", "cn", "Name", Map.of()),
+                field("3", "sn", "Surname", Map.of()), field("4", "acmeBadgeNumber", "Badge", Map.of("selfEditable", true)))));
+        assertThat(status(form)).as(form.getResponse().getContentAsString()).isEqualTo(201);
+        assertThat(texts(body(form).get("warnings"))).anySatisfy(w -> assertThat(w).contains("\"acmeBadgeNumber\"").contains("Match by-badge"));
+        admin.del("/api/admin/forms/" + body(form).get("form").get("id").asString());
+      } finally {
+        for (String id : created) admin.del("/api/admin/definitions/" + id);
+      }
+    }
   }
 
   @Nested

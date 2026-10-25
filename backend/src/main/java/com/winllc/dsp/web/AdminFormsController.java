@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -59,12 +60,20 @@ public class AdminFormsController {
 
   public record SaveResult(FormDefinition form, List<String> warnings) {}
 
-  private FormLinter.Lint lint(FormInput in) {
-    return FormLinter.lint(in.name(), in.objectClasses(), in.rdnAttribute(), in.fields(), schema.mergedIndex());
+  /** The form linter's findings, with the self-service matching it would turn off ({@code id}: null for a new form). */
+  private FormLinter.Lint lint(String id, FormInput in) {
+    var index = schema.mergedIndex();
+    FormLinter.Lint lint = FormLinter.lint(in.name(), in.objectClasses(), in.rdnAttribute(), in.fields(), index);
+    List<String> selfMatch = in.fields() == null ? List.of()
+        : com.winllc.dsp.schema.SelfMatchCheck.lintWarnings(id, in.fields(), store.snapshot().definitions, index);
+    if (selfMatch.isEmpty()) return lint;
+    List<String> warnings = new java.util.ArrayList<>(lint.warnings());
+    warnings.addAll(selfMatch);
+    return new FormLinter.Lint(lint.errors(), warnings);
   }
 
-  private FormLinter.Lint check(FormInput in) {
-    FormLinter.Lint lint = lint(in);
+  private FormLinter.Lint check(String id, FormInput in) {
+    FormLinter.Lint lint = lint(id, in);
     if (!lint.errors().isEmpty()) {
       Map<String, String> details = new LinkedHashMap<>();
       for (int i = 0; i < lint.errors().size(); i++) details.put("form." + i, lint.errors().get(i));
@@ -110,13 +119,13 @@ public class AdminFormsController {
   }
 
   @PostMapping("/lint")
-  public FormLinter.Lint lintOnly(@Valid @RequestBody FormInput in) {
-    return lint(in);
+  public FormLinter.Lint lintOnly(@Valid @RequestBody FormInput in, @RequestParam(required = false) String id) {
+    return lint(id, in);
   }
 
   @PostMapping
   public ResponseEntity<SaveResult> create(@Valid @RequestBody FormInput in) {
-    FormLinter.Lint lint = check(in);
+    FormLinter.Lint lint = check(null, in);
     String now = Instant.now().toString();
     FormDefinition form = new FormDefinition("form-" + UUID.randomUUID(), in.name().trim(), blank(in.description()), in.objectClasses(),
         in.rdnAttribute(), in.fields(), now, now);
@@ -127,7 +136,7 @@ public class AdminFormsController {
 
   @PutMapping("/{id}")
   public SaveResult update(@PathVariable String id, @Valid @RequestBody FormInput in) {
-    FormLinter.Lint lint = check(in);
+    FormLinter.Lint lint = check(id, in);
     AtomicReference<FormDefinition> previous = new AtomicReference<>();
     FormDefinition saved = store.update(d -> {
       for (int i = 0; i < d.forms.size(); i++) {

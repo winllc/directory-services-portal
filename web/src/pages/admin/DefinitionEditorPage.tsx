@@ -368,7 +368,11 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                 onChange={(v) => d.selfMatch.type === 'attribute' && setSelfMatch({ ...d.selfMatch, entryAttribute: v[0] ?? '' })}
               />
             </FormRow>
-            <FormRow label="equals the user’s" htmlFor="sm-user" hint='"dn" means the user’s distinguished name.'>
+            <FormRow
+              label="equals the user’s"
+              htmlFor="sm-user"
+              hint='"dn" means the user’s distinguished name. Any other attribute must match exactly one entry, and neither attribute may be self-editable in a self-service form.'
+            >
               <TagSelect
                 id="sm-user"
                 single

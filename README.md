@@ -125,6 +125,11 @@ What changes for an upgraded installation, and what to do (nothing, unless a lin
   `sub` or Entra ID's `oid` when you can ([how](#single-sign-on-openid-connect-saml-20)). New
   release-package `.env` files get `SSO_OIDC_USERNAME_CLAIM=sub`; the Helm chart's default stays
   `preferred_username`, because chart defaults apply to upgraded releases too: set it yourself.
+- Self service matching by an attribute (a definition's *self match*, other than by DN) is now
+  refused, with a message on *My profile*, while users can edit either attribute in self service,
+  and when the user's value matches more than one entry (matching by the user's `dn` may still find
+  several, e.g. devices). Check definitions that match by `mail` or similar: make the field not
+  self-editable, or match on an attribute users can't change. The form linter warns about it.
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -393,7 +398,13 @@ access wherever portal users should be able to edit.
   (only changed attributes are sent, and changing the naming attribute renames the entry) and
   deleted.
 - **My profile** shows every definition that can locate the user, and lets them edit their own
-  self-service fields.
+  self-service fields. A definition locates the user's entry by its DN, or by an attribute
+  (*entry attribute equals the user's attribute*). Matching by an attribute is refused while users
+  can edit either side of it in self service (the entry attribute in the definition's form, the
+  user attribute in any self-service form: otherwise a user who can edit `mail` could claim a
+  colleague's entry), and must find exactly one entry unless the user attribute is `dn` (entries
+  that name the user, such as their devices). The form linter warns before a form makes a match
+  attribute self-editable.
 - **Export** a directory's entries, or the current search's, as CSV or LDIF; **import** CSV or LDIF
   (checked first) where the user may write; export and change a group's members in bulk. See
   [Import and export](#import-and-export).
