@@ -117,6 +117,9 @@ What changes for an upgraded installation, and what to do (nothing, unless a lin
   `30`, per replica); in-memory sign-in requests are capped at `SSO_MAX_PENDING_REQUESTS` (default
   `10000`), and expired ones are removed every minute (was five). A refused start lands on the
   login page with "wait a minute".
+- A startup WARN when the API is evidently behind a proxy (`X509_SOURCE=header`, or a loopback
+  `SERVER_ADDRESS`) while `SERVER_FORWARD_HEADERS_STRATEGY` is `none`: the per-address limits
+  then see only the proxy's address. Set it to `framework` (every package and the chart do).
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -541,7 +544,12 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   `API_FAILED_TOKEN_LIMIT_PER_MINUTE` (30) unknown, expired or revoked tokens a minute gets 429
   instead of 401 for further bad ones. Only failures count, and a request with a valid token is
   never refused by it; the address is the client's as the web tier forwards it (the same one
-  sign-in throttling uses), so integrations behind one proxy don't lock each other out.
+  sign-in throttling uses), so integrations behind one proxy don't lock each other out. That needs
+  `SERVER_FORWARD_HEADERS_STRATEGY=framework` behind a proxy that overwrites `X-Forwarded-For`
+  (every package and the chart set it): with `none` every request seems to come from the proxy, and
+  one client's bad tokens make every caller behind it get 429. The API warns at startup when it
+  is evidently behind a proxy (`X509_SOURCE=header`, or `SERVER_ADDRESS` on loopback) with `none`.
+  Like the token limit, these counts are per replica.
 
 ### Webhooks
 *Administration → Integrations → Webhooks*

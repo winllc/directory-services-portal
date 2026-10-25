@@ -30,6 +30,7 @@ public class StartupChecks {
   @PostConstruct
   void check() {
     checkMemoryMode();
+    checkClientAddresses();
     if (!props.isMemoryMode()) {
       try {
         props.getLdap().resolvedBindPassword();
@@ -82,6 +83,26 @@ public class StartupChecks {
         + " SERVER_ADDRESS=127.0.0.1 to keep it to this host).";
     log.error(message);
     throw new IllegalStateException(message);
+  }
+
+  /**
+   * Per-address limits (failed API tokens, single sign-on starts, the sign-in lockout) key on the
+   * client address as Spring resolves it. Behind a proxy with SERVER_FORWARD_HEADERS_STRATEGY=none
+   * that is the proxy's address, so one noisy client makes every client behind it hit them. A proxy
+   * is certain when certificates arrive in a header (X509_SOURCE=header) or the API listens on
+   * loopback only; warned about rather than refused, so an existing installation still starts.
+   */
+  private void checkClientAddresses() {
+    String strategy = env.getProperty("server.forward-headers-strategy", "none").trim();
+    if (!strategy.isEmpty() && !strategy.equalsIgnoreCase("none")) return;
+    boolean headerCertificates = props.getX509().isEnabled() && "header".equalsIgnoreCase(props.getX509().getSource());
+    boolean loopback = isLoopback(env.getProperty("server.address", ""));
+    if (!headerCertificates && !loopback) return;
+    log.warn("The API is behind a proxy ({}) but SERVER_FORWARD_HEADERS_STRATEGY is none: every request seems to come from the"
+        + " proxy's address, so the per-address limits (API_FAILED_TOKEN_LIMIT_PER_MINUTE, SSO_START_LIMIT_PER_MINUTE, the"
+        + " sign-in lockout) count all clients behind it together, and the audit trail records the proxy as source.ip. Set"
+        + " SERVER_FORWARD_HEADERS_STRATEGY=framework, with a proxy that overwrites X-Forwarded-For (the packaged web tier does).",
+        headerCertificates ? "X509_SOURCE=header" : "SERVER_ADDRESS is a loopback address");
   }
 
   /** A literal loopback address or "localhost" (no name is looked up). */

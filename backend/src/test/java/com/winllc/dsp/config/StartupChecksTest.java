@@ -236,6 +236,24 @@ class StartupChecksTest {
   }
 
   @Test
+  void warnsWhenAProxyHidesClientAddresses(CapturedOutput output) {
+    String warning = "SERVER_FORWARD_HEADERS_STRATEGY is none";
+    // Certificates from a proxy header, or a loopback-only listener: a proxy is in front.
+    headerMode("X509_TRUSTED_CA_FILE=" + caFile, "X509_PROXY_SECRET=" + SECRET).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains(warning, "X509_SOURCE=header", "API_FAILED_TOKEN_LIMIT_PER_MINUTE");
+    int seen = output.toString().split(warning, -1).length;
+    runner.withPropertyValues("server.address=127.0.0.1").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen + 1);
+    assertThat(output).contains("SERVER_ADDRESS is a loopback address");
+    // No warning with the proxy's headers honoured, or without a known proxy.
+    headerMode("X509_TRUSTED_CA_FILE=" + caFile, "X509_PROXY_SECRET=" + SECRET, "SERVER_FORWARD_HEADERS_STRATEGY=framework")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    runner.withPropertyValues("server.address=127.0.0.1", "server.forward-headers-strategy=framework").run(ctx -> assertThat(ctx).hasNotFailed());
+    runner.run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen + 1);
+  }
+
+  @Test
   void leavesOtherModesAlone() {
     // Certificate sign-in off, or the API terminating mutual TLS itself (Tomcat checks the chain).
     runner.withPropertyValues("X509_ENABLED=false", "X509_SOURCE=header").run(ctx -> assertThat(ctx).hasNotFailed());
