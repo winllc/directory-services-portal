@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Installs the Directory Services Portal @VERSION@ from this package: verifies it, loads the
 # container images into Docker or Podman and writes .env (never overwriting an existing one).
-# By default the portal is published over plain HTTP on 0.0.0.0:8080 (every interface).
+# By default the portal is published over plain HTTP on 127.0.0.1:8080: this host only (e.g. for
+# a TLS proxy on it). To serve the network use --https, or choose plain HTTP with --bind 0.0.0.0.
 #
 #   ./install.sh [options]
 #     --http [PORT]      plain HTTP on PORT (default 8080; the default); with --https too it redirects to HTTPS
 #     --https [PORT]     HTTPS on PORT (default 8443), X.509 sign-in available; needs ./certs.
-#                        Without --http, only HTTPS is published
-#     --bind ADDRESS     host address to publish on (default 0.0.0.0; 127.0.0.1: this host only)
+#                        Without --http, only HTTPS is published. Marks the session cookie Secure
+#     --bind ADDRESS     host address to publish on (default 127.0.0.1, this host only; with --https
+#                        0.0.0.0). 0.0.0.0 publishes plain HTTP on every interface: only behind TLS
 #     --no-publish       publish nothing: route your own proxy on the compose network to web:8080
 #     --engine ENGINE    docker or podman (default: CONTAINER_ENGINE, else Docker if it runs, else Podman)
 #     --demo             built-in demo directory (no LDAP server), demo users and dashboards
@@ -38,7 +40,7 @@ while [ $# -gt 0 ]; do
     --start) start=1 ;;
     --skip-verify) verify="" ;;
     --no-license) no_license=1 ;; # used by upgrade.sh, which installs the license with the new images
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -118,7 +120,12 @@ else
       -e "s|@HTTPS_PORT_SUFFIX@|$suffix|" -e "s|@COOKIE_SECURE@|$secure|" \
       -e "s|@CONTAINER_ENGINE@|$ENGINE|" env.template > .env
   chmod 600 .env
-  [ -z "$bind" ] || setenv WEB_BIND "$bind"
+  # Where to publish: as asked; else every interface for HTTPS, and this host only for plain HTTP,
+  # which must not carry passwords and session cookies over the network unless chosen (--bind).
+  if [ -z "$bind" ]; then
+    if [ -n "$https_port" ]; then bind=0.0.0.0; else bind=127.0.0.1; fi
+  fi
+  setenv WEB_BIND "$bind"
   case "$demo" in
     memory)
       setenv DIRECTORY_MODE memory
@@ -208,9 +215,23 @@ case ":$files:" in
   *:docker-compose.no-publish.yml:*) echo "    Nothing is published on the host: route your reverse proxy, on the compose network, to web:8080." ;;
   *)
     case "$web_bind" in
-      127.*|::1|localhost) ;;
-      *) warn "Plain HTTP on $web_bind:${ports[0]:-8080} is reachable from the network. Put a TLS proxy in front, use --https, or set WEB_BIND=127.0.0.1 in .env to keep it to this host." ;;
+      127.*|::1|localhost)
+        echo "    Published on http://$web_bind:${ports[0]:-8080}, this host only. To serve the network: a TLS proxy on this"
+        echo "    host in front of it (then set ENS_COOKIE_SECURE=true in .env), or ./install.sh --force-env --https." ;;
+      *) warn "Plain HTTP on $web_bind:${ports[0]:-8080} is reachable from the network: passwords and session cookies cross it in clear. Put a TLS proxy in front (and set ENS_COOKIE_SECURE=true), use --https, or set WEB_BIND=127.0.0.1 in .env to keep it to this host." ;;
     esac ;;
+esac
+# The session cookie must be Secure whenever browsers use HTTPS (docker-compose.mtls.yml sets it).
+case ":$files:" in
+  *:docker-compose.mtls.yml:*) ;;
+  *)
+    cookie_secure="$(sed -n 's/^ENS_COOKIE_SECURE=//p' .env | tail -n 1 | tr -d '"' | tr '[:upper:]' '[:lower:]')"
+    if [ "$cookie_secure" != true ]; then
+      case "$web_bind" in
+        127.*|::1|localhost) ;;
+        *) warn "ENS_COOKIE_SECURE is not true in .env: behind a TLS proxy, set it to true so the session cookie is never sent over plain HTTP." ;;
+      esac
+    fi ;;
 esac
 # Rootless Podman can't bind ports below net.ipv4.ip_unprivileged_port_start (normally 1024).
 if [ "$ENGINE_ROOTLESS" = true ]; then

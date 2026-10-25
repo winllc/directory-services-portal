@@ -47,13 +47,15 @@ The installation guide covers both: <https://winllc.github.io/ens-apps-documenta
 ```bash
 # Docker or Podman host: verify the download (see Releases), then
 tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-portal-<version>
-./install.sh                     # HTTP on 0.0.0.0:8080; or --https 8443 (X.509 sign-in), --no-publish
+./install.sh                     # HTTP on 127.0.0.1:8080 (this host only); for the network --https 8443
+                                 # (Secure cookie, X.509 sign-in); --bind 0.0.0.0 (plain HTTP, behind TLS only), --no-publish
 vi .env                          # LDAP connection and administrators
 ./portal.sh up                   # also: status, logs, backup, restore, license, down
 
 # Linux host without containers (Java 21+, systemd, optionally nginx)
 tar xzf directory-services-portal-<version>-native.tar.gz && cd directory-services-portal-<version>-native
 sudo ./install.sh && sudo vi /etc/directory-services-portal/portal.env && sudo systemctl restart directory-services-portal
+# nginx serves 127.0.0.1:8080 (NGINX_LISTEN in portal.env): put TLS in front to serve the network
 
 # Kubernetes / OpenShift
 helm install dsp oci://ghcr.io/winllc/charts/directory-services-portal --version <version> \
@@ -104,6 +106,13 @@ What changes for an upgraded installation, and what to do (nothing, unless a lin
   `docker-compose.demo.yml` sets it. A bare jar or image run with the default mode must now set
   `DIRECTORY_MODE=ldap` (a real directory) or `DEMO_MODE=true`. New in `env.template`:
   `DEMO_MODE=false`.
+- **The release package publishes plain HTTP on this host only by default.** A new `.env` written
+  by `./install.sh` without `--bind` has `WEB_BIND=127.0.0.1` (with `--https`, `0.0.0.0` and
+  `ENS_COOKIE_SECURE=true`, as before); `--bind 0.0.0.0` publishes plain HTTP on every interface.
+  An existing `.env` is never rewritten: `upgrade.sh` keeps its `WEB_BIND` (none: every interface)
+  and `install.sh` warns when plain HTTP is published beyond the host or `ENS_COOKIE_SECURE` is not
+  `true`. The native package's nginx site now listens on `NGINX_LISTEN` from `portal.env`: new
+  installs `127.0.0.1:8080`; an upgraded `portal.env` without it keeps `8080` (every interface).
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 

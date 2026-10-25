@@ -9,7 +9,8 @@
 #   /var/lib/directory-services-portal        data (configuration, audit log, results)
 #   /var/lib/ens/directory-portal             ENS license, installation id (ENS_LICENSE_* in portal.env)
 #   systemd unit directory-services-portal    the API, on 127.0.0.1:3001
-#   nginx site directory-services-portal.conf serves the client on :8080 and proxies /api
+#   nginx site directory-services-portal.conf serves the client on NGINX_LISTEN (portal.env; new
+#     installs 127.0.0.1:8080, this host only) and proxies /api
 # Requires root, Java 21+ and systemd; nginx is configured if installed.
 #
 #   sudo ./install.sh [--start]
@@ -107,8 +108,25 @@ if command -v nginx >/dev/null; then
     *) sed -i "s|proxy_set_header X-Forwarded-Host \"\$http_host\";|proxy_set_header X-Forwarded-Host \"$public_host\";|" "$conf"
        say "nginx sends X-Forwarded-Host $public_host (PUBLIC_HOST)" ;;
   esac
+  # NGINX_LISTEN in portal.env: where the site listens (plain HTTP). New installs: this host only.
+  # A portal.env from an earlier release has none: every interface on 8080, as it was.
+  listen=$(sed -n 's/^NGINX_LISTEN=//p' "$ETC/portal.env" | tail -n 1 | tr -d '"'"'"' ')
+  listen_re='^(([0-9]{1,3}[.]){3}[0-9]{1,3}:|[[][0-9A-Fa-f:]+[]]:)?[0-9]{1,5}$'
+  if [ -z "$listen" ]; then
+    listen=8080
+    say "$ETC/portal.env has no NGINX_LISTEN (an earlier release): nginx keeps listening on every interface (8080)"
+  elif ! [[ "$listen" =~ $listen_re ]]; then
+    die "NGINX_LISTEN in $ETC/portal.env must be PORT, ADDRESS:PORT or [IPv6]:PORT (e.g. 127.0.0.1:8080)"
+  fi
+  sed -i "s|^\([[:space:]]*\)listen 8080;|\1listen $listen;|" "$conf"
   nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || say "Check the nginx configuration ($conf): nginx -t"
-  say "nginx serves the portal on port 8080 ($conf)"
+  say "nginx serves the portal on $listen ($conf)"
+  case "$listen" in
+    127.*|"[::1]":*) echo "    This host only: put a TLS proxy on this host in front of it and set ENS_COOKIE_SECURE=true in portal.env." ;;
+    *) echo "    Warning: plain HTTP on $listen is reachable from the network: passwords and session cookies cross it in clear."
+       echo "             Terminate TLS in nginx or a proxy in front (and set ENS_COOKIE_SECURE=true in portal.env), or set"
+       echo "             NGINX_LISTEN=127.0.0.1:8080 in portal.env and run install.sh again." ;;
+  esac
   if command -v getenforce >/dev/null && [ "$(getenforce)" = Enforcing ]; then
     echo "    SELinux: allow nginx to reach the API with: setsebool -P httpd_can_network_connect 1"
   fi

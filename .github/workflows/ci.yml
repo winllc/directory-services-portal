@@ -306,13 +306,19 @@ jobs:
             [ "$got" = "$want" ] || { echo "$engine, install.sh $*: published \"$got\", expected \"$want\""; exit 1; }
           }
           for engine in docker podman; do
-            check "$engine" "0.0.0.0:8080:8080"
-            check "$engine" "0.0.0.0:8081:8080" --http 8081
+            # Plain HTTP stays on this host unless --bind says otherwise; HTTPS serves the network.
+            check "$engine" "127.0.0.1:8080:8080"
+            grep -qx 'ENS_COOKIE_SECURE=false' .env
+            check "$engine" "127.0.0.1:8081:8080" --http 8081
             check "$engine" "127.0.0.1:8080:8080" --bind 127.0.0.1
+            check "$engine" "0.0.0.0:8080:8080" --bind 0.0.0.0
             check "$engine" "" --no-publish
             check "$engine" "0.0.0.0:8443:8443" --https
+            grep -qx 'ENS_COOKIE_SECURE=true' .env
+            check "$engine" "127.0.0.1:8443:8443" --https --bind 127.0.0.1
             check "$engine" "0.0.0.0:8080:8080 0.0.0.0:8443:8443" --https --http
-            check "$engine" "0.0.0.0:8080:8080" --demo
+            grep -qx 'ENS_COOKIE_SECURE=true' .env
+            check "$engine" "127.0.0.1:8080:8080" --demo
             grep -qx "CONTAINER_ENGINE=$engine" .env
             # The demo OpenLDAP overlay (install.sh --demo-openldap needs its image).
             for files in docker-compose.yml:docker-compose.openldap.yml docker-compose.no-publish.yml:docker-compose.openldap.yml; do
@@ -329,6 +335,15 @@ jobs:
             grep -qx 'CONTAINER_ENGINE=docker' .env
             grep -qx 'WEB_BIND=127.0.0.1' .env
           done
+          # An existing .env keeps what it published: install.sh never rewrites WEB_BIND, and an .env
+          # without the line (an earlier package) still publishes on every interface, as it did.
+          ./install.sh --force-env --bind 0.0.0.0
+          ./install.sh
+          grep -qx 'WEB_BIND=0.0.0.0' .env
+          sed -i '/^WEB_BIND=/d' .env
+          ./install.sh
+          if grep -q '^WEB_BIND=' .env; then echo "WEB_BIND added to an existing .env"; exit 1; fi
+          [ "$(config docker docker-compose.yml | python3 "$RUNNER_TEMP/ports.py")" = "0.0.0.0:8080:8080" ]
           # An .env from a --demo install before DEMO_MODE existed keeps starting: install.sh adds
           # DEMO_MODE=true to it (DIRECTORY_MODE=memory), and to no other .env.
           ./install.sh --force-env --demo
@@ -493,7 +508,7 @@ jobs:
           as_root ./portal.sh up || { sudo podman logs directory-services-portal_api_1 2>&1 | tail -n 100; exit 1; }
           curl -fsS http://127.0.0.1:18080/api/health
           curl -fsS -o /dev/null http://127.0.0.1:18080/
-          sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 0.0.0.0:18080'
+          sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 127.0.0.1:18080'
           as_root ./portal.sh backup "$RUNNER_TEMP/podman-backup.tar.gz"
           tar -tzf "$RUNNER_TEMP/podman-backup.tar.gz" > /dev/null
           as_root ./portal.sh down

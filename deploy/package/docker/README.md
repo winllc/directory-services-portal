@@ -10,7 +10,7 @@ or internet access are required. Built @BUILD_DATE@ from @GIT_REVISION@.
 | `portal.sh` | start, stop, status, logs, backup, restore and license install |
 | `engine.sh` | picks Docker or Podman and its compose command (used by the scripts above) |
 | `env.template` | every setting, documented (copied to `.env` by the installer) |
-| `docker-compose.yml` | the services, with the web tier published on the host (HTTP, `0.0.0.0:8080` by default) |
+| `docker-compose.yml` | the services, with the web tier published on the host (HTTP on `WEB_BIND:WEB_PORT`; `install.sh` writes `127.0.0.1:8080`) |
 | `docker-compose.no-publish.yml` | the same without the published port, for a proxy on the compose network |
 | `docker-compose.*.yml` | optional overlays for HTTPS/X.509 and a demo OpenLDAP |
 | `images/` | the container images (Red Hat UBI 9 based) |
@@ -30,22 +30,24 @@ Requirements: Linux with about 2 GB of disk and either
 ```bash
 tar xzf directory-services-portal-@VERSION@*.tar.gz
 cd directory-services-portal-@VERSION@
-./install.sh                      # plain HTTP on 0.0.0.0:8080 (every interface), e.g. behind your TLS proxy
+./install.sh                      # plain HTTP on 127.0.0.1:8080: this host only, e.g. for your TLS proxy on it
 vi .env                           # LDAP connection and administrators
 ./portal.sh up
 ```
 
-By default the web tier is published on **all interfaces** (`WEB_BIND=0.0.0.0`) on port 8080
-(`WEB_PORT`), over plain HTTP: anyone who can reach the host can reach the portal, and the
-installer says so. Put a TLS-terminating proxy in front, or use `--https`. To keep it to this
-host (e.g. for a proxy on the same host), install with `--bind 127.0.0.1`, or set
-`WEB_BIND=127.0.0.1` in `.env` and run `./portal.sh up`.
+By default plain HTTP is published on **this host only** (`WEB_BIND=127.0.0.1`), port 8080
+(`WEB_PORT`): plain HTTP carries directory passwords and the session cookie in clear, so it is not
+offered to the network unless you choose it. To serve the network, either put a TLS-terminating
+proxy on this host in front of it (and set `ENS_COOKIE_SECURE=true` in `.env`), or use `--https`
+(published on every interface, `ENS_COOKIE_SECURE=true`). `--bind 0.0.0.0` publishes plain HTTP on
+every interface, for a TLS proxy on another host; the installer warns about it.
 
 Other ways to publish it:
 
 ```bash
-./install.sh --http 8081          # plain HTTP on another port
-./install.sh --https 8443         # HTTPS only (+ optional X.509 sign-in); put certs in ./certs
+./install.sh --http 8081          # plain HTTP on another port (this host only)
+./install.sh --bind 0.0.0.0       # plain HTTP on every interface: only behind a TLS proxy elsewhere
+./install.sh --https 8443         # HTTPS only on every interface (+ optional X.509 sign-in); put certs in ./certs
 ./install.sh --https 8443 --http  # HTTPS, and HTTP on 8080 redirecting to it
 ./install.sh --no-publish         # nothing published: route a proxy on the compose network to web:8080
 ./install.sh --demo               # try it: built-in demo directory, users admin/alice/... password "password"
@@ -230,13 +232,16 @@ earlier, `docker-compose.yml` published nothing and `docker-compose.publish.yml`
 rewrites `COMPOSE_FILE` in `.env`: without `docker-compose.publish.yml` it uses
 `docker-compose.no-publish.yml` instead of `docker-compose.yml` (still nothing published),
 with it the file is dropped (the same `WEB_BIND:WEB_PORT`). `WEB_BIND`, `WEB_PORT` and
-`HTTPS_PORT` are not changed, so an installation bound to `127.0.0.1` stays local; only new
-installations get the `0.0.0.0` default. It also adds `CONTAINER_ENGINE=docker`, so the portal
+`HTTPS_PORT` are not changed: an installation keeps the address it published on (an `.env` without
+`WEB_BIND` keeps every interface), and only new installations get the `127.0.0.1` default for
+plain HTTP. `install.sh` warns when an `.env` publishes plain HTTP beyond this host, or does not
+set `ENS_COOKIE_SECURE=true` there. It also adds `CONTAINER_ENGINE=docker`, so the portal
 stays on Docker (`.env.bak-<time>` keeps the previous `.env`). Nothing needs doing by hand. To
 publish an upgraded installation that published nothing, set `COMPOSE_FILE` to start with
 `docker-compose.yml` and run `./portal.sh up`.
 
-Settings a release adds are not written into an existing `.env` (except `X509_PROXY_SECRET`):
+Settings a release adds are not written into an existing `.env` (except `X509_PROXY_SECRET`, and
+`DEMO_MODE=true` for an `.env` with `DIRECTORY_MODE=memory`, without which the demo would not start):
 they take their defaults, and older names keep working (`SESSION_TTL_MINUTES`, `COOKIE_SECURE`,
 `X509_CHECK_REVOCATION`). Compare your `.env` with this package's `env.template` to adopt them.
 An existing `.env` from an earlier package sets `ENS_X509_REVOCATION=off` and
