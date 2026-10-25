@@ -128,6 +128,21 @@ export function useUser(): SessionUser {
   return user;
 }
 
+/**
+ * Navigation state of the page signing in leads to: the page remembered on the way to the sign-in
+ * page (a link that was followed, or where the previous session ended, perhaps somebody else's).
+ */
+export const SIGNED_IN_STATE = { signedIn: true } as const;
+
+/**
+ * Whether this page was reached by signing in. A page the new account may not open is then not
+ * shown as refused: the remembered page simply does not apply to it, so it starts at the home page.
+ */
+export function useJustSignedIn(): boolean {
+  const location = useLocation();
+  return (location.state as { signedIn?: boolean } | null)?.signedIn === true;
+}
+
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -138,7 +153,9 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const justSignedIn = useJustSignedIn();
   if (!user?.isAdmin) {
+    if (justSignedIn) return <Navigate to="/" replace />;
     return (
       <div className="empty-state">
         <h2>Administrators only</h2>

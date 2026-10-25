@@ -1,13 +1,16 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { FolderX } from 'lucide-react';
 import { ApiError } from '../api/client';
-import { useUser } from '../lib/auth';
+import { useJustSignedIn, useUser } from '../lib/auth';
 import { EmptyState, ErrorAlert } from './ui';
 
 /** Shown when a /d/:slug directory can't be loaded (unknown slug, no access, or another error). */
 export function DirectoryNotFound({ slug, error }: { slug: string; error: unknown }) {
   const user = useUser();
+  const justSignedIn = useJustSignedIn();
   const status = error instanceof ApiError ? error.status : undefined;
+  // Signing in led to a directory this account may not open (remembered from before): start at home.
+  if (status === 403 && justSignedIn) return <Navigate to="/" replace />;
   if (status !== undefined && status !== 404 && status !== 403) {
     return (
       <div className="page">

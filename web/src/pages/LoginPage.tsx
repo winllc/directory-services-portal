@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Database, IdCard, KeyRound, LogIn } from 'lucide-react';
 import { useServerInfo } from '../api/hooks';
-import { useAuth } from '../lib/auth';
+import { SIGNED_IN_STATE, useAuth } from '../lib/auth';
 import { Alert, Button, FormRow, usePageTitle } from '../components/ui';
 import { ConsentNotice } from '../components/ConsentNotice';
 
@@ -22,7 +22,7 @@ export function LoginPage() {
   // A single sign-on the server refused comes back here as ?sso_error=<code>.
   const ssoError = ssoErrorMessage(new URLSearchParams(location.search).get('sso_error'));
 
-  if (user) return <Navigate to={from} replace />;
+  if (user) return <Navigate to={from} replace state={SIGNED_IN_STATE} />;
   // The notice-and-consent banner comes before any sign-in.
   if (consentRequired && !info.data) return <div className="page-loading"><span className="spinner" /></div>;
   if (consentRequired && info.data?.consent) {
@@ -38,7 +38,7 @@ export function LoginPage() {
     setBusy(kind);
     try {
       await fn();
-      navigate(from, { replace: true });
+      navigate(from, { replace: true, state: SIGNED_IN_STATE });
     } catch (err) {
       setError((err as Error).message);
     } finally {
