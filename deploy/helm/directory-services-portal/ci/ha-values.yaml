@@ -28,8 +28,8 @@ sso:
     clientSecret:
       existingSecret: dsp-oidc
       existingSecretKey: client-secret
-    usernameClaim: preferred_username
-    userFilter: (&(objectClass=user)(userPrincipalName={{value}}))
+    usernameClaim: oid
+    userFilter: (&(objectClass=user)(employeeID={{value}}))
     adminGroups: [22222222-2222-2222-2222-222222222222]
     label: Sign in with Microsoft
 server:

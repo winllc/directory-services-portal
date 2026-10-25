@@ -120,6 +120,11 @@ What changes for an upgraded installation, and what to do (nothing, unless a lin
 - A startup WARN when the API is evidently behind a proxy (`X509_SOURCE=header`, or a loopback
   `SERVER_ADDRESS`) while `SERVER_FORWARD_HEADERS_STRATEGY` is `none`: the per-address limits
   then see only the proxy's address. Set it to `framework` (every package and the chart do).
+- A startup WARN when `SSO_OIDC_USERNAME_CLAIM` is a claim the provider lets be changed
+  (`preferred_username`, the API's default, `email`, `upn`, ...). Sign-in is unchanged; move to
+  `sub` or Entra ID's `oid` when you can ([how](#single-sign-on-openid-connect-saml-20)). New
+  release-package `.env` files get `SSO_OIDC_USERNAME_CLAIM=sub`; the Helm chart's default stays
+  `preferred_username`, because chart defaults apply to upgraded releases too: set it yourself.
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -905,7 +910,7 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 | `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
 | `SSO_OIDC_CLIENT_SECRET_FILE` / `SSO_OIDC_CLIENT_SECRET` | | the client secret (prefer the file); empty: a public client |
 | `SSO_OIDC_SCOPES` | `openid profile email` | |
-| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` | the claim mapped through the user filter; `email` is used only when `email_verified` is true |
+| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` (the release package's `env.template`: `sub`) | the claim mapped through the user filter; `email` is used only when `email_verified` is true. The API warns at startup when it is one a provider lets be changed (`preferred_username`, `email`, `upn`, `unique_name`, `name`, ...) |
 | `SSO_OIDC_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{value}}))` | |
 | `SSO_OIDC_GROUPS_CLAIM` / `SSO_OIDC_ADMIN_GROUPS` | `groups` / empty | provider groups that grant administrator |
 | `SSO_OIDC_LABEL` | `Sign in with single sign-on` | button text |
@@ -922,7 +927,20 @@ attribute such as `employeeID` or `msDS-cloudExtensionAttribute1`), Okta's `sub`
 `ImmutableID`/objectGUID-derived claims, over `preferred_username`, UPNs or email addresses, which
 can be renamed or handed to someone else. And restrict who may use the application at the
 provider (Entra *Assignment required*, Okta assignments, AD FS access control policy), so that
-only intended users can get an assertion for the portal at all.
+only intended users can get an assertion for the portal at all. The API's default stays
+`preferred_username` so that upgraded installations keep signing in; new release-package `.env`
+files get `sub`, and the API logs a WARN at startup for a claim that can be changed.
+
+**Moving to an immutable claim.** 1. Put each user's immutable id into a directory attribute the
+service account can read (Entra ID `oid`: e.g. `employeeID` or `msDS-cloudExtensionAttribute1`
+through Entra Connect / Cloud Sync; Okta `sub`: an attribute written by your provisioning). 2. Check
+one user: the attribute holds exactly the value the provider sends (decode an ID token, or read
+the claim in the provider's token preview). 3. Set `SSO_OIDC_USERNAME_CLAIM` (`oid`, `sub`) and
+`SSO_OIDC_USER_FILTER` to search that attribute, e.g.
+`(&(objectClass=user)(employeeID={{value}}))`, and restart (Helm: `sso.oidc.usernameClaim` and
+`.userFilter`). Signed-in sessions are not affected; users without the attribute get
+`sso_error=no_account` until it is filled in, so fill it for everyone first. The startup WARN
+goes away.
 
 Endpoints to register with the provider (`<portal>` is `PORTAL_PUBLIC_URL`):
 

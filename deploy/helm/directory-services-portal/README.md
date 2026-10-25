@@ -303,8 +303,9 @@ sso:
     clientId: <application-id>
     clientSecret:
       existingSecret: dsp-oidc          # key: oidc-client-secret
-    usernameClaim: preferred_username
-    userFilter: (&(objectClass=user)(userPrincipalName={{value}}))
+    # Entra ID's immutable object id, synced into employeeID (preferred_username follows renames).
+    usernameClaim: oid
+    userFilter: (&(objectClass=user)(employeeID={{value}}))
     adminGroups: [<object id of the portal admins group>]
     label: Sign in with Microsoft
 server:
@@ -481,7 +482,7 @@ Existing claims (`existingClaim`) are never touched.
 | `sso.idpAdminSessionLifetime` | `1h` | sessions whose admin rights come only from provider groups end after this |
 | `sso.oidc.issuerUri` / `.clientId` | `""` | both set: OpenID Connect on (`SSO_OIDC_*`) |
 | `sso.oidc.clientSecret.value` / `.existingSecret` / `.existingSecretKey` | `""` / `""` / `oidc-client-secret` | mounted as a file; empty: public client (PKCE) |
-| `sso.oidc.scopes` / `.usernameClaim` / `.groupsClaim` | `openid profile email` / `preferred_username` / `groups` | |
+| `sso.oidc.scopes` / `.usernameClaim` / `.groupsClaim` | `openid profile email` / `preferred_username` / `groups` | set `usernameClaim` to an immutable claim held in the directory (`sub`, Entra ID `oid`): the API warns at startup about `preferred_username`, `email`, `upn` and others a provider lets be renamed. The default is kept for upgraded releases |
 | `sso.oidc.userFilter` | `(&(objectClass=inetOrgPerson)(uid={{value}}))` | maps the claim to one directory entry |
 | `sso.oidc.adminGroups` / `.label` | `[]` / `""` | provider groups that grant administrator; button text |
 | `sso.saml.metadataUrl` / `.metadataXml` | `""` | the IdP's metadata (one of them turns SAML on) |

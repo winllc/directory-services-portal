@@ -14,6 +14,9 @@ import org.springframework.core.env.Environment;
 @Configuration(proxyBeanMethods = false)
 public class StartupChecks {
   private static final Logger log = LoggerFactory.getLogger(StartupChecks.class);
+  /** OIDC claims a provider lets be changed or reassigned: a poor identity to map to a directory entry. */
+  static final java.util.Set<String> MUTABLE_OIDC_CLAIMS = java.util.Set.of("preferred_username", "email", "upn", "unique_name", "name",
+      "nickname", "given_name", "family_name", "username", "login");
   private final PortalProperties props;
   private final ObjectProvider<EnsProperties> ens;
   private final ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso;
@@ -53,7 +56,16 @@ public class StartupChecks {
     if (single != null) {
       List<String> ssoProblems = single.problems();
       if (!ssoProblems.isEmpty()) throw new IllegalStateException("Refusing to start: single sign-on: " + String.join("; ", ssoProblems));
-      if (single.getOidc().enabled()) log.info("Single sign-on: OpenID Connect ({}) offered", single.getOidc().getIssuerUri());
+      if (single.getOidc().enabled()) {
+        log.info("Single sign-on: OpenID Connect ({}) offered", single.getOidc().getIssuerUri());
+        String claim = single.getOidc().getUsernameClaim().trim();
+        if (MUTABLE_OIDC_CLAIMS.contains(claim.toLowerCase(java.util.Locale.ROOT))) {
+          log.warn("SSO_OIDC_USERNAME_CLAIM is {}, which the identity provider lets users or administrators change (a rename, an"
+              + " address handed to someone else): a renamed account can then match, and sign in as, another directory entry."
+              + " Map an immutable claim instead, held in a directory attribute: sub, or oid for Microsoft Entra ID (README, Single"
+              + " sign-on: moving to an immutable claim).", LogSafe.of(claim));
+        }
+      }
       if (single.getSaml().enabled()) log.info("Single sign-on: SAML 2.0 (metadata {}) offered", single.getSaml().getMetadataLocation());
     }
     EnsProperties shared = ens.getIfAvailable();

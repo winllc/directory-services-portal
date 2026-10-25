@@ -254,6 +254,28 @@ class StartupChecksTest {
   }
 
   @Test
+  void warnsAboutAMutableOidcIdentityClaim(CapturedOutput output) {
+    String[] oidc = {"SSO_OIDC_ISSUER_URI=https://idp.example", "SSO_OIDC_CLIENT_ID=portal"};
+    String warning = "which the identity provider lets users or administrators change";
+    // The default, preferred_username, still works (existing installations) but is warned about.
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("SSO_OIDC_USERNAME_CLAIM is preferred_username, " + warning);
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).withPropertyValues("SSO_OIDC_USERNAME_CLAIM=email")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("SSO_OIDC_USERNAME_CLAIM is email, " + warning);
+    int seen = output.toString().split(warning, -1).length;
+    for (String immutable : new String[] {"sub", "oid"}) {
+      runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).withPropertyValues("SSO_OIDC_USERNAME_CLAIM=" + immutable)
+          .run(ctx -> assertThat(ctx).hasNotFailed());
+    }
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen);
+  }
+
+  @Configuration(proxyBeanMethods = false)
+  @EnableConfigurationProperties(com.winllc.dsp.sso.SsoProperties.class)
+  static class Sso {}
+
+  @Test
   void leavesOtherModesAlone() {
     // Certificate sign-in off, or the API terminating mutual TLS itself (Tomcat checks the chain).
     runner.withPropertyValues("X509_ENABLED=false", "X509_SOURCE=header").run(ctx -> assertThat(ctx).hasNotFailed());
