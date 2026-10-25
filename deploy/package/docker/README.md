@@ -14,7 +14,7 @@ or internet access are required. Built @BUILD_DATE@ from @GIT_REVISION@.
 | `docker-compose.no-publish.yml` | the same without the published port, for a proxy on the compose network |
 | `docker-compose.*.yml` | optional overlays for HTTPS/X.509 and a demo OpenLDAP |
 | `images/` | the container images (Red Hat UBI 9 based) |
-| `license/` | optional drop-in for your ENS Solutions license (`license/license.lic`), copied in by the installer |
+| `license/` | optional drop-in for your ENS Solutions license (`license/license.lic`), installed by the installer |
 | `scripts/generate-dev-certs.sh` | throw-away certificates for trying HTTPS and X.509 sign-in |
 
 Requirements: Linux with about 2 GB of disk and either
@@ -140,12 +140,16 @@ Install it either way:
 - **License screen**: sign in as an administrator; you land on *Administration > License*
   (`/admin/license`). Upload the file there; it says why a file is refused (another product,
   bound to another installation, an older revision, not signed by ENS).
-- **Command line**: put it at `license/license.lic` before `./install.sh` (copied into the
-  license volume if that has no license yet), or install/replace it at any time with
-  `./portal.sh license /path/to/license.lic`.
+- **Command line**: put it at `license/license.lic` before `./install.sh`, or install it at any
+  time with `./portal.sh license /path/to/license.lic`. Either sets `ENS_LICENSE` in `.env`, which
+  the API installs as it starts when no usable license is installed yet, or when it is a newer
+  revision of the installed one. `./portal.sh license` also applies it at once: without the shared
+  database it writes the file into the license volume (replacing any license there); with it, it
+  restarts the API. With the database a different license already installed is kept: upload the
+  new one on the license screen.
 
 The license lives in the `ens-license` volume (`/var/lib/ens/directory-portal` in the api
-container), together with this **installation id** (shown on the license screen; you enter it on
+container), or in the database with `DSP_DATABASE_URL`, together with this **installation id** (shown on the license screen; you enter it on
 the ENS portal to bind a license to this installation) and the license revisions seen. Upgrades
 keep the volume; removing the volumes (`docker compose down -v`, `podman volume rm`) would delete it, and a new installation id would mean
 re-binding the license. A renewed license takes effect as soon as it is installed.
@@ -215,7 +219,8 @@ loads its images, adds settings new in this release (`X509_PROXY_SECRET`, genera
 the portal data to `backups/`, points `.env` at the new images (keeping a `.env.bak-<time>`) and
 restarts with `./portal.sh up`. The data volume and the
 license volume (`ens-license`: installed license and installation id) are reused; a
-`license/license.lic` is copied in only if the volume has no license yet.
+`license/license.lic` is set as `ENS_LICENSE` in `.env`, installed unless a different usable license,
+or a newer revision of it, is installed already.
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
 backup.
 

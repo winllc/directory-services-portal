@@ -84,7 +84,8 @@ mkdir -p license
 compose config -q || die "The compose configuration is invalid; check .env."
 say "Settings now use $API_IMAGE and $WEB_IMAGE"
 
-# The license volume is kept as is. A license.lic here is copied in only if it has none yet.
+# The license volume is kept as is. A license.lic here goes into .env as ENS_LICENSE, which the API
+# installs as it starts unless a different usable license, or a newer revision of it, is installed.
 if [ -f license/license.lic ]; then
   ./portal.sh license --if-missing license/license.lic
 fi

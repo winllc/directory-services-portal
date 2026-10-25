@@ -256,9 +256,12 @@ declares `VOLUME /var/lib/ens` (owned by the runtime user, group 0 writable for 
 compose files mount the named volume `ens-license` at `/var/lib/ens/directory-portal`. The API
 logs `License: ...` with the state and installation id at startup.
 
-In the release package the license lives in the `ens-license` volume (`./portal.sh license
-<file>` or the license screen); with the Helm chart it is on the license PVC
-(`persistence.license`, optionally seeded from `license.existingSecret` / `license.file`).
+In the release package the license lives in the `ens-license` volume, or in the database with
+`DSP_DATABASE_URL`; install it with `./portal.sh license <file>` (which sets `ENS_LICENSE` in `.env`)
+or on the license screen. With the Helm chart it is on the license PVC or in the database
+(`persistence.license`; `license.existingSecret` / `license.file` are passed as `ENS_LICENSE`).
+With the database the license volume is read only on the first start, so a file copied into it
+afterwards is not read: use `ENS_LICENSE` or the license screen.
 
 The perpetual-maintenance check uses the build time from Spring Boot's build-info
 (`spring-boot-maven-plugin` `build-info` goal) as the release date. Tests trust the published ENS

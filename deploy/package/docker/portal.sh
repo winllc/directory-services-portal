@@ -10,8 +10,10 @@
 #   ./portal.sh backup [file]      archive the portal data (configuration, audit log, results)
 #   ./portal.sh restore <file>     replace the portal data with a backup (stops the API meanwhile)
 #   ./portal.sh license [--if-missing] <file>
-#                                  install an ENS license file into the ens-license volume (the
-#                                  license screen does the same); --if-missing keeps an installed one
+#                                  install an ENS license file: sets ENS_LICENSE in .env, which the
+#                                  API installs as it starts (and, without the shared database,
+#                                  writes it into the ens-license volume at once); --if-missing only
+#                                  sets .env, for install.sh and upgrade.sh
 #   ./portal.sh version
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -88,6 +90,11 @@ case "$cmd" in
     say "Restored $file"
     ;;
   license)
+    # The license goes into .env as ENS_LICENSE (the file, base64), which the API installs on its
+    # first license check after it starts: when no usable license is installed yet, or when it is a
+    # newer revision of the installed one. That works with or without the shared database. With the
+    # database (DSP_DATABASE_URL) the license is kept there and the ens-license volume is read only
+    # on the first start, so a file copied into the volume afterwards would never be read.
     mode=always
     if [ "${1:-}" = --if-missing ]; then mode=if-missing; shift; fi
     file="${1:-}"; [ -f "$file" ] || die "Usage: ./portal.sh license [--if-missing] <license.lic>"
@@ -96,17 +103,42 @@ case "$cmd" in
       printf '\033[33mWarning:\033[0m %s is not an ENS license file (an old-format license?); not installed.\n' "$file" >&2
       exit 0
     fi
-    # Written by the api image's own user into the volume, so the portal can replace it later.
-    # shellcheck disable=SC2016 # expanded by the container's shell
-    result="$(dc run --rm --no-deps -T --entrypoint sh api -c '
-      f=/var/lib/ens/directory-portal/license.lic
-      if [ "$1" = if-missing ] && [ -s "$f" ]; then echo kept; exit 0; fi
-      cat > "$f.new" && mv -f "$f.new" "$f" && echo installed' sh "$mode" < "$file")"
-    case "$result" in
-      *installed) say "Installed $file into the portal's license volume (ens-license). Check it under Administration > License." ;;
-      *kept) say "A license is already installed in the license volume; kept it (replace it with ./portal.sh license $file)" ;;
-      *) die "Could not install $file" ;;
-    esac
+    value="$(base64 < "$file" | tr -d '\n')"
+    if [ "$(env_value ENS_LICENSE)" = "$value" ]; then
+      say "$file is already ENS_LICENSE in .env"
+    else
+      # rewritten in place (cat >), so .env keeps its owner and mode; awk -v is safe for base64
+      tmp="$(mktemp .env.XXXXXX)"
+      awk -v v="$value" '
+        /^ENS_LICENSE=/ { if (!done) print "ENS_LICENSE=" v; done = 1; next }
+        { print }
+        END { if (!done) { print ""; print "# The ENS license (base64), set by ./portal.sh license."; print "ENS_LICENSE=" v } }
+      ' .env > "$tmp"
+      cat "$tmp" > .env
+      rm -f "$tmp"
+      say "Set ENS_LICENSE in .env from $file"
+    fi
+    # install.sh and upgrade.sh (--if-missing) start the API themselves, or say how
+    [ "$mode" = if-missing ] && exit 0
+    if [ -z "$(env_value DSP_DATABASE_URL)" ]; then
+      # Without the database the license is a file in the volume, read again when it changes: also
+      # write it there, so it takes effect now, and replaces a different license already installed.
+      # Written by the api image's own user, so the portal can replace it later.
+      # shellcheck disable=SC2016 # expanded by the container's shell
+      dc run --rm --no-deps -T --entrypoint sh api -c '
+        f=/var/lib/ens/directory-portal/license.lic
+        cat > "$f.new" && mv -f "$f.new" "$f"' < "$file" || die "Could not install $file"
+      say "Installed $file. Check it under Administration > License."
+    elif [ -n "$(engine_service_container api)" ]; then
+      say "Restarting the API with it"
+      dc up -d api
+      wait_healthy
+      say "The API installs it unless a different usable license, or a newer revision of it, is installed"
+      say "already. Check it under Administration > License; upload a different license there."
+    else
+      say "The API installs it when it starts (./portal.sh up), unless a different usable license, or a newer"
+      say "revision of it, is installed already."
+    fi
     ;;
   version) echo "$VERSION" ;;
   *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
