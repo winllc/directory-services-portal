@@ -164,8 +164,8 @@ mkdir -p license
 compose config -q || die "The compose configuration is invalid; check .env."
 
 # --- ENS license -----------------------------------------------------------------
-# It lives in the ens-license volume, written by the license screen. A license.lic placed next to
-# this script is copied in, unless the volume already has one.
+# A license.lic placed next to this script goes into .env as ENS_LICENSE, which the API installs as it
+# starts unless a different usable license, or a newer revision of it, is installed already.
 if [ -f license/license.lic ] && [ -z "$no_license" ]; then
   ./portal.sh license --if-missing license/license.lic
 fi

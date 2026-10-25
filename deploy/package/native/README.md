@@ -37,8 +37,11 @@ sudo systemctl restart directory-services-portal
   shows the installation id to bind a license to; or copy it in with
   `sudo install -m 640 -o dsp -g dsp acme.lic /var/lib/ens/directory-portal/license.lic`.
   The paths are `ENS_LICENSE_FILE` / `ENS_LICENSE_STATE_DIR` in `portal.env` (the unit sets the
-  same defaults); the directory must stay writable by `dsp`. The startup log line `License: ...`
-  says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
+  same defaults); the directory must stay writable by `dsp`. With the shared database
+  (`DSP_DATABASE_URL` in `portal.env`) the license is kept in the database and that file is read
+  only on the first start: afterwards upload the license, or set `ENS_LICENSE=$(base64 -w0 acme.lic)`
+  in `portal.env` and restart, which installs it unless a different usable license, or a newer
+  revision of it, is installed already. The startup log line `License: ...` says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
   `ENS_COOKIE_SECURE=true`. The site sends the ENS security headers (CSP and others); HSTS when a
   proxy in front sends `X-Forwarded-Proto: https`; in your own `listen 443 ssl` server add

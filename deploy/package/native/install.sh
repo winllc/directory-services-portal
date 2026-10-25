@@ -129,6 +129,7 @@ echo "    $ETC/ldap-bind-password (printf '%s' 'the-password' > $ETC/ldap-bind-p
 if [ ! -f "$LICENSE_DIR/license.lic" ]; then
   echo "    License: sign in as an administrator and upload your ENS license under Administration > License"
   echo "             (/admin/license), or: install -m 640 -o dsp -g dsp <your.lic> $LICENSE_DIR/license.lic"
+  echo "             (with DSP_DATABASE_URL, before the first start only; then set ENS_LICENSE in portal.env)"
   echo "             Until then only sign-in and the license screen work."
 fi
 [ -f "$ETC/license.lic" ] && echo "    Note: $ETC/license.lic (the old license format) is no longer used; ENS portal licenses replace it."
