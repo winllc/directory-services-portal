@@ -28,6 +28,8 @@ function server(who: typeof alice) {
       if (path === '/api/info') return json({ mode: 'memory', connected: true, version: '1' });
       if (path === '/api/license') return json({ mode: 'FULL', state: 'VALID', message: '', evaluation: false, features });
       if (path.startsWith('/api/definitions/staff')) {
+        // As over the network: the answer comes after the page has settled.
+        await new Promise((r) => setTimeout(r, 400));
         return user?.isAdmin ? json({ error: 'Not found' }, 404) : json({ error: 'You do not have access to this directory' }, 403);
       }
       return json([]);
