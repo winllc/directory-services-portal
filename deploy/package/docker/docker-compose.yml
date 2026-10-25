@@ -2,7 +2,7 @@
 # Settings live in .env (created by ./install.sh). Start with ./portal.sh up
 #
 #   web  nginx serving the client on port 8080 and proxying /api to the api service; published
-#        on the host as WEB_BIND:WEB_PORT (default 0.0.0.0:8080, plain HTTP)
+#        on the host as WEB_BIND:WEB_PORT (plain HTTP; install.sh writes 127.0.0.1:8080, this host only)
 #   api  the Spring Boot API (never published on the host)
 #
 # For Docker Compose v2 and podman-compose 1.1+. docker-compose.mtls.yml adds HTTPS (HTTPS_PORT).
@@ -79,8 +79,8 @@ services:
       MAX_BODY_SIZE: ${MAX_BODY_SIZE:-5m}
     expose:
       - "8080"
-    # >>> published port: plain HTTP on the host, on every interface unless WEB_BIND in .env says
-    # otherwise. Put a TLS proxy in front, or use docker-compose.mtls.yml. Rootless Podman needs
+    # >>> published port: plain HTTP on the host, on WEB_BIND from .env (every interface for an .env
+    # without it, from an earlier package). Put a TLS proxy in front, or use docker-compose.mtls.yml. Rootless Podman needs
     # WEB_PORT >= 1024. (docker-compose.no-publish.yml is this file without these lines.)
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"

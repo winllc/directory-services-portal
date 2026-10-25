@@ -267,8 +267,11 @@ sso:
       existingSecret: ""
       existingSecretKey: oidc-client-secret
     scopes: openid profile email
-    # Prefer a claim that never changes and is held in the directory (see the README); "email" is
-    # accepted only with email_verified true.
+    # Prefer a claim that never changes and is held in the directory (see the README): "sub", or
+    # "oid" for Microsoft Entra ID; the API warns at startup about preferred_username, email, upn
+    # and other claims a provider lets be renamed. The default stays preferred_username so that an
+    # upgraded release keeps mapping users as before; set it explicitly on a new install.
+    # "email" is accepted only with email_verified true.
     usernameClaim: preferred_username
     userFilter: (&(objectClass=inetOrgPerson)(uid={{value}}))
     groupsClaim: groups

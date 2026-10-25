@@ -47,13 +47,15 @@ The installation guide covers both: <https://winllc.github.io/ens-apps-documenta
 ```bash
 # Docker or Podman host: verify the download (see Releases), then
 tar xzf directory-services-portal-<version>.tar.gz && cd directory-services-portal-<version>
-./install.sh                     # HTTP on 0.0.0.0:8080; or --https 8443 (X.509 sign-in), --no-publish
+./install.sh                     # HTTP on 127.0.0.1:8080 (this host only); for the network --https 8443
+                                 # (Secure cookie, X.509 sign-in); --bind 0.0.0.0 (plain HTTP, behind TLS only), --no-publish
 vi .env                          # LDAP connection and administrators
 ./portal.sh up                   # also: status, logs, backup, restore, license, down
 
 # Linux host without containers (Java 21+, systemd, optionally nginx)
 tar xzf directory-services-portal-<version>-native.tar.gz && cd directory-services-portal-<version>-native
 sudo ./install.sh && sudo vi /etc/directory-services-portal/portal.env && sudo systemctl restart directory-services-portal
+# nginx serves 127.0.0.1:8080 (NGINX_LISTEN in portal.env): put TLS in front to serve the network
 
 # Kubernetes / OpenShift
 helm install dsp oci://ghcr.io/winllc/charts/directory-services-portal --version <version> \
@@ -91,6 +93,45 @@ one replica and the `Recreate` strategy). What is new and optional:
 - The release bundle's `env.template` lists the new variables; `upgrade.sh` keeps your `.env`, so
   add them from the template only if you use them. The native package reads the same variables
   from `portal.env`.
+
+### Upgrade notes: readiness review fixes (October 2026)
+
+What changes for an upgraded installation, and what to do (nothing, unless a line says so):
+
+- **`DIRECTORY_MODE=memory` (the built-in demo directory) needs `DEMO_MODE=true`**, or an API that
+  listens on loopback only (`SERVER_ADDRESS=127.0.0.1`, as the native package does); otherwise it
+  refuses to start (ERROR in the log). The release package's `install.sh` (also run by
+  `upgrade.sh`) adds `DEMO_MODE=true` to an `.env` that sets `DIRECTORY_MODE=memory` and has no
+  `DEMO_MODE` line; the Helm chart sets it when `directory.mode` is `memory`;
+  `docker-compose.demo.yml` sets it. A bare jar or image run with the default mode must now set
+  `DIRECTORY_MODE=ldap` (a real directory) or `DEMO_MODE=true`. New in `env.template`:
+  `DEMO_MODE=false`.
+- **The release package publishes plain HTTP on this host only by default.** A new `.env` written
+  by `./install.sh` without `--bind` has `WEB_BIND=127.0.0.1` (with `--https`, `0.0.0.0` and
+  `ENS_COOKIE_SECURE=true`, as before); `--bind 0.0.0.0` publishes plain HTTP on every interface.
+  An existing `.env` is never rewritten: `upgrade.sh` keeps its `WEB_BIND` (none: every interface)
+  and `install.sh` warns when plain HTTP is published beyond the host or `ENS_COOKIE_SECURE` is not
+  `true`. The native package's nginx site now listens on `NGINX_LISTEN` from `portal.env`: new
+  installs `127.0.0.1:8080`; an upgraded `portal.env` without it keeps `8080` (every interface).
+- Single sign-on starts are limited per client address: `SSO_START_LIMIT_PER_MINUTE` (default
+  `30`, per replica); in-memory sign-in requests are capped at `SSO_MAX_PENDING_REQUESTS` (default
+  `10000`), and expired ones are removed every minute (was five). A refused start lands on the
+  login page with "wait a minute".
+- A startup WARN when the API is evidently behind a proxy (`X509_SOURCE=header`, or a loopback
+  `SERVER_ADDRESS`) while `SERVER_FORWARD_HEADERS_STRATEGY` is `none`: the per-address limits
+  then see only the proxy's address. Set it to `framework` (every package and the chart do).
+- A startup WARN when `SSO_OIDC_USERNAME_CLAIM` is a claim the provider lets be changed
+  (`preferred_username`, the API's default, `email`, `upn`, ...). Sign-in is unchanged; move to
+  `sub` or Entra ID's `oid` when you can ([how](#single-sign-on-openid-connect-saml-20)). New
+  release-package `.env` files get `SSO_OIDC_USERNAME_CLAIM=sub`; the Helm chart's default stays
+  `preferred_username`, because chart defaults apply to upgraded releases too: set it yourself.
+- Self service matching by an attribute (a definition's *self match*, other than by DN) is now
+  refused, with a message on *My profile*, while users can edit either attribute in self service,
+  and when the user's value matches more than one entry (matching by the user's `dn` may still find
+  several, e.g. devices). Check definitions that match by `mail` or similar: make the field not
+  self-editable, or match on an attribute users can't change. The form linter warns about it.
+- Webhooks: when the shared database is unreachable as an entry changes, its events are kept in
+  memory and queued once it is back, instead of being logged and lost. Nothing to configure.
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -272,7 +313,11 @@ licenses with it); the library's own tests run against the products-page fixture
 ## Connecting to a real directory
 
 Set these in `.env` (release package), `portal.env` (native package) or the chart's values (Helm; see
-its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/resources/application.yml`:
+its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/resources/application.yml`.
+`DIRECTORY_MODE` defaults to `memory`, the built-in demo directory, whose administrator password is
+public: the API **refuses to start** in that mode unless `DEMO_MODE=true` (every demo package and
+compose file sets it) or it listens on a loopback address only (`SERVER_ADDRESS=127.0.0.1`), and logs
+why at ERROR.
 
 | variable | meaning |
 |---|---|
@@ -355,7 +400,13 @@ access wherever portal users should be able to edit.
   (only changed attributes are sent, and changing the naming attribute renames the entry) and
   deleted.
 - **My profile** shows every definition that can locate the user, and lets them edit their own
-  self-service fields.
+  self-service fields. A definition locates the user's entry by its DN, or by an attribute
+  (*entry attribute equals the user's attribute*). Matching by an attribute is refused while users
+  can edit either side of it in self service (the entry attribute in the definition's form, the
+  user attribute in any self-service form: otherwise a user who can edit `mail` could claim a
+  colleague's entry), and must find exactly one entry unless the user attribute is `dn` (entries
+  that name the user, such as their devices). The form linter warns before a form makes a match
+  attribute self-editable.
 - **Export** a directory's entries, or the current search's, as CSV or LDIF; **import** CSV or LDIF
   (checked first) where the user may write; export and change a group's members in bulk. See
   [Import and export](#import-and-export).
@@ -511,7 +562,12 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   `API_FAILED_TOKEN_LIMIT_PER_MINUTE` (30) unknown, expired or revoked tokens a minute gets 429
   instead of 401 for further bad ones. Only failures count, and a request with a valid token is
   never refused by it; the address is the client's as the web tier forwards it (the same one
-  sign-in throttling uses), so integrations behind one proxy don't lock each other out.
+  sign-in throttling uses), so integrations behind one proxy don't lock each other out. That needs
+  `SERVER_FORWARD_HEADERS_STRATEGY=framework` behind a proxy that overwrites `X-Forwarded-For`
+  (every package and the chart set it): with `none` every request seems to come from the proxy, and
+  one client's bad tokens make every caller behind it get 429. The API warns at startup when it
+  is evidently behind a proxy (`X509_SOURCE=header`, or `SERVER_ADDRESS` on loopback) with `none`.
+  Like the token limit, these counts are per replica.
 
 ### Webhooks
 *Administration → Integrations → Webhooks*
@@ -568,7 +624,10 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   survive a restart; the outbox file is written every couple of seconds, not per change, so a
   crash loses at most the deliveries queued in those seconds, and it holds at most 10,000 waiting
   deliveries: beyond that new ones are dropped, logged and audited as `webhook.delivery-dropped`); with the shared database, the `webhooks` document and the
-  `dsp_webhook_delivery` table, where each due delivery is sent by one replica. Signing secrets
+  `dsp_webhook_delivery` table, where each due delivery is sent by one replica. If the database
+  can't be reached when an entry changes, the change's events are kept in that replica's memory
+  (up to 10,000 changes, in order) and queued by the next delivery run that reaches it, with their
+  original `createdAt`; only a replica stopping during the outage loses them. Signing secrets
   are stored as they are (they sign every request), readable only by the portal's user; they are
   never returned by the API again, logged or audited. Changes to webhooks are audited
   (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.
@@ -861,11 +920,13 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 |---|---|---|
 | `PORTAL_PUBLIC_URL` | | the address users open, e.g. `https://portal.example.com`: redirect URI, SAML entity id and ACS are built from it, never from the request's `Host`. **Required for SAML** (unless `SSO_SAML_ENTITY_ID` is set), recommended for OIDC. Give the web tier `PUBLIC_HOST` (its host[:port]) too |
 | `SSO_IDP_ADMIN_SESSION_LIFETIME` | `1h` | a session whose administrator rights come only from the provider's groups ends this long after sign-in (the provider is asked again then) |
+| `SSO_START_LIMIT_PER_MINUTE` | `30` | sign-ons one client address may start per minute (per API replica; the address as resolved with `SERVER_FORWARD_HEADERS_STRATEGY`). Each start keeps a sign-in request for 10 minutes; more are sent back to `/login?sso_error=busy` with `Retry-After` |
+| `SSO_MAX_PENDING_REQUESTS` | `10000` | sign-in requests in flight kept in memory at most (without the shared database, where expired rows are deleted every minute); when full, new starts get `sso_error=busy` |
 | `SSO_OIDC_ISSUER_URI` | | the issuer; `https://` (http only for localhost). Its discovery document must name the same issuer |
 | `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
 | `SSO_OIDC_CLIENT_SECRET_FILE` / `SSO_OIDC_CLIENT_SECRET` | | the client secret (prefer the file); empty: a public client |
 | `SSO_OIDC_SCOPES` | `openid profile email` | |
-| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` | the claim mapped through the user filter; `email` is used only when `email_verified` is true |
+| `SSO_OIDC_USERNAME_CLAIM` | `preferred_username` (the release package's `env.template`: `sub`) | the claim mapped through the user filter; `email` is used only when `email_verified` is true. The API warns at startup when it is one a provider lets be changed (`preferred_username`, `email`, `upn`, `unique_name`, `name`, ...) |
 | `SSO_OIDC_USER_FILTER` | `(&(objectClass=inetOrgPerson)(uid={{value}}))` | |
 | `SSO_OIDC_GROUPS_CLAIM` / `SSO_OIDC_ADMIN_GROUPS` | `groups` / empty | provider groups that grant administrator |
 | `SSO_OIDC_LABEL` | `Sign in with single sign-on` | button text |
@@ -882,7 +943,20 @@ attribute such as `employeeID` or `msDS-cloudExtensionAttribute1`), Okta's `sub`
 `ImmutableID`/objectGUID-derived claims, over `preferred_username`, UPNs or email addresses, which
 can be renamed or handed to someone else. And restrict who may use the application at the
 provider (Entra *Assignment required*, Okta assignments, AD FS access control policy), so that
-only intended users can get an assertion for the portal at all.
+only intended users can get an assertion for the portal at all. The API's default stays
+`preferred_username` so that upgraded installations keep signing in; new release-package `.env`
+files get `sub`, and the API logs a WARN at startup for a claim that can be changed.
+
+**Moving to an immutable claim.** 1. Put each user's immutable id into a directory attribute the
+service account can read (Entra ID `oid`: e.g. `employeeID` or `msDS-cloudExtensionAttribute1`
+through Entra Connect / Cloud Sync; Okta `sub`: an attribute written by your provisioning). 2. Check
+one user: the attribute holds exactly the value the provider sends (decode an ID token, or read
+the claim in the provider's token preview). 3. Set `SSO_OIDC_USERNAME_CLAIM` (`oid`, `sub`) and
+`SSO_OIDC_USER_FILTER` to search that attribute, e.g.
+`(&(objectClass=user)(employeeID={{value}}))`, and restart (Helm: `sso.oidc.usernameClaim` and
+`.userFilter`). Signed-in sessions are not affected; users without the attribute get
+`sso_error=no_account` until it is filled in, so fill it for everyone first. The startup WARN
+goes away.
 
 Endpoints to register with the provider (`<portal>` is `PORTAL_PUBLIC_URL`):
 
@@ -1231,7 +1305,8 @@ npm install
 npm run dev            # API on :3001, web client on http://localhost:5173 (proxies /api)
 ```
 
-In demo mode (the default, `DIRECTORY_MODE=memory`) the backend starts an **embedded LDAP server**
+In demo mode (the default, `DIRECTORY_MODE=memory`; `npm run dev` and `npm start` set `DEMO_MODE=true`,
+without which the API refuses that mode unless it listens on loopback only) the backend starts an **embedded LDAP server**
 (UnboundID in-memory directory) on a loopback port. The portal talks to it over the LDAP protocol,
 exactly as it would to a production server. The demo server loads the standard schema, a
 non-standard `acme*` schema (`acmePerson`, `acmeDevice`, `acmePartner`), about ten people, groups
@@ -1260,7 +1335,7 @@ other paths. `web/nginx/templates/default.conf.template` is a ready-made example
 
 `docker-compose.demo.yml` runs the same demo in containers, built from this repository: `web`
 (the visitor's entry point, nginx on port 8080) and `api` in memory mode (`DIRECTORY_MODE=memory`,
-`SEED_DEMO_CONFIG=true`), plus the one-shot `license-init`. There is no OpenLDAP container: memory
+`DEMO_MODE=true`, `SEED_DEMO_CONFIG=true`), plus the one-shot `license-init`. There is no OpenLDAP container: memory
 mode runs the embedded demo directory inside the API, with the users in the table above.
 
 ```bash

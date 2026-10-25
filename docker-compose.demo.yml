@@ -95,6 +95,9 @@ services:
     environment:
       # The embedded demo directory, with its own admin user, admin group and sign-in hint.
       DIRECTORY_MODE: memory
+      # Says this is a demo: the API refuses the embedded directory (public credentials) without it
+      # unless it listens on loopback only.
+      DEMO_MODE: "true"
       # Example forms, directories and permissions matching the demo organisation (memory mode's
       # default, stated so the demo does not depend on it).
       SEED_DEMO_CONFIG: "true"

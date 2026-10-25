@@ -11,6 +11,12 @@ sudo vi /etc/directory-services-portal/portal.env     # LDAP connection, adminis
 sudo systemctl restart directory-services-portal
 ```
 
+The packaged nginx site serves plain HTTP on **127.0.0.1:8080, this host only** (`NGINX_LISTEN` in
+`portal.env`): plain HTTP carries directory passwords and the session cookie in clear. Serve the
+network over HTTPS (see below). `NGINX_LISTEN=8080` listens on every interface, for a TLS proxy on
+another host; run `install.sh` again after changing it. A `portal.env` from an earlier release has
+no `NGINX_LISTEN` and keeps listening on every interface, as before (the installer warns).
+
 | Installed to | |
 |---|---|
 | `/opt/directory-services-portal/api` | the API (`directory-services-portal.jar`), run by systemd as user `dsp` on 127.0.0.1:3001 |
@@ -19,7 +25,7 @@ sudo systemctl restart directory-services-portal
 | `/etc/directory-services-portal/proxy-secret` | the X.509 proxy secret (root and `dsp` only), generated once; `nginx-proxy-secret.conf` next to it is the copy nginx includes (root only) |
 | `/var/lib/ens/directory-portal` | the ENS license (`ENS_LICENSE_FILE`, written by the license screen), this installation's id and the license revisions seen (`ENS_LICENSE_STATE_DIR`); keep it |
 | `/var/lib/directory-services-portal` | data: configuration, audit log, analysis results (back this up) |
-| `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on port 8080 and proxies `/api` (when nginx is installed) |
+| `/etc/nginx/conf.d/directory-services-portal.conf` | serves the client on `NGINX_LISTEN` (new installs: 127.0.0.1:8080) and proxies `/api` (when nginx is installed) |
 
 - Logs: `journalctl -u directory-services-portal -f` (`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` in
   `portal.env` for JSON lines).

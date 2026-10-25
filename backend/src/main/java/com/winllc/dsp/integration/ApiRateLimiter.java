@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
  * A token bucket per API token: up to {@code limit} requests in a burst, refilled at
  * {@code limit} per minute. Kept in each API replica's memory: with several replicas behind a load
  * balancer, a token can make up to the limit on each of them. Also counts failed token attempts
- * per client address ({@code bad-token:} keys).
+ * ({@code bad-token:} keys) and single sign-on starts ({@code sso-start:} keys) per client address.
  */
 @Component
 public class ApiRateLimiter {
@@ -68,7 +68,7 @@ public class ApiRateLimiter {
   }
 
   /** Drops buckets that have been full (idle) for a while. */
-  @Scheduled(fixedDelay = 300_000)
+  @Scheduled(fixedDelay = 60_000)
   void sweep() {
     long now = nanos.getAsLong();
     buckets.entrySet().removeIf(e -> now - e.getValue().at > 2 * MINUTE_NANOS);

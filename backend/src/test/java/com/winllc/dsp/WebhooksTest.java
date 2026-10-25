@@ -181,6 +181,85 @@ class WebhooksTest extends ApiTestSupport {
     }
   }
 
+  /** The outbox {@code real}, failing to queue (as with the database unreachable) while {@code down}. */
+  private static Deliveries failingWhile(Deliveries real, java.util.concurrent.atomic.AtomicBoolean down) {
+    return new Deliveries() {
+      @Override
+      public int enqueue(List<Delivery> deliveries) {
+        if (down.get()) throw new IllegalStateException("Connection refused (test)");
+        return real.enqueue(deliveries);
+      }
+
+      @Override
+      public void flush() {
+        real.flush();
+      }
+
+      @Override
+      public List<Delivery> claim(Instant now, int limit, Duration lease, java.util.Set<String> skip) {
+        return real.claim(now, limit, lease, skip);
+      }
+
+      @Override
+      public int postpone(String webhookId, Instant until) {
+        return real.postpone(webhookId, until);
+      }
+
+      @Override
+      public void record(Delivery delivery) {
+        real.record(delivery);
+      }
+
+      @Override
+      public List<Delivery> recent(String webhookId, int limit) {
+        return real.recent(webhookId, limit);
+      }
+
+      @Override
+      public void cancel(String webhookId, String reason) {
+        real.cancel(webhookId, reason);
+      }
+
+      @Override
+      public void purge(Instant before) {
+        real.purge(before);
+      }
+    };
+  }
+
+  @Test
+  void aChangeThatCannotBeQueuedIsKeptAndSentOnceTheOutboxIsBack() throws Exception {
+    Client admin = login("admin");
+    Hook h = hook(admin, url("/spool"), List.of("entry.changed"));
+    java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+    service.pauseBackground(true);
+    Deliveries real = service.use(failingWhile(service.deliveries(), down));
+    try {
+      // The entry is changed; its event can't be queued yet.
+      MvcResult r = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("mobile", List.of("+1 555 0300"))));
+      assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+      MvcResult r2 = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("mobile", List.of("+1 555 0301"))));
+      assertThat(status(r2)).isEqualTo(200);
+      assertThat(service.spooled()).isEqualTo(2);
+      service.dispatch();
+      assertThat(service.spooled()).isEqualTo(2);
+      assertThat(received).isEmpty();
+
+      // The outbox is back: both are queued, in order, and delivered.
+      down.set(false);
+      until(() -> received.size() >= 2);
+      assertThat(service.spooled()).isZero();
+      assertThat(received).allMatch(x -> "entry.changed".equals(x.header("X-DSP-Event")));
+      assertThat(received.get(0).body()).contains(BOB);
+      assertThat(Instant.parse(mapper.readTree(received.get(0).body()).get("createdAt").asString()))
+          .isBeforeOrEqualTo(Instant.parse(mapper.readTree(received.get(1).body()).get("createdAt").asString()));
+      assertThat(deliveries(admin, h).size()).isEqualTo(2);
+    } finally {
+      service.use(real);
+      service.pauseBackground(false);
+    }
+  }
+
   @Test
   void retriesFailuresAndGivesUpAfterTheLastAttempt() throws Exception {
     Client admin = login("admin");

@@ -150,6 +150,8 @@ export function ssoErrorMessage(code: string | null): string | null {
       return 'Your identity provider has not verified your email address, so the portal cannot use it to find your account.';
     case 'unavailable':
       return 'Signing in is not possible right now (the audit log is unavailable). Try again later.';
+    case 'busy':
+      return 'Too many sign-ins were started from your network just now. Wait a minute, then try again.';
     default:
       return 'Single sign-on did not complete. Try again, or contact your administrator if it keeps failing.';
   }

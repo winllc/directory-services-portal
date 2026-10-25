@@ -1,5 +1,6 @@
 package com.winllc.dsp.sso;
 
+import com.winllc.dsp.integration.ApiRateLimiter;
 import com.winllc.dsp.service.ConsentService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -73,15 +74,18 @@ public class SsoSecurity {
   private final SsoSignIn signIn;
   private final SsoStateStore state;
   private final ConsentService consent;
+  private final ApiRateLimiter limiter;
   private final ClientRegistrationRepository oidcClients;
   private final SsoRegistrations.Saml samlParties;
 
-  public SsoSecurity(SsoProperties props, SsoRequests requests, SsoSignIn signIn, SsoStateStore state, ConsentService consent) {
+  public SsoSecurity(SsoProperties props, SsoRequests requests, SsoSignIn signIn, SsoStateStore state, ConsentService consent,
+      ApiRateLimiter limiter) {
     this.props = props;
     this.requests = requests;
     this.signIn = signIn;
     this.state = state;
     this.consent = consent;
+    this.limiter = limiter;
     this.oidcClients = new SsoRegistrations.Oidc(props);
     this.samlParties = new SsoRegistrations.Saml(props);
   }
@@ -301,7 +305,12 @@ public class SsoSecurity {
   // Consent
   // ---------------------------------------------------------------------------
 
-  /** No sign-on starts until the notice-and-consent banner is acknowledged (refusal audited). */
+  /**
+   * No sign-on starts until the notice-and-consent banner is acknowledged (refusal audited). Starts
+   * are anonymous and each keeps a sign-in request for 10 minutes, so a client address may start
+   * at most SSO_START_LIMIT_PER_MINUTE (per replica; counted with the API token limiter): more are
+   * sent back to the login page with {@code sso_error=busy} and Retry-After, keeping nothing.
+   */
   final class ConsentGate extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -316,6 +325,17 @@ public class SsoSecurity {
         signIn.deny(request.getRequestURI().startsWith(SAML_START) ? "saml" : "oidc", null,
             "The notice and consent banner has not been acknowledged", ConsentService.CONSENT_REQUIRED);
         SsoSignIn.redirect(request, response, "/login?sso_error=consent");
+        return;
+      }
+      long wait = limiter.acquire("sso-start:" + request.getRemoteAddr(), props.getStartLimitPerMinute());
+      if (wait > 0) {
+        response.setHeader("Retry-After", Long.toString(wait));
+        SsoSignIn.redirect(request, response, "/login?sso_error=busy");
+        return;
+      }
+      if (!state.acceptsMore()) {
+        response.setHeader("Retry-After", "60");
+        SsoSignIn.redirect(request, response, "/login?sso_error=busy");
         return;
       }
       chain.doFilter(request, response);

@@ -30,6 +30,7 @@ import com.winllc.dsp.model.SelfMatch;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.schema.SchemaIndex;
 import com.winllc.dsp.schema.SchemaService;
+import com.winllc.dsp.schema.SelfMatchCheck;
 import com.winllc.dsp.store.ConfigStore;
 import com.winllc.dsp.web.ApiException;
 import io.micrometer.core.instrument.Counter;
@@ -677,7 +678,12 @@ public class EntryService {
     return entry == null ? List.of() : entry.values(attribute);
   }
 
-  /** Entries in a definition that represent the given user. */
+  /**
+   * Entries in a definition that represent the given user. Matching by an attribute is refused
+   * while users can edit either side of it in self service ({@link SelfMatchCheck}), and, unless it
+   * matches by the user's DN (entries that name the user, such as their devices), must find exactly
+   * one entry: several mean the value doesn't identify the user.
+   */
   public List<DirectoryEntry> findSelf(SessionUser user, DirectoryDefinition def, FormDefinition form) {
     SelfMatch match = def.selfMatch();
     if (match == null || match instanceof SelfMatch.None) return List.of();
@@ -691,15 +697,27 @@ public class EntryService {
       }
     }
     SelfMatch.Attribute am = (SelfMatch.Attribute) match;
+    com.winllc.dsp.store.StoreData config = store.snapshot();
+    String problem = SelfMatchCheck.problem(def, config.definitions, config.forms, schema.mergedIndex());
+    if (problem != null) {
+      throw ApiException.forbidden("Self service is turned off for \"" + def.name() + "\": " + problem + ". Ask an administrator.");
+    }
+    boolean byDn = "dn".equalsIgnoreCase(am.userAttribute());
     List<String> values = userAttributeValues(user, am.userAttribute());
     if (values.isEmpty()) return List.of();
     Filter filter = Filter.createANDFilter(
         baseFilter(def, form),
         Filter.createORFilter(values.stream().limit(20).map(v -> Filter.createEqualityFilter(am.entryAttribute(), v)).toList()));
-    return directory.search(def.baseDn(), scope(def.scope()), filter, 50, returnAttributes(def, form)).entries().stream()
+    List<DirectoryEntry> found = directory.search(def.baseDn(), scope(def.scope()), filter, byDn ? 50 : 2, returnAttributes(def, form))
+        .entries().stream()
         .filter(e -> !Dns.equal(e.dn(), def.baseDn()))
         .map(EntryService::sanitize)
         .toList();
+    if (!byDn && found.size() > 1) {
+      throw ApiException.forbidden("Your account matches more than one entry in \"" + def.name() + "\" (by " + am.userAttribute()
+          + "), so none is treated as yours. Ask an administrator.");
+    }
+    return found;
   }
 
   private void assertSelf(SessionUser user, DirectoryDefinition def, FormDefinition form, String dn) {

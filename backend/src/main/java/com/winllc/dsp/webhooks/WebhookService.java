@@ -63,6 +63,11 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>Delivery is at least once: an attempt whose answer was lost (a timeout after the receiver
  * acted, a replica stopping mid-send) is made again, with the same {@code X-DSP-Event-Id}, which
  * receivers use to drop repeats.
+ *
+ * <p>A change whose deliveries can't be queued (the shared database is unreachable) is kept in
+ * this replica's memory, up to {@value #SPOOL_MAX} changes in order, and queued again by the next
+ * delivery run that can: an outage of the database loses no event unless the replica stops
+ * during it. A full outbox ({@code FileDeliveries}' cap) still drops, by design, and audits it.
  */
 @Service
 public class WebhookService {
@@ -79,9 +84,11 @@ public class WebhookService {
   public static final Duration ENDPOINT_TIME = Duration.ofSeconds(20);
   /** Members listed per change in a group.membership_changed event (more: truncated is true). */
   static final int MAX_MEMBERS = 1000;
+  /** Changes kept in memory while their deliveries can't be queued. */
+  static final int SPOOL_MAX = 10_000;
 
   private final Webhooks webhooks;
-  private final Deliveries deliveries;
+  private volatile Deliveries deliveries;
   private final IntegrationProperties props;
   private final AuditLog audit;
   private final JsonMapper mapper;
@@ -138,6 +145,13 @@ public class WebhookService {
     this.sender = sender;
   }
 
+  /** For tests: another outbox (e.g. one that fails like an unreachable database); returns the one in use. */
+  public Deliveries use(Deliveries outbox) {
+    Deliveries before = this.deliveries;
+    this.deliveries = outbox;
+    return before;
+  }
+
   /** For tests: stops (or resumes) the background runs; returns once a run in progress is over. */
   public void pauseBackground(boolean pause) {
     synchronized (running) {
@@ -155,30 +169,119 @@ public class WebhookService {
   // Events
   // ---------------------------------------------------------------------------
 
+  /**
+   * A change waiting to be queued: the change itself until the webhooks were read, then its
+   * deliveries (fixed ids, so queuing them again after a partial failure adds nothing twice).
+   */
+  private static final class Spooled {
+    final EntryChanged change;
+    final Instant at;
+    List<Deliveries.Delivery> deliveries;
+
+    Spooled(EntryChanged change, Instant at) {
+      this.change = change;
+      this.at = at;
+    }
+  }
+
+  private final java.util.Deque<Spooled> spool = new java.util.ArrayDeque<>();
+
   @EventListener
   public void onEntryChanged(EntryChanged change) {
+    Spooled item = new Spooled(change, Instant.now().truncatedTo(ChronoUnit.MILLIS));
+    synchronized (spool) {
+      // Behind changes still waiting: keep the order.
+      if (!spool.isEmpty()) {
+        keep(item, null);
+        return;
+      }
+    }
     try {
+      queue(item);
+    } catch (RuntimeException e) {
+      synchronized (spool) {
+        keep(item, e);
+      }
+    }
+  }
+
+  /** Queues a change's deliveries; throws when they could not be queued (nothing is lost then). */
+  private void queue(Spooled item) {
+    if (item.deliveries == null) {
+      EntryChanged change = item.change;
       List<Webhooks.Webhook> hooks = webhooks.all().stream().filter(Webhooks.Webhook::enabled).toList();
-      if (hooks.isEmpty()) return;
-      List<Map.Entry<String, Map<String, Object>>> events = events(change);
       List<Deliveries.Delivery> queued = new ArrayList<>();
-      for (Map.Entry<String, Map<String, Object>> e : events) {
-        String type = e.getKey();
-        String payload = null;
-        String eventId = null;
-        for (Webhooks.Webhook w : hooks) {
-          if (!w.wants(type, change.definitionId())) continue;
-          if (payload == null) {
-            eventId = "evt_" + UUID.randomUUID();
-            payload = payload(eventId, type, actor(change), e.getValue());
+      if (!hooks.isEmpty()) {
+        for (Map.Entry<String, Map<String, Object>> e : events(change)) {
+          String type = e.getKey();
+          String payload = null;
+          String eventId = null;
+          for (Webhooks.Webhook w : hooks) {
+            if (!w.wants(type, change.definitionId())) continue;
+            if (payload == null) {
+              eventId = "evt_" + UUID.randomUUID();
+              payload = payload(eventId, type, actor(change), e.getValue(), item.at);
+            }
+            queued.add(newDelivery(w.id(), eventId, type, payload, item.at));
           }
-          queued.add(newDelivery(w.id(), eventId, type, payload));
         }
       }
-      int accepted = deliveries.enqueue(queued);
-      if (accepted < queued.size()) dropped(queued.size() - accepted);
-    } catch (RuntimeException e) {
-      log.error("Could not queue webhooks for the change of {}: {}", LogSafe.of(change.dn()), LogSafe.of(e.getMessage()));
+      item.deliveries = queued;
+    }
+    if (item.deliveries.isEmpty()) return;
+    int accepted = deliveries.enqueue(item.deliveries);
+    if (accepted < item.deliveries.size()) dropped(item.deliveries.size() - accepted);
+  }
+
+  /** Keeps a change to queue later (the caller holds the spool's lock); a full spool drops it, audited. */
+  private void keep(Spooled item, RuntimeException cause) {
+    if (spool.size() >= SPOOL_MAX) {
+      log.error("Could not queue webhooks for the change of {} and {} changes already wait: dropped", LogSafe.of(item.change.dn()), SPOOL_MAX);
+      try {
+        dropped(1);
+      } catch (RuntimeException ignored) {
+        // The audit store may be down too; the log says it.
+      }
+      return;
+    }
+    if (cause != null) {
+      log.warn("Could not queue webhooks for the change of {} ({}): kept in memory, queued again when possible", LogSafe.of(item.change.dn()),
+          LogSafe.of(cause.getMessage()));
+    }
+    spool.addLast(item);
+  }
+
+  /**
+   * Queues the changes kept in memory, oldest first, until one still fails. Only delivery runs
+   * call it (one at a time), so the head stays put while it is queued without holding the lock:
+   * a change made meanwhile only waits for the lock to join the end.
+   */
+  void replaySpool() {
+    int done = 0;
+    while (true) {
+      Spooled head;
+      synchronized (spool) {
+        head = spool.peekFirst();
+      }
+      if (head == null) break;
+      try {
+        queue(head);
+      } catch (RuntimeException e) {
+        if (done > 0) log.info("Queued webhooks for {} changes kept in memory; {} still wait", done, spooled());
+        return;
+      }
+      synchronized (spool) {
+        spool.removeFirst();
+      }
+      done++;
+    }
+    if (done > 0) log.info("Queued webhooks for {} changes kept in memory", done);
+  }
+
+  /** Changes waiting to be queued (for tests). */
+  public int spooled() {
+    synchronized (spool) {
+      return spool.size();
     }
   }
 
@@ -205,15 +308,15 @@ public class WebhookService {
     data.put("webhookId", w.id());
     Map<String, Object> actor = new LinkedHashMap<>();
     actor.put("username", by);
-    Deliveries.Delivery d = newDelivery(w.id(), eventId, Webhooks.PING, payload(eventId, Webhooks.PING, actor, data));
+    Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+    Deliveries.Delivery d = newDelivery(w.id(), eventId, Webhooks.PING, payload(eventId, Webhooks.PING, actor, data, now), now);
     if (deliveries.enqueue(List.of(d)) == 0) throw new com.winllc.dsp.web.ApiException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
         "The webhook outbox is full; try again when deliveries have caught up");
     deliveries.flush();
     return d.id();
   }
 
-  private static Deliveries.Delivery newDelivery(String webhookId, String eventId, String type, String payload) {
-    Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+  private static Deliveries.Delivery newDelivery(String webhookId, String eventId, String type, String payload, Instant now) {
     return new Deliveries.Delivery(UUID.randomUUID().toString(), webhookId, eventId, type, payload, Deliveries.PENDING, 0, now, now, null, null,
         null, null);
   }
@@ -272,11 +375,11 @@ public class WebhookService {
     return dn ? Dns.equal(a, b) || a.equalsIgnoreCase(b) : a.equalsIgnoreCase(b);
   }
 
-  private String payload(String eventId, String type, Map<String, Object> actor, Map<String, Object> data) {
+  private String payload(String eventId, String type, Map<String, Object> actor, Map<String, Object> data, Instant createdAt) {
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("id", eventId);
     body.put("type", type);
-    body.put("createdAt", Instant.now().truncatedTo(ChronoUnit.MILLIS).toString());
+    body.put("createdAt", createdAt.toString());
     Map<String, Object> source = new LinkedHashMap<>();
     source.put("product", audit.product());
     source.put("version", audit.version());
@@ -314,6 +417,7 @@ public class WebhookService {
   /** Sends the deliveries that are due; returns how many were attempted. */
   public int dispatch() {
     synchronized (running) {
+      replaySpool();
       if (!props.getWebhooks().isEnabled()) return 0;
       Instant now = Instant.now();
       if (Duration.between(lastPurge, now).compareTo(Duration.ofHours(1)) >= 0) {

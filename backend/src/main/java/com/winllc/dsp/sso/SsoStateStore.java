@@ -36,12 +36,31 @@ public class SsoStateStore {
   private final JdbcTemplate jdbc;
   private final Map<String, Entry> requests = new ConcurrentHashMap<>();
   private final Map<String, Instant> assertions = new ConcurrentHashMap<>();
+  private final int maxPending;
 
-  public SsoStateStore(Cluster cluster) {
-    this.jdbc = cluster.shared() ? cluster.jdbc() : null;
+  @org.springframework.beans.factory.annotation.Autowired
+  public SsoStateStore(Cluster cluster, SsoProperties props) {
+    this(cluster.shared() ? cluster.jdbc() : null, props.getMaxPendingRequests());
   }
 
-  /** Keeps {@code value} under {@code handle} (stored by its SHA-256) for {@code ttl}. */
+  SsoStateStore(JdbcTemplate jdbc, int maxPending) {
+    this.jdbc = jdbc;
+    this.maxPending = Math.max(1, maxPending);
+  }
+
+  /** The sign-in request store is full (in memory only): no new sign-on can start until some expire. */
+  public static final class FullException extends RuntimeException {
+    FullException() {
+      super("Too many sign-ons in progress; try again in a few minutes");
+    }
+  }
+
+  /**
+   * Keeps {@code value} under {@code handle} (stored by its SHA-256) for {@code ttl}. In memory, at
+   * most {@code SSO_MAX_PENDING_REQUESTS} are kept: when full, expired ones are dropped first, and
+   * if none has expired the new one is refused ({@link FullException}) rather than displacing a
+   * sign-on in progress.
+   */
   public void put(String handle, Serializable value, Duration ttl) {
     String key = AuditJson.sha256Hex(handle);
     Instant expires = Instant.now().plus(ttl);
@@ -49,7 +68,25 @@ public class SsoStateStore {
       jdbc.update("INSERT INTO dsp_sso_request (id, payload, expires_at) VALUES (?, ?, ?)", key, serialize(value), Timestamp.from(expires));
       return;
     }
+    if (requests.size() >= maxPending) {
+      Instant now = Instant.now();
+      requests.values().removeIf(e -> e.expires().isBefore(now));
+      if (requests.size() >= maxPending) throw new FullException();
+    }
     requests.put(key, new Entry(value, expires));
+  }
+
+  /** False when the in-memory store is full of unexpired sign-in requests (never with the database). */
+  public boolean acceptsMore() {
+    if (jdbc != null || requests.size() < maxPending) return true;
+    Instant now = Instant.now();
+    requests.values().removeIf(e -> e.expires().isBefore(now));
+    return requests.size() < maxPending;
+  }
+
+  /** Sign-in requests kept in memory (for tests and metrics). */
+  int pendingInMemory() {
+    return requests.size();
   }
 
   /** The value under {@code handle}, or null (unknown or expired). */
@@ -89,7 +126,8 @@ public class SsoStateStore {
     return assertions.putIfAbsent(assertionId, expires) == null;
   }
 
-  @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
+  /** Every minute: expired requests (10 minutes) and assertion ids leave memory or the database promptly. */
+  @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
   void sweep() {
     Instant now = Instant.now();
     if (jdbc != null) {

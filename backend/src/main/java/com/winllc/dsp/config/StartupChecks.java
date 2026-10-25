@@ -4,26 +4,36 @@ import jakarta.annotation.PostConstruct;
 import java.io.UncheckedIOException;
 import java.util.List;
 import org.slf4j.Logger;
+import com.winllc.dsp.util.LogSafe;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 /** Fails fast on configuration that would otherwise misbehave at runtime. */
 @Configuration(proxyBeanMethods = false)
 public class StartupChecks {
   private static final Logger log = LoggerFactory.getLogger(StartupChecks.class);
+  /** OIDC claims a provider lets be changed or reassigned: a poor identity to map to a directory entry. */
+  static final java.util.Set<String> MUTABLE_OIDC_CLAIMS = java.util.Set.of("preferred_username", "email", "upn", "unique_name", "name",
+      "nickname", "given_name", "family_name", "username", "login");
   private final PortalProperties props;
   private final ObjectProvider<EnsProperties> ens;
   private final ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso;
+  private final Environment env;
 
-  public StartupChecks(PortalProperties props, ObjectProvider<EnsProperties> ens, ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso) {
+  public StartupChecks(PortalProperties props, ObjectProvider<EnsProperties> ens, ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso,
+      Environment env) {
     this.props = props;
     this.ens = ens;
     this.sso = sso;
+    this.env = env;
   }
 
   @PostConstruct
   void check() {
+    checkMemoryMode();
+    checkClientAddresses();
     if (!props.isMemoryMode()) {
       try {
         props.getLdap().resolvedBindPassword();
@@ -46,7 +56,16 @@ public class StartupChecks {
     if (single != null) {
       List<String> ssoProblems = single.problems();
       if (!ssoProblems.isEmpty()) throw new IllegalStateException("Refusing to start: single sign-on: " + String.join("; ", ssoProblems));
-      if (single.getOidc().enabled()) log.info("Single sign-on: OpenID Connect ({}) offered", single.getOidc().getIssuerUri());
+      if (single.getOidc().enabled()) {
+        log.info("Single sign-on: OpenID Connect ({}) offered", single.getOidc().getIssuerUri());
+        String claim = single.getOidc().getUsernameClaim().trim();
+        if (MUTABLE_OIDC_CLAIMS.contains(claim.toLowerCase(java.util.Locale.ROOT))) {
+          log.warn("SSO_OIDC_USERNAME_CLAIM is {}, which the identity provider lets users or administrators change (a rename, an"
+              + " address handed to someone else): a renamed account can then match, and sign in as, another directory entry."
+              + " Map an immutable claim instead, held in a directory attribute: sub, or oid for Microsoft Entra ID (README, Single"
+              + " sign-on: moving to an immutable claim).", LogSafe.of(claim));
+        }
+      }
       if (single.getSaml().enabled()) log.info("Single sign-on: SAML 2.0 (metadata {}) offered", single.getSaml().getMetadataLocation());
     }
     EnsProperties shared = ens.getIfAvailable();
@@ -58,6 +77,53 @@ public class StartupChecks {
         throw new IllegalStateException("Refusing to start: the notice and consent banner is enabled but " + e.getMessage(), e);
       }
     }
+  }
+
+  /**
+   * The embedded demo directory has public credentials (admin/password) and seeds the demo
+   * configuration: it starts only when DEMO_MODE=true says this is a demo, or when the API listens
+   * on a loopback address only (SERVER_ADDRESS), where nobody else can reach it. DIRECTORY_MODE
+   * defaults to memory, so this is what keeps a bare jar from serving a portal anyone can administer.
+   */
+  private void checkMemoryMode() {
+    if (!props.isMemoryMode() || props.isDemoMode()) return;
+    String address = env.getProperty("server.address", "");
+    if (isLoopback(address)) return;
+    String message = "Refusing to start: DIRECTORY_MODE=memory runs the embedded demo directory, whose administrator password"
+        + " is public, and the API listens on " + (address.isBlank() ? "every interface" : LogSafe.of(address))
+        + ". For a real directory set DIRECTORY_MODE=ldap and LDAP_URL; for a demo set DEMO_MODE=true (or"
+        + " SERVER_ADDRESS=127.0.0.1 to keep it to this host).";
+    log.error(message);
+    throw new IllegalStateException(message);
+  }
+
+  /**
+   * Per-address limits (failed API tokens, single sign-on starts, the sign-in lockout) key on the
+   * client address as Spring resolves it. Behind a proxy with SERVER_FORWARD_HEADERS_STRATEGY=none
+   * that is the proxy's address, so one noisy client makes every client behind it hit them. A proxy
+   * is certain when certificates arrive in a header (X509_SOURCE=header) or the API listens on
+   * loopback only; warned about rather than refused, so an existing installation still starts.
+   */
+  private void checkClientAddresses() {
+    String strategy = env.getProperty("server.forward-headers-strategy", "none").trim();
+    if (!strategy.isEmpty() && !strategy.equalsIgnoreCase("none")) return;
+    boolean headerCertificates = props.getX509().isEnabled() && "header".equalsIgnoreCase(props.getX509().getSource());
+    boolean loopback = isLoopback(env.getProperty("server.address", ""));
+    if (!headerCertificates && !loopback) return;
+    log.warn("The API is behind a proxy ({}) but SERVER_FORWARD_HEADERS_STRATEGY is none: every request seems to come from the"
+        + " proxy's address, so the per-address limits (API_FAILED_TOKEN_LIMIT_PER_MINUTE, SSO_START_LIMIT_PER_MINUTE, the"
+        + " sign-in lockout) count all clients behind it together, and the audit trail records the proxy as source.ip. Set"
+        + " SERVER_FORWARD_HEADERS_STRATEGY=framework, with a proxy that overwrites X-Forwarded-For (the packaged web tier does).",
+        headerCertificates ? "X509_SOURCE=header" : "SERVER_ADDRESS is a loopback address");
+  }
+
+  /** A literal loopback address or "localhost" (no name is looked up). */
+  static boolean isLoopback(String address) {
+    if (address == null) return false;
+    String a = address.trim().toLowerCase(java.util.Locale.ROOT);
+    if (a.startsWith("[") && a.endsWith("]")) a = a.substring(1, a.length() - 1);
+    if (a.equals("localhost") || a.equals("::1") || a.equals("0:0:0:0:0:0:0:1")) return true;
+    return a.matches("127\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}");
   }
 
   /**

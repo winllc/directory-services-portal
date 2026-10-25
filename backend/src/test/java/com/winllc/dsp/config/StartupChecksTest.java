@@ -216,6 +216,66 @@ class StartupChecksTest {
   }
 
   @Test
+  void refusesTheDemoDirectoryOnEveryInterfaceUnlessItIsADemo(CapturedOutput output) {
+    // DIRECTORY_MODE defaults to memory: a bare jar must not serve a portal anyone can administer.
+    runner.withPropertyValues("DEMO_MODE=false").run(ctx -> {
+      assertThat(ctx).hasFailed();
+      assertThat(ctx.getStartupFailure()).rootCause().hasMessageContaining("Refusing to start: DIRECTORY_MODE=memory")
+          .hasMessageContaining("every interface").hasMessageContaining("DEMO_MODE=true");
+    });
+    assertThat(output).contains("ERROR").contains("DIRECTORY_MODE=memory runs the embedded demo directory");
+    runner.withPropertyValues("DEMO_MODE=false", "DIRECTORY_MODE=memory", "server.address=0.0.0.0").run(ctx -> assertThat(ctx).hasFailed());
+    runner.withPropertyValues("DEMO_MODE=false", "server.address=192.168.1.10").run(ctx -> assertThat(ctx).hasFailed());
+    // A demo, or a listener only this host can reach.
+    runner.withPropertyValues("DEMO_MODE=true").run(ctx -> assertThat(ctx).hasNotFailed());
+    for (String loopback : new String[] {"127.0.0.1", "127.1.2.3", "::1", "[::1]", "localhost"}) {
+      runner.withPropertyValues("DEMO_MODE=false", "server.address=" + loopback).run(ctx -> assertThat(ctx).hasNotFailed());
+    }
+    // A real directory is not affected.
+    runner.withPropertyValues("DEMO_MODE=false", "DIRECTORY_MODE=ldap").run(ctx -> assertThat(ctx).hasNotFailed());
+  }
+
+  @Test
+  void warnsWhenAProxyHidesClientAddresses(CapturedOutput output) {
+    String warning = "SERVER_FORWARD_HEADERS_STRATEGY is none";
+    // Certificates from a proxy header, or a loopback-only listener: a proxy is in front.
+    headerMode("X509_TRUSTED_CA_FILE=" + caFile, "X509_PROXY_SECRET=" + SECRET).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains(warning, "X509_SOURCE=header", "API_FAILED_TOKEN_LIMIT_PER_MINUTE");
+    int seen = output.toString().split(warning, -1).length;
+    runner.withPropertyValues("server.address=127.0.0.1").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen + 1);
+    assertThat(output).contains("SERVER_ADDRESS is a loopback address");
+    // No warning with the proxy's headers honoured, or without a known proxy.
+    headerMode("X509_TRUSTED_CA_FILE=" + caFile, "X509_PROXY_SECRET=" + SECRET, "SERVER_FORWARD_HEADERS_STRATEGY=framework")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    runner.withPropertyValues("server.address=127.0.0.1", "server.forward-headers-strategy=framework").run(ctx -> assertThat(ctx).hasNotFailed());
+    runner.run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen + 1);
+  }
+
+  @Test
+  void warnsAboutAMutableOidcIdentityClaim(CapturedOutput output) {
+    String[] oidc = {"SSO_OIDC_ISSUER_URI=https://idp.example", "SSO_OIDC_CLIENT_ID=portal"};
+    String warning = "which the identity provider lets users or administrators change";
+    // The default, preferred_username, still works (existing installations) but is warned about.
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("SSO_OIDC_USERNAME_CLAIM is preferred_username, " + warning);
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).withPropertyValues("SSO_OIDC_USERNAME_CLAIM=email")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("SSO_OIDC_USERNAME_CLAIM is email, " + warning);
+    int seen = output.toString().split(warning, -1).length;
+    for (String immutable : new String[] {"sub", "oid"}) {
+      runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).withPropertyValues("SSO_OIDC_USERNAME_CLAIM=" + immutable)
+          .run(ctx -> assertThat(ctx).hasNotFailed());
+    }
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen);
+  }
+
+  @Configuration(proxyBeanMethods = false)
+  @EnableConfigurationProperties(com.winllc.dsp.sso.SsoProperties.class)
+  static class Sso {}
+
+  @Test
   void leavesOtherModesAlone() {
     // Certificate sign-in off, or the API terminating mutual TLS itself (Tomcat checks the chain).
     runner.withPropertyValues("X509_ENABLED=false", "X509_SOURCE=header").run(ctx -> assertThat(ctx).hasNotFailed());
