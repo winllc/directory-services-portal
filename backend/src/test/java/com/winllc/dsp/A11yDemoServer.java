@@ -21,6 +21,7 @@ public final class A11yDemoServer {
     app.setDefaultProperties(Map.of(
         "portal.directory-mode", "memory",
         "portal.seed-demo-config", "true",
+        "portal.demo-mode", "true",
         "portal.data-dir", Files.createTempDirectory("dsp-a11y").toString(),
         "server.port", System.getProperty("server.port", "3001")));
     app.run(args);

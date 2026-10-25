@@ -122,6 +122,7 @@ else
   case "$demo" in
     memory)
       setenv DIRECTORY_MODE memory
+      setenv DEMO_MODE true
       setenv SEED_DEMO_CONFIG true
       setenv ADMIN_USERS admin
       setenv LOGIN_HINT '"Demo: sign in as admin (administrator), alice, bob, erin (HR), dave (helpdesk) or frank (partner). Password: password"'
@@ -138,6 +139,13 @@ else
   esac
   [ -n "$https_port" ] && setenv X509_ENABLED true
   say "Wrote .env"
+fi
+
+# The built-in demo directory (DIRECTORY_MODE=memory) now starts only with DEMO_MODE=true.
+# An .env from an earlier --demo install has no DEMO_MODE line: add it, so that demo keeps starting.
+if grep -qi '^DIRECTORY_MODE=["]\{0,1\}memory' .env && ! grep -q '^DEMO_MODE=' .env; then
+  printf '\n# Added by install.sh %s: this is a demo (the built-in directory needs it; see env.template).\nDEMO_MODE=true\n' "$VERSION" >> .env
+  say "Added DEMO_MODE=true to .env (DIRECTORY_MODE=memory: the built-in demo directory)"
 fi
 
 # The X.509 proxy secret: the web proxy sends it to the API, which accepts a forwarded client

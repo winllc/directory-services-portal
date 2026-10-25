@@ -19,6 +19,11 @@ public class PortalProperties {
 
   /** "memory" runs the embedded demo directory; "ldap" connects to {@link Ldap#url}. */
   private String directoryMode = "memory";
+  /**
+   * Acknowledges a demo: the embedded directory ("memory") with its public credentials may then
+   * listen on every interface. Without it, memory mode starts only on a loopback address.
+   */
+  private boolean demoMode;
 
   private final Ldap ldap = new Ldap();
   private final X509 x509 = new X509();
@@ -348,6 +353,8 @@ public class PortalProperties {
   }
 
   public String getDirectoryMode() { return directoryMode; }
+  public boolean isDemoMode() { return demoMode; }
+  public void setDemoMode(boolean demoMode) { this.demoMode = demoMode; }
   public void setDirectoryMode(String directoryMode) { this.directoryMode = directoryMode; }
   public Ldap getLdap() { return ldap; }
   public X509 getX509() { return x509; }

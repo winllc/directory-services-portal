@@ -4,9 +4,11 @@ import jakarta.annotation.PostConstruct;
 import java.io.UncheckedIOException;
 import java.util.List;
 import org.slf4j.Logger;
+import com.winllc.dsp.util.LogSafe;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 /** Fails fast on configuration that would otherwise misbehave at runtime. */
 @Configuration(proxyBeanMethods = false)
@@ -15,15 +17,19 @@ public class StartupChecks {
   private final PortalProperties props;
   private final ObjectProvider<EnsProperties> ens;
   private final ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso;
+  private final Environment env;
 
-  public StartupChecks(PortalProperties props, ObjectProvider<EnsProperties> ens, ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso) {
+  public StartupChecks(PortalProperties props, ObjectProvider<EnsProperties> ens, ObjectProvider<com.winllc.dsp.sso.SsoProperties> sso,
+      Environment env) {
     this.props = props;
     this.ens = ens;
     this.sso = sso;
+    this.env = env;
   }
 
   @PostConstruct
   void check() {
+    checkMemoryMode();
     if (!props.isMemoryMode()) {
       try {
         props.getLdap().resolvedBindPassword();
@@ -58,6 +64,33 @@ public class StartupChecks {
         throw new IllegalStateException("Refusing to start: the notice and consent banner is enabled but " + e.getMessage(), e);
       }
     }
+  }
+
+  /**
+   * The embedded demo directory has public credentials (admin/password) and seeds the demo
+   * configuration: it starts only when DEMO_MODE=true says this is a demo, or when the API listens
+   * on a loopback address only (SERVER_ADDRESS), where nobody else can reach it. DIRECTORY_MODE
+   * defaults to memory, so this is what keeps a bare jar from serving a portal anyone can administer.
+   */
+  private void checkMemoryMode() {
+    if (!props.isMemoryMode() || props.isDemoMode()) return;
+    String address = env.getProperty("server.address", "");
+    if (isLoopback(address)) return;
+    String message = "Refusing to start: DIRECTORY_MODE=memory runs the embedded demo directory, whose administrator password"
+        + " is public, and the API listens on " + (address.isBlank() ? "every interface" : LogSafe.of(address))
+        + ". For a real directory set DIRECTORY_MODE=ldap and LDAP_URL; for a demo set DEMO_MODE=true (or"
+        + " SERVER_ADDRESS=127.0.0.1 to keep it to this host).";
+    log.error(message);
+    throw new IllegalStateException(message);
+  }
+
+  /** A literal loopback address or "localhost" (no name is looked up). */
+  static boolean isLoopback(String address) {
+    if (address == null) return false;
+    String a = address.trim().toLowerCase(java.util.Locale.ROOT);
+    if (a.startsWith("[") && a.endsWith("]")) a = a.substring(1, a.length() - 1);
+    if (a.equals("localhost") || a.equals("::1") || a.equals("0:0:0:0:0:0:0:1")) return true;
+    return a.matches("127\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}");
   }
 
   /**

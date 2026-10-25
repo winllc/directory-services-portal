@@ -23,6 +23,8 @@ data:
   {{- end }}
   # Directory connection
   DIRECTORY_MODE: {{ include "dsp.str" $v.directory.mode | quote }}
+  # The built-in demo directory's credentials are public: the API starts it only as a demo.
+  DEMO_MODE: {{ eq $v.directory.mode "memory" | quote }}
   LDAP_URL: {{ include "dsp.str" $v.ldap.url | quote }}
   LDAP_STARTTLS: {{ include "dsp.str" $v.ldap.startTls | quote }}
   LDAP_TLS_REJECT_UNAUTHORIZED: {{ include "dsp.str" $v.ldap.tlsRejectUnauthorized | quote }}

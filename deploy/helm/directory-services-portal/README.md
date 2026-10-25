@@ -494,7 +494,7 @@ Existing claims (`existingClaim`) are never touched.
 
 | Value | Env | Default |
 |---|---|---|
-| `directory.mode` | `DIRECTORY_MODE` | `ldap` (`memory`: built-in demo directory, evaluation only) |
+| `directory.mode` | `DIRECTORY_MODE` | `ldap` (`memory`: built-in demo directory, evaluation only; the chart then sets `DEMO_MODE=true`, which the API requires for it) |
 | `ldap.url` | `LDAP_URL` | `ldaps://ldap.example.com:636` |
 | `ldap.startTls` | `LDAP_STARTTLS` | `false` |
 | `ldap.tlsRejectUnauthorized` | `LDAP_TLS_REJECT_UNAUTHORIZED` | `true` |

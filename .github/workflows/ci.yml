@@ -251,6 +251,9 @@ jobs:
           np() { helm template dsp "$CHART" -f "$d" --set networkPolicy.enabled=true "$@" --show-only templates/networkpolicy.yaml | grep -c 'port: 443' || true; }
           [ "$(np)" -gt "$(np --set integrations.webhooks.enabled=false)" ] || { echo "no webhook egress"; exit 1; }
           if helm template dsp "$CHART" -f "$d" --set 'integrations.webhooks.allowedHosts={bad host}' > /dev/null 2>&1; then echo "accepted a bad host"; exit 1; fi
+          # The built-in demo directory is a demo (the API refuses it otherwise); a real one is not.
+          grep -qx '  DEMO_MODE: "false"' <<<"$cm"
+          helm template dsp "$CHART" -f "$d" --set directory.mode=memory --show-only templates/configmap.yaml | grep -qx '  DEMO_MODE: "true"'
           echo "integration settings OK"
 
   bundle:
@@ -326,6 +329,17 @@ jobs:
             grep -qx 'CONTAINER_ENGINE=docker' .env
             grep -qx 'WEB_BIND=127.0.0.1' .env
           done
+          # An .env from a --demo install before DEMO_MODE existed keeps starting: install.sh adds
+          # DEMO_MODE=true to it (DIRECTORY_MODE=memory), and to no other .env.
+          ./install.sh --force-env --demo
+          sed -i '/^DEMO_MODE=/d' .env
+          ./install.sh
+          grep -qx 'DEMO_MODE=true' .env
+          ./install.sh --force-env
+          grep -qx 'DEMO_MODE=false' .env
+          sed -i '/^DEMO_MODE=/d' .env
+          ./install.sh
+          if grep -q '^DEMO_MODE=' .env; then echo "DEMO_MODE added to an .env for a real directory"; exit 1; fi
 
       - name: The demo compose file publishes no port
         run: |
@@ -435,7 +449,7 @@ jobs:
           # checked is that both images are assembled correctly and the web tier reaches the API.
           docker network create dsp
           docker run -d --name api --network dsp \
-            -e DIRECTORY_MODE=memory -e SEED_DEMO_CONFIG=true dsp-api:ci
+            -e DIRECTORY_MODE=memory -e DEMO_MODE=true -e SEED_DEMO_CONFIG=true dsp-api:ci
           docker run -d --name web --network dsp -p 8080:8080 -e API_URL=http://api:3001 dsp-web:ci
           for i in $(seq 1 90); do
             if curl -fsS http://localhost:8080/api/health > /dev/null 2>&1; then

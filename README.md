@@ -92,6 +92,19 @@ one replica and the `Recreate` strategy). What is new and optional:
   add them from the template only if you use them. The native package reads the same variables
   from `portal.env`.
 
+### Upgrade notes: readiness review fixes (October 2026)
+
+What changes for an upgraded installation, and what to do (nothing, unless a line says so):
+
+- **`DIRECTORY_MODE=memory` (the built-in demo directory) needs `DEMO_MODE=true`**, or an API that
+  listens on loopback only (`SERVER_ADDRESS=127.0.0.1`, as the native package does); otherwise it
+  refuses to start (ERROR in the log). The release package's `install.sh` (also run by
+  `upgrade.sh`) adds `DEMO_MODE=true` to an `.env` that sets `DIRECTORY_MODE=memory` and has no
+  `DEMO_MODE` line; the Helm chart sets it when `directory.mode` is `memory`;
+  `docker-compose.demo.yml` sets it. A bare jar or image run with the default mode must now set
+  `DIRECTORY_MODE=ldap` (a real directory) or `DEMO_MODE=true`. New in `env.template`:
+  `DEMO_MODE=false`.
+
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
 Nothing needs changing: no API token or webhook exists until an administrator creates one, and
@@ -272,7 +285,11 @@ licenses with it); the library's own tests run against the products-page fixture
 ## Connecting to a real directory
 
 Set these in `.env` (release package), `portal.env` (native package) or the chart's values (Helm; see
-its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/resources/application.yml`:
+its README), and set `DIRECTORY_MODE=ldap`. They map onto `backend/src/main/resources/application.yml`.
+`DIRECTORY_MODE` defaults to `memory`, the built-in demo directory, whose administrator password is
+public: the API **refuses to start** in that mode unless `DEMO_MODE=true` (every demo package and
+compose file sets it) or it listens on a loopback address only (`SERVER_ADDRESS=127.0.0.1`), and logs
+why at ERROR.
 
 | variable | meaning |
 |---|---|
@@ -1231,7 +1248,8 @@ npm install
 npm run dev            # API on :3001, web client on http://localhost:5173 (proxies /api)
 ```
 
-In demo mode (the default, `DIRECTORY_MODE=memory`) the backend starts an **embedded LDAP server**
+In demo mode (the default, `DIRECTORY_MODE=memory`; `npm run dev` and `npm start` set `DEMO_MODE=true`,
+without which the API refuses that mode unless it listens on loopback only) the backend starts an **embedded LDAP server**
 (UnboundID in-memory directory) on a loopback port. The portal talks to it over the LDAP protocol,
 exactly as it would to a production server. The demo server loads the standard schema, a
 non-standard `acme*` schema (`acmePerson`, `acmeDevice`, `acmePartner`), about ten people, groups
@@ -1260,7 +1278,7 @@ other paths. `web/nginx/templates/default.conf.template` is a ready-made example
 
 `docker-compose.demo.yml` runs the same demo in containers, built from this repository: `web`
 (the visitor's entry point, nginx on port 8080) and `api` in memory mode (`DIRECTORY_MODE=memory`,
-`SEED_DEMO_CONFIG=true`), plus the one-shot `license-init`. There is no OpenLDAP container: memory
+`DEMO_MODE=true`, `SEED_DEMO_CONFIG=true`), plus the one-shot `license-init`. There is no OpenLDAP container: memory
 mode runs the embedded demo directory inside the API, with the users in the table above.
 
 ```bash

@@ -74,7 +74,11 @@ springdoc:
 # on the ens.audit logger stay raw ens-audit/1 JSON either way).
 
 portal:
+  # "memory" (the embedded demo directory: admin/password and other public credentials) starts
+  # only with DEMO_MODE=true or on a loopback address (SERVER_ADDRESS=127.0.0.1); every package
+  # and the chart set DIRECTORY_MODE themselves.
   directory-mode: ${DIRECTORY_MODE:memory}
+  demo-mode: ${DEMO_MODE:false}
   ldap:
     url: ${LDAP_URL:ldap://localhost:389}
     bind-dn: ${LDAP_BIND_DN:}
