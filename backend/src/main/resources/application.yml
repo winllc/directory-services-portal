@@ -17,6 +17,11 @@ server:
   # SERVER_FORWARD_HEADERS_STRATEGY (Boot's own name) or FORWARD_HEADERS_STRATEGY: "framework"
   # behind the web tier or another proxy that overwrites X-Forwarded-*.
   forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:${FORWARD_HEADERS_STRATEGY:none}}
+  tomcat:
+    # Redirects (back from single sign-on) by path: an absolute one names the host the API was
+    # reached at, which behind a proxy that doesn't pass the browser's Host on is not the browser's.
+    # Also applies to the forwarded-headers filter ("framework" above).
+    use-relative-redirects: true
   # Room for a forwarded client certificate plus large single-sign-on cookies (default 8KB).
   max-http-request-header-size: ${MAX_HTTP_REQUEST_HEADER_SIZE:32KB}
 
