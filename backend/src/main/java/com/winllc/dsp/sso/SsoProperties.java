@@ -34,6 +34,19 @@ public class SsoProperties {
    * when this ends (or the absolute timeout, if shorter).
    */
   private java.time.Duration idpAdminLifetime = java.time.Duration.ofHours(1);
+  /**
+   * Sign-ons a client address may start per minute (per API replica); more are sent back to the
+   * login page. Each start keeps a sign-in request for 10 minutes, so this bounds what one client
+   * can make the portal hold.
+   */
+  private int startLimitPerMinute = 30;
+  /** Sign-in requests in flight kept in memory at most (without the shared database); more are refused. */
+  private int maxPendingRequests = 10_000;
+
+  public int getStartLimitPerMinute() { return startLimitPerMinute; }
+  public void setStartLimitPerMinute(int startLimitPerMinute) { this.startLimitPerMinute = startLimitPerMinute; }
+  public int getMaxPendingRequests() { return maxPendingRequests; }
+  public void setMaxPendingRequests(int maxPendingRequests) { this.maxPendingRequests = maxPendingRequests; }
 
   public java.time.Duration getIdpAdminLifetime() { return idpAdminLifetime; }
   public void setIdpAdminLifetime(java.time.Duration idpAdminLifetime) { this.idpAdminLifetime = idpAdminLifetime; }

@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.winllc.dsp.config.EnsProperties;
 import com.winllc.dsp.service.SessionService;
+import com.winllc.dsp.sso.SsoProperties;
 import jakarta.servlet.http.Cookie;
 import java.net.URI;
 import java.net.URLDecoder;
@@ -55,6 +56,7 @@ class SsoOidcTest extends ApiTestSupport {
   }
 
   @Autowired EnsProperties ens;
+  @Autowired SsoProperties ssoProps;
 
   @AfterEach
   void bannerOff() {
@@ -211,6 +213,31 @@ class SsoOidcTest extends ApiTestSupport {
     assertThat(adminSession.getAttribute(SessionService.IDP_ADMIN)).isNull();
     adminSession.setAttribute(SessionService.SIGNED_IN_AT, System.currentTimeMillis() - Duration.ofMinutes(61).toMillis());
     assertThat(status(mvc.perform(get("/api/admin/audit?pageSize=1").session(adminSession)).andReturn())).isEqualTo(200);
+  }
+
+  MvcResult startFrom(String address) throws Exception {
+    return mvc.perform(get("/api/auth/sso/authorize/oidc").with(r -> {
+      r.setRemoteAddr(address);
+      return r;
+    })).andReturn();
+  }
+
+  @Test
+  void limitsAnonymousSignOnStartsPerClientAddress() throws Exception {
+    int limit = ssoProps.getStartLimitPerMinute();
+    ssoProps.setStartLimitPerMinute(3);
+    try {
+      for (int i = 0; i < 3; i++) assertThat(startFrom("192.0.2.10").getResponse().getRedirectedUrl()).startsWith(IDP.issuer + "/authorize");
+      // The fourth in the minute keeps no sign-in request: back to the login page, told to wait.
+      MvcResult refused = startFrom("192.0.2.10");
+      assertThat(refused.getResponse().getRedirectedUrl()).isEqualTo("/login?sso_error=busy");
+      assertThat(refused.getResponse().getHeader("Retry-After")).isNotBlank();
+      assertThat(refused.getResponse().getCookie("DSP_SSO")).isNull();
+      // Other clients are not affected.
+      assertThat(startFrom("192.0.2.11").getResponse().getRedirectedUrl()).startsWith(IDP.issuer + "/authorize");
+    } finally {
+      ssoProps.setStartLimitPerMinute(limit);
+    }
   }
 
   @Test

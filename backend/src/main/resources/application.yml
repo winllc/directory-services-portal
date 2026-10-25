@@ -150,6 +150,10 @@ portal:
     # How long a session whose administrator rights come from the provider's groups may last
     # (the provider is asked again at the next sign-in); the absolute timeout applies if shorter.
     idp-admin-lifetime: ${SSO_IDP_ADMIN_SESSION_LIFETIME:1h}
+    # Sign-ons one client address may start per minute (per replica): each keeps a sign-in request
+    # for 10 minutes. Without the shared database at most SSO_MAX_PENDING_REQUESTS are kept.
+    start-limit-per-minute: ${SSO_START_LIMIT_PER_MINUTE:30}
+    max-pending-requests: ${SSO_MAX_PENDING_REQUESTS:10000}
     oidc:
       issuer-uri: ${SSO_OIDC_ISSUER_URI:}
       client-id: ${SSO_OIDC_CLIENT_ID:}

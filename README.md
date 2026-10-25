@@ -113,6 +113,10 @@ What changes for an upgraded installation, and what to do (nothing, unless a lin
   and `install.sh` warns when plain HTTP is published beyond the host or `ENS_COOKIE_SECURE` is not
   `true`. The native package's nginx site now listens on `NGINX_LISTEN` from `portal.env`: new
   installs `127.0.0.1:8080`; an upgraded `portal.env` without it keeps `8080` (every interface).
+- Single sign-on starts are limited per client address: `SSO_START_LIMIT_PER_MINUTE` (default
+  `30`, per replica); in-memory sign-in requests are capped at `SSO_MAX_PENDING_REQUESTS` (default
+  `10000`), and expired ones are removed every minute (was five). A refused start lands on the
+  login page with "wait a minute".
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -887,6 +891,8 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 |---|---|---|
 | `PORTAL_PUBLIC_URL` | | the address users open, e.g. `https://portal.example.com`: redirect URI, SAML entity id and ACS are built from it, never from the request's `Host`. **Required for SAML** (unless `SSO_SAML_ENTITY_ID` is set), recommended for OIDC. Give the web tier `PUBLIC_HOST` (its host[:port]) too |
 | `SSO_IDP_ADMIN_SESSION_LIFETIME` | `1h` | a session whose administrator rights come only from the provider's groups ends this long after sign-in (the provider is asked again then) |
+| `SSO_START_LIMIT_PER_MINUTE` | `30` | sign-ons one client address may start per minute (per API replica; the address as resolved with `SERVER_FORWARD_HEADERS_STRATEGY`). Each start keeps a sign-in request for 10 minutes; more are sent back to `/login?sso_error=busy` with `Retry-After` |
+| `SSO_MAX_PENDING_REQUESTS` | `10000` | sign-in requests in flight kept in memory at most (without the shared database, where expired rows are deleted every minute); when full, new starts get `sso_error=busy` |
 | `SSO_OIDC_ISSUER_URI` | | the issuer; `https://` (http only for localhost). Its discovery document must name the same issuer |
 | `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
 | `SSO_OIDC_CLIENT_SECRET_FILE` / `SSO_OIDC_CLIENT_SECRET` | | the client secret (prefer the file); empty: a public client |

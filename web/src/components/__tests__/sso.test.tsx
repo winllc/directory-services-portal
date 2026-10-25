@@ -67,6 +67,7 @@ describe('single sign-on on the login page', () => {
     expect(screen.queryByLabelText('Username')).toBeNull();
     expect(ssoErrorMessage(null)).toBeNull();
     expect(ssoErrorMessage('consent')).toMatch(/notice and consent/);
+    expect(ssoErrorMessage('busy')).toMatch(/Wait a minute/);
     expect(ssoErrorMessage('anything-else')).toMatch(/did not complete/);
   });
 });
