@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Plus, Search, SearchX, Upload } from 'lucide-react';
 import type { DirectoryEntry, FormDefinition, FormField } from '@dsp/shared';
@@ -47,8 +47,12 @@ function DirectoryView({ slug }: { slug: string }) {
   const definition = def.data?.definition;
   const form = def.data?.form;
 
+  const pushed = useRef(debounced);
   useEffect(() => {
-    // Push the debounced search box value into the URL (only when the user typed).
+    // Push the debounced search box value into the URL (only when the user typed): opening the
+    // page navigates nowhere, so the page keeps its navigation state (e.g. that signing in led here).
+    if (pushed.current === debounced) return;
+    pushed.current = debounced;
     setParams(
       (prev) => {
         if ((prev.get('q') ?? '') === debounced) return prev;
