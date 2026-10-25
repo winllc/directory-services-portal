@@ -130,6 +130,8 @@ What changes for an upgraded installation, and what to do (nothing, unless a lin
   and when the user's value matches more than one entry (matching by the user's `dn` may still find
   several, e.g. devices). Check definitions that match by `mail` or similar: make the field not
   self-editable, or match on an attribute users can't change. The form linter warns about it.
+- Webhooks: when the shared database is unreachable as an entry changes, its events are kept in
+  memory and queued once it is back, instead of being logged and lost. Nothing to configure.
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -622,7 +624,10 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   survive a restart; the outbox file is written every couple of seconds, not per change, so a
   crash loses at most the deliveries queued in those seconds, and it holds at most 10,000 waiting
   deliveries: beyond that new ones are dropped, logged and audited as `webhook.delivery-dropped`); with the shared database, the `webhooks` document and the
-  `dsp_webhook_delivery` table, where each due delivery is sent by one replica. Signing secrets
+  `dsp_webhook_delivery` table, where each due delivery is sent by one replica. If the database
+  can't be reached when an entry changes, the change's events are kept in that replica's memory
+  (up to 10,000 changes, in order) and queued by the next delivery run that reaches it, with their
+  original `createdAt`; only a replica stopping during the outage loses them. Signing secrets
   are stored as they are (they sign every request), readable only by the portal's user; they are
   never returned by the API again, logged or audited. Changes to webhooks are audited
   (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.

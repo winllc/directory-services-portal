@@ -47,7 +47,8 @@ public class JdbcDeliveries implements Deliveries {
   @Override
   public int enqueue(List<Delivery> deliveries) {
     for (Delivery d : deliveries) {
-      jdbc.update("INSERT INTO dsp_webhook_delivery (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      // A delivery queued again after a failure part-way (the database went away) is not doubled.
+      jdbc.update("INSERT INTO dsp_webhook_delivery (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
           d.id(), d.webhookId(), d.eventId(), d.eventType(), d.payload(), d.status(), d.attempts(), ts(d.nextAttemptAt()),
           ts(d.createdAt()), ts(d.lastAttemptAt()), d.lastStatus(), d.lastError(), ts(d.deliveredAt()));
     }

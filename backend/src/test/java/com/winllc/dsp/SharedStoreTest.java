@@ -203,6 +203,11 @@ class SharedStoreTest extends ApiTestSupport {
       var claimed = replicaB.claim(java.time.Instant.now(), 10, Duration.ofMinutes(2));
       assertThat(claimed).extracting(d -> d.id()).contains(delivery);
       assertThat(webhookService.deliveries().claim(java.time.Instant.now(), 10, Duration.ofMinutes(2))).extracting(d -> d.id()).doesNotContain(delivery);
+      // Queued again after a failure part-way (deliveries kept in memory meanwhile): not doubled.
+      var again = webhookService.deliveries().recent(hook.webhook().id(), 10).stream().filter(d -> d.id().equals(delivery)).toList();
+      assertThat(again).hasSize(1);
+      replicaB.enqueue(again);
+      assertThat(jdbc.queryForObject("SELECT count(*) FROM dsp_webhook_delivery WHERE id = ?", Integer.class, delivery)).isEqualTo(1);
       webhooks.delete(hook.webhook().id());
       webhookService.deliveries().cancel(hook.webhook().id(), "test over");
     } finally {
