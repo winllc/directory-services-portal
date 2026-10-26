@@ -733,9 +733,9 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   database. **Back up the key apart from the data**: a backup of `DATA_DIR` or the database is of
   no use for the secrets without it, and without the key the webhooks can't sign (rotate each
   secret to recover). Every replica needs the same key; the API refuses to start when the stored
-  secrets were encrypted with another key, or while none is set, naming the key ids. A changed key
-  is not supported: to replace it, remove the webhooks' secrets by rotating them after setting the
-  new key on a store that holds none encrypted with the old one (delete and re-create the webhooks).
+  secrets were encrypted with another key, or while none is set, naming the key ids. There is no
+  re-keying: to change the key, delete the webhooks, set the new key, restart and create them
+  again (their receivers get new secrets).
   New release-package `.env` files and new Helm installations get a random key (see Upgrade notes).
   Secrets are never returned by the API again, logged or audited. Changes to webhooks are audited
   (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.
