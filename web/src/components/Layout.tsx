@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
-import { AUDIT_PATH, featureEnabled, LICENSE_PATH, LicenseNotices, licenseSummary } from '../lib/license';
+import { AUDIT_PATH, featureEnabled, LICENSE_PATH, licenseMenuVisible, LicenseNotices, licenseSummary } from '../lib/license';
 import { Badge, Button, cx } from './ui';
 import { JobsMenu } from './jobs/JobsMenu';
 
@@ -162,9 +162,11 @@ export function Layout() {
               <NavItem to="/admin/integrations" icon={<Workflow size={18} />}>
                 Integrations
               </NavItem>
-              <NavItem to={LICENSE_PATH} icon={<BadgeCheck size={18} />}>
-                License
-              </NavItem>
+              {licenseMenuVisible(license.data) && (
+                <NavItem to={LICENSE_PATH} icon={<BadgeCheck size={18} />}>
+                  License
+                </NavItem>
+              )}
             </>
           )}
         </nav>

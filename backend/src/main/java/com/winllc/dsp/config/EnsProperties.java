@@ -15,8 +15,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * The settings shared by every ENS application (platform baseline v1), bound from the
  * {@code ENS_*} environment variables in application.yml: security headers, the DoD
- * notice-and-consent banner, session controls and X.509 revocation checking. The audit outputs
- * ({@code ens.audit.*}) have their own class, {@code AuditProperties}.
+ * notice-and-consent banner, session controls, X.509 revocation checking and the license page's
+ * menu entry. The audit outputs ({@code ens.audit.*}) have their own class, {@code AuditProperties}.
  */
 @ConfigurationProperties("ens")
 public class EnsProperties {
@@ -25,12 +25,22 @@ public class EnsProperties {
   private final ConsentBanner consentBanner = new ConsentBanner();
   private final Session session = new Session();
   private final X509 x509 = new X509();
+  /**
+   * Whether the navigation menu has an entry for the license page (ENS_LICENSE_MENU_VISIBLE,
+   * default true). False hides only that entry: the page, the way to it while no license is in
+   * effect and the renewal and read-only notices that link to it stay. A flat property on
+   * purpose: a nested {@code ens.license} would also take ENS_LICENSE, the license token, and
+   * fail to bind it.
+   */
+  private boolean licenseMenuVisible = true;
 
   public Csp getCsp() { return csp; }
   public Cookie getCookie() { return cookie; }
   public ConsentBanner getConsentBanner() { return consentBanner; }
   public Session getSession() { return session; }
   public X509 getX509() { return x509; }
+  public boolean isLicenseMenuVisible() { return licenseMenuVisible; }
+  public void setLicenseMenuVisible(boolean licenseMenuVisible) { this.licenseMenuVisible = licenseMenuVisible; }
 
   /** Content-Security-Policy. */
   public static class Csp {

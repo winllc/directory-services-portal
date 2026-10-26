@@ -290,6 +290,12 @@ ens:
       port: ${ENS_AUDIT_SYSLOG_PORT:}
       protocol: ${ENS_AUDIT_SYSLOG_PROTOCOL:tcp}
       facility: ${ENS_AUDIT_SYSLOG_FACILITY:local0}
+  # The license page's entry in the navigation menu (Administration > License). false hides the
+  # entry only: the page stays at /admin/license for administrators, and while no license is in
+  # effect, or it is expiring or read-only, the portal still leads administrators to it. Not under
+  # ens.license: ENS_LICENSE (the license token) maps there and would fail to bind.
+  license-menu-visible: ${ENS_LICENSE_MENU_VISIBLE:true}
 
-# The ENS license is not a Spring property: ENS_LICENSE_FILE and ENS_LICENSE_STATE_DIR (environment
-# only; see README, Licensing). Without a license only sign-in and the license screen work.
+# The ENS license itself is not a Spring property: ENS_LICENSE_FILE and ENS_LICENSE_STATE_DIR
+# (environment only; see README, Licensing). Without a license only sign-in and the license screen
+# work. ENS_LICENSE_MENU_VISIBLE (ens.license-menu-visible above) is the one that is.

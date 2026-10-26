@@ -7,6 +7,7 @@ import com.enssolutions.license.LicenseManager;
 import com.enssolutions.license.LicenseState;
 import com.winllc.dsp.audit.AuditLifecycle;
 import com.winllc.dsp.audit.AuditLog;
+import com.winllc.dsp.config.EnsProperties;
 import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.LicenseStatus;
@@ -29,7 +30,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 /**
  * The license: its status for the web client (any signed-in user; details for administrators),
- * and the license screen's upload (administrators). Both work whatever the license's state.
+ * and the license screen's upload (administrators). Both work whatever the license's state. The
+ * status also carries ENS_LICENSE_MENU_VISIBLE, whether the menu shows the license page.
  */
 @RestController
 public class LicenseController {
@@ -39,11 +41,13 @@ public class LicenseController {
   private final Licensing licensing;
   private final AuditLog audit;
   private final AuditLifecycle lifecycle;
+  private final EnsProperties ens;
 
-  public LicenseController(Licensing licensing, AuditLog audit, AuditLifecycle lifecycle) {
+  public LicenseController(Licensing licensing, AuditLog audit, AuditLifecycle lifecycle, EnsProperties ens) {
     this.licensing = licensing;
     this.audit = audit;
     this.lifecycle = lifecycle;
+    this.ens = ens;
   }
 
   @GetMapping("/api/license")
@@ -141,7 +145,8 @@ public class LicenseController {
         admin && renewal ? Boolean.TRUE : null,
         admin && renewal ? check.daysLeft().orElse(null) : null,
         features,
-        admin ? details(check) : null);
+        admin ? details(check) : null,
+        ens.isLicenseMenuVisible());
   }
 
   private LicenseStatus.Details details(LicenseCheck check) {

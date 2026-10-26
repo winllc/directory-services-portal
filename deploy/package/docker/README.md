@@ -134,6 +134,9 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
 - `ENS_CONSENT_BANNER_ENABLED=true` for the DoD notice-and-consent banner before sign-in (DISA
   STIG); the standard DoD text unless `ENS_CONSENT_BANNER_TEXT` / `ENS_CONSENT_BANNER_FILE` say otherwise.
 - `BANNER_TEXT` and colours for a classification banner; `LOGIN_HINT` for help text.
+- `ENS_LICENSE_MENU_VISIBLE=false` hides the license page's entry in the navigation menu (default
+  `true`). The page stays at `/admin/license`, and administrators are still led to it while the
+  portal is unlicensed, expiring or read-only.
 - Metrics, analysis and background-task limits: see the comments in the file.
 
 ### License

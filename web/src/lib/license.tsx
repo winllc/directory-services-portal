@@ -53,6 +53,16 @@ export function RequireLicense({ feature, children }: { feature: LicensedFeature
   return enabled ? <>{children}</> : <LicenseRequired feature={feature} />;
 }
 
+/**
+ * Whether the navigation menu lists the license page (ENS_LICENSE_MENU_VISIBLE on the server). Only
+ * an explicit `false` hides it: unknown (loading, unreadable, an older server) keeps it. The page and
+ * the ways to it while no license is in effect (the bare shell, the redirect) or it is expiring or
+ * read-only (the notices) don't depend on it.
+ */
+export function licenseMenuVisible(status: LicenseStatus | undefined): boolean {
+  return status?.menuVisible !== false;
+}
+
 /** One line for administrators at the bottom of the navigation. */
 export function licenseSummary(status: LicenseStatus): string {
   const d = status.details;

@@ -320,6 +320,10 @@ license:
   existingSecret: ""
   # Or the license file's content: --set-file license.file=./license.lic (the chart creates the Secret).
   file: ""
+  # ENS_LICENSE_MENU_VISIBLE: the license page's entry in the navigation menu (Administration >
+  # License). false hides the entry only: the page stays at /admin/license, and administrators are
+  # still led to it while the portal is unlicensed, expiring or read-only.
+  menuVisible: true
 
 # --- Directory (env.template: Directory connection, Users & groups) ---------------------------
 directory:

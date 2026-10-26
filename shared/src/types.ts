@@ -348,6 +348,12 @@ export interface LicenseStatus {
   /** Every catalog feature, and whether it can be used now. */
   features: { id: LicensedFeatureId; label: string; description: string; enabled: boolean }[];
   details?: LicenseDetails;
+  /**
+   * Show the license page's entry in the navigation menu (ENS_LICENSE_MENU_VISIBLE). Only `false`
+   * hides it (absent from older servers: shown). The page itself, and the links to it while no
+   * license is in effect or it is expiring or read-only, stay either way.
+   */
+  menuVisible?: boolean;
 }
 
 export interface LicenseDetails {

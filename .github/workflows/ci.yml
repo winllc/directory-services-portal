@@ -277,6 +277,19 @@ jobs:
           helm template dsp "$CHART" -f "$d" --set directory.mode=memory --show-only templates/configmap.yaml | grep -qx '  DEMO_MODE: "true"'
           echo "integration settings OK"
 
+      - name: Check the license settings
+        run: |
+          # license.menuVisible reaches the API as ENS_LICENSE_MENU_VISIBLE: true by default and
+          # when unset (--reuse-values from an older release), false when set so, and only booleans.
+          d="$CHART/ci/default-values.yaml"
+          cm() { helm template dsp "$CHART" -f "$d" "$@" --show-only templates/configmap.yaml; }
+          grep -qx '  ENS_LICENSE_MENU_VISIBLE: "true"' <<<"$(cm)"
+          grep -qx '  ENS_LICENSE_MENU_VISIBLE: "true"' <<<"$(cm --set license.menuVisible=true)"
+          grep -qx '  ENS_LICENSE_MENU_VISIBLE: "false"' <<<"$(cm --set license.menuVisible=false)"
+          grep -qx '  ENS_LICENSE_MENU_VISIBLE: "true"' <<<"$(cm --set license.menuVisible=null)"
+          if cm --set-string license.menuVisible=hidden > /dev/null 2>&1; then echo "accepted a non-boolean license.menuVisible"; exit 1; fi
+          echo "license settings OK"
+
   bundle:
     # The Docker/Podman deployment package: lint its scripts, and check that every documented
     # way of installing it gives a valid compose configuration, publishing the expected ports,

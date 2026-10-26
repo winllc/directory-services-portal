@@ -364,6 +364,9 @@ no responder or CRL answers for signs in with a warning in the API log. With
 `ocspResponderUrl` relay on a closed network), or `mode: "off"` to keep the check off. A mode you
 set yourself keeps `closed` as before. `helm upgrade --reuse-values` keeps the old `off`.
 
+From the release with `license.menuVisible` (default `true`), nothing changes unless you set it
+to `false`; an upgrade with `--reuse-values` renders it as `true`.
+
 From the release with the license state in the database, the license PVC gets
 `helm.sh/resource-policy: keep` (`helm uninstall` no longer deletes it), and with `database.url`
 the first start imports the installation id from it: upgrade with one replica first. Several
@@ -410,6 +413,11 @@ To hand the chart a license instead, use `license.existingSecret` (key `license.
 `--set-file license.file=./license.lic`. The `license-init` init container copies it into the
 license volume **only when no license is installed there yet** (the same rule as the release
 bundle's `install.sh`). Replace a license on the license screen.
+
+`license.menuVisible: false` (`ENS_LICENSE_MENU_VISIBLE`) takes the license page out of the
+navigation menu. Only the menu entry goes: administrators open the page at `/admin/license`, and
+are still taken there, or shown a link to it, while the portal is unlicensed, the license is
+about to expire or the portal is read-only.
 
 The installation id is also in the API's startup log:
 `kubectl logs -n dsp deploy/dsp-directory-services-portal-api -c api | grep License:`.
@@ -484,6 +492,7 @@ Existing claims (`existingClaim`) are never touched.
 | `database.poolSize` / `.configRefresh` | `10` / `2s` | connections per pod; how soon other replicas see a configuration change |
 | `license.existingSecret` | `""` | Secret with key `license.lic` |
 | `license.file` | `""` | `--set-file license.file=./license.lic` |
+| `license.menuVisible` | `true` | `ENS_LICENSE_MENU_VISIBLE`: `false` hides the license page's entry in the navigation menu; the page (`/admin/license`) and the ways to it while the portal is unlicensed, expiring or read-only stay |
 
 ### Single sign-on
 
