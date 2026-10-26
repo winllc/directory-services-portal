@@ -15,8 +15,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * The settings shared by every ENS application (platform baseline v1), bound from the
  * {@code ENS_*} environment variables in application.yml: security headers, the DoD
- * notice-and-consent banner, session controls and X.509 revocation checking. The audit outputs
- * ({@code ens.audit.*}) have their own class, {@code AuditProperties}.
+ * notice-and-consent banner, session controls, X.509 revocation checking and the license page's
+ * menu entry. The audit outputs ({@code ens.audit.*}) have their own class, {@code AuditProperties}.
  */
 @ConfigurationProperties("ens")
 public class EnsProperties {
@@ -25,12 +25,14 @@ public class EnsProperties {
   private final ConsentBanner consentBanner = new ConsentBanner();
   private final Session session = new Session();
   private final X509 x509 = new X509();
+  private final License license = new License();
 
   public Csp getCsp() { return csp; }
   public Cookie getCookie() { return cookie; }
   public ConsentBanner getConsentBanner() { return consentBanner; }
   public Session getSession() { return session; }
   public X509 getX509() { return x509; }
+  public License getLicense() { return license; }
 
   /** Content-Security-Policy. */
   public static class Csp {
@@ -39,6 +41,22 @@ public class EnsProperties {
 
     public boolean isReportOnly() { return reportOnly; }
     public void setReportOnly(boolean reportOnly) { this.reportOnly = reportOnly; }
+  }
+
+  /**
+   * How the web client presents the license. The license itself (file, state directory, token) is
+   * read by the license library from the {@code ENS_LICENSE_*} environment, not from here.
+   */
+  public static class License {
+    /**
+     * Whether the navigation menu has an entry for the license page (ENS_LICENSE_MENU_VISIBLE,
+     * default true). False hides only that entry: the page, the way to it while no license is in
+     * effect and the renewal and read-only notices that link to it stay.
+     */
+    private boolean menuVisible = true;
+
+    public boolean isMenuVisible() { return menuVisible; }
+    public void setMenuVisible(boolean menuVisible) { this.menuVisible = menuVisible; }
   }
 
   /** The session cookie (and the portal's own cookies). */

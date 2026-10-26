@@ -12,6 +12,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 
@@ -67,6 +68,7 @@ class LicenseModesTest extends ApiTestSupport {
       assertThat(status.has("details")).isFalse();
       // Uploading is for administrators.
       assertThat(status(upload(alice, TestLicenses.full()))).isEqualTo(403);
+      assertThat(status.get("menuVisible").asBoolean()).isTrue();
     }
 
     @Test
@@ -183,6 +185,10 @@ class LicenseModesTest extends ApiTestSupport {
       assertThat(d.get("file").asString()).endsWith("license.lic");
       assertThat(status.get("evaluation").asBoolean()).isFalse();
       assertThat(status.has("renewalWarning")).isFalse();
+      // ENS_LICENSE_MENU_VISIBLE unset: the menu shows the license page.
+      assertThat(status.get("menuVisible").isBoolean()).isTrue();
+      assertThat(status.get("menuVisible").asBoolean()).isTrue();
+      assertThat(body(login("alice").get("/api/license")).get("menuVisible").asBoolean()).isTrue();
     }
 
     @Test
@@ -226,6 +232,40 @@ class LicenseModesTest extends ApiTestSupport {
       assertThat(admin.get("state").asString()).isEqualTo("GRACE");
       assertThat(admin.get("mode").asString()).isEqualTo("FULL");
       assertThat(admin.get("renewalWarning").asBoolean()).isTrue();
+    }
+  }
+
+  /**
+   * ENS_LICENSE_MENU_VISIBLE=false tells the web client to drop the license page's menu entry; the
+   * license endpoints, and so the page and every way back to it, work as before.
+   */
+  @Nested
+  @TestPropertySource(properties = "ENS_LICENSE_MENU_VISIBLE=false")
+  class MenuEntryHidden extends ApiTestSupport {
+    @Test
+    void theStatusSaysSoToEveryone() throws Exception {
+      Client admin = login("admin");
+      JsonNode status = body(admin.get("/api/license"));
+      assertThat(status.get("menuVisible").asBoolean()).isFalse();
+      assertThat(status.get("mode").asString()).isEqualTo("FULL");
+      assertThat(status.get("details").get("installationId").asString()).matches("DP-[0-9A-Z]{4}-[0-9A-Z]{4}");
+      assertThat(body(login("alice").get("/api/license")).get("menuVisible").asBoolean()).isFalse();
+    }
+
+    @Test
+    void theLicenseScreenStillWorksWithoutALicense() throws Exception {
+      TestLicensing.remove();
+      Client admin = login("admin");
+      JsonNode status = body(admin.get("/api/license"));
+      assertThat(status.get("mode").asString()).isEqualTo("UNLICENSED");
+      assertThat(status.get("menuVisible").asBoolean()).isFalse();
+      MvcResult r = upload(admin, TestLicenses.full());
+      assertThat(status(r)).isEqualTo(200);
+      assertThat(body(r).get("license").get("mode").asString()).isEqualTo("FULL");
+      assertThat(body(r).get("license").get("menuVisible").asBoolean()).isFalse();
+      assertThat(status(admin.get(STAFF))).isEqualTo(200);
+      // Uploading is still for administrators only.
+      assertThat(status(upload(login("alice"), TestLicenses.full()))).isEqualTo(403);
     }
   }
 

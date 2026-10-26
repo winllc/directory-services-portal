@@ -14,6 +14,9 @@ import java.util.List;
  * @param evaluation     show the evaluation banner
  * @param renewalWarning show administrators a renewal reminder ({@code daysLeft} days left)
  * @param features       every catalog feature of the product, and whether it can be used now
+ * @param menuVisible    show the license page's entry in the navigation menu (ENS_LICENSE_MENU_VISIBLE);
+ *                       false hides only that entry, not the page or the ways to it while a license is
+ *                       missing, expiring or read-only
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record LicenseStatus(
@@ -25,7 +28,8 @@ public record LicenseStatus(
     Boolean renewalWarning,
     Long daysLeft,
     List<Feature> features,
-    Details details) {
+    Details details,
+    boolean menuVisible) {
 
   public record Feature(String id, String label, String description, boolean enabled) {}
 
