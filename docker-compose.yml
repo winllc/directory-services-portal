@@ -99,6 +99,8 @@ services:
       # BANNER_FOREGROUND: "#ffffff"
       # BANNER_BACKGROUND: "#007a33"
       ENS_COOKIE_SECURE: "false"
+      # Hide the license page's menu entry (the page and the ways to it without a license stay):
+      # ENS_LICENSE_MENU_VISIBLE: "false"
       # Honour X-Forwarded-* set by the web proxy (which overwrites them), so the API sees the real
       # client address (used for login throttling) and scheme. The api service is not published,
       # so only the proxy can reach it.

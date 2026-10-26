@@ -49,6 +49,8 @@ no `NGINX_LISTEN` and keeps listening on every interface, as before (the install
   only on the first start: afterwards upload the license, or set `ENS_LICENSE=$(base64 -w0 acme.lic)`
   in `portal.env` and restart, which installs it unless a different usable license, or a newer
   revision of it, is installed already. The startup log line `License: ...` says what is in effect. For a trial, download an evaluation license from the ENS licensing portal.
+  `ENS_LICENSE_MENU_VISIBLE=false` in `portal.env` hides the license page's menu entry (the page,
+  and the ways to it while a license is missing, expiring or read-only, stay); default `true`.
 - HTTPS: terminate TLS in nginx (add a `listen 443 ssl` server, or put a proxy in front) and set
   `ENS_COOKIE_SECURE=true`. The site sends the ENS security headers (CSP and others); HSTS when a
   proxy in front sends `X-Forwarded-Proto: https`; in your own `listen 443 ssl` server add

@@ -257,6 +257,10 @@ package_native() {
     echo "# yet, or if it is a newer revision of the installed one; otherwise the installed license is"
     echo "# kept. Leave it empty to supply the license another way."
     echo "ENS_LICENSE="
+    echo "# The license page's entry in the navigation menu (Administration > License); false hides it."
+    echo "# Only the entry: the page stays at /admin/license, and administrators are still led to it while"
+    echo "# the portal is unlicensed, expiring or read-only. A value that is not a boolean stops the API."
+    echo "#ENS_LICENSE_MENU_VISIBLE=true"
     echo
     sed -n '/^# --- Directory connection/,$p' "$TEMPLATES/docker/env.template" \
       | sed -e 's|@COOKIE_SECURE@|false|' -e 's|^# Empty: /data/audit inside the portal-data volume.|# Empty: $DATA_DIR/audit.|' \

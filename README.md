@@ -67,6 +67,15 @@ Each package has its own README (`deploy/package/docker/README.md`,
 installers verify. Building from source, the demo compose stack in this repository and
 `docker build` are for development only (see [Development](#development)).
 
+### Upgrade notes: license menu entry
+
+Nothing changes on upgrade. New and optional: `ENS_LICENSE_MENU_VISIBLE` (default `true`; Helm
+`license.menuVisible`) - `false` hides the license page's entry in the navigation menu
+(*Administration > License*) while the page and every way to it while a license is missing,
+expiring or read-only stay ([Licensing](#licensing)). `GET /api/license` gains the field
+`menuVisible`. The release bundle's `env.template` and the native `portal.env` list it, commented
+out; `upgrade.sh` keeps your `.env`, so add it only if you want the entry hidden.
+
 ### Upgrade notes: single sign-on and the shared database
 
 Upgrading an existing installation needs no change: without `SSO_*` and `DSP_DATABASE_*` the
@@ -378,6 +387,13 @@ properties:
 |---|---|---|
 | `ENS_LICENSE_FILE` | `/etc/ens/directory-portal.lic` | `/var/lib/ens/directory-portal/license.lic` |
 | `ENS_LICENSE_STATE_DIR` (installation id, highest revisions seen) | `/var/lib/ens/directory-portal` | `/var/lib/ens/directory-portal` |
+
+**Menu entry**: whether the navigation menu lists the license page. A Spring property
+(`ens.license.menu-visible`), unlike the two above:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ENS_LICENSE_MENU_VISIBLE` | `true` | `false` hides *Administration > License* from the navigation menu (the web client reads it from `GET /api/license`, field `menuVisible`). The page stays at `/admin/license` for administrators, and so do the ways to it: the license screen and its link in the reduced header while no license is in effect, and the links in the read-only and renewal notices. The license line at the bottom of the menu stays too. A value that is not a boolean stops the API at startup |
 
 The state directory, and the license file's directory, must be writable by the API (the upload
 writes the file) and persistent: losing it gives the installation a new id, and bound licenses
