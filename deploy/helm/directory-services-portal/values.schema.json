@@ -404,6 +404,9 @@
         },
         "file": {
           "type": "string"
+        },
+        "menuVisible": {
+          "type": "boolean"
         }
       }
     },
