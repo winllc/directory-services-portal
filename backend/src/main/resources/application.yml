@@ -139,6 +139,13 @@ portal:
     password-file: ${DSP_DATABASE_PASSWORD_FILE:}
     pool-size: ${DSP_DATABASE_POOL_SIZE:10}
     config-refresh: ${DSP_CONFIG_REFRESH:2s}
+  # The key secrets the portal stores itself (webhook signing secrets) are encrypted with: 32
+  # random bytes in base64 (openssl rand -base64 32). Prefer DSP_SECRETS_KEY_FILE. Unset, they are
+  # stored unencrypted (a warning at startup). Every replica needs the same key; keep a copy with
+  # your backups: without it the stored secrets can't be read.
+  secrets:
+    key: ${DSP_SECRETS_KEY:}
+    key-file: ${DSP_SECRETS_KEY_FILE:}
   # Single sign-on (see README, Single sign-on): each provider is off until configured. The asserted
   # identity ({{value}}) must match exactly one directory entry through the user filter; groups and
   # administrator status then come from the directory. Provider groups make a user an

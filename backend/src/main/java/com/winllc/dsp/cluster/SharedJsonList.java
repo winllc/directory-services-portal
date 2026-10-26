@@ -84,6 +84,11 @@ public final class SharedJsonList<T> {
     }
   }
 
+  /** Where the list is kept, for messages: the file, or the shared database's document. */
+  public String describe() {
+    return shared != null ? "the shared database (dsp_document " + document + ")" : file.toString();
+  }
+
   /** The current items (a copy). */
   public synchronized List<T> list() {
     sync();

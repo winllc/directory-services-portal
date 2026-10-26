@@ -470,6 +470,7 @@ public class WebhookService {
     Integer status = null;
     String error;
     try {
+      String secret = webhooks.signingSecret(w);
       // One deadline for the whole attempt: the name lookup and the send.
       long started = System.nanoTime();
       UrlGuard.Target target = guard.resolve(UrlGuard.parse(w.url()), sender.deadline());
@@ -481,7 +482,7 @@ public class WebhookService {
       headers.put("X-DSP-Delivery", d.id());
       headers.put("X-DSP-Webhook-Id", w.id());
       headers.put(WebhookSender.TIMESTAMP_HEADER, Long.toString(timestamp));
-      headers.put(WebhookSender.SIGNATURE_HEADER, WebhookSender.sign(w.secret(), timestamp, body));
+      headers.put(WebhookSender.SIGNATURE_HEADER, WebhookSender.sign(secret, timestamp, body));
       WebhookSender.Result r = sender.send(target, headers, body, sender.deadline().minusNanos(System.nanoTime() - started));
       if (r.delivered()) {
         deliveries.record(d.attempted(at, r.status(), null, Deliveries.DELIVERED, d.nextAttemptAt()));
@@ -491,6 +492,9 @@ public class WebhookService {
       error = r.error() != null ? r.error() : "HTTP " + r.status();
     } catch (UrlGuard.Refused e) {
       error = "Refused: " + e.getMessage();
+    } catch (com.winllc.dsp.secrets.SecretBox.UnreadableSecretException e) {
+      // Nothing is sent unsigned: set the key the secret was stored with, or rotate the secret.
+      error = "Not sent: the signing secret can't be read. " + e.getMessage();
     }
     error = error.length() > 900 ? error.substring(0, 900) : error;
     int max = Math.max(1, props.getWebhooks().getMaxAttempts());
