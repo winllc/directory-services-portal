@@ -209,3 +209,69 @@ describe('banners', () => {
     expect(screen.queryByText(/Renew it/)).not.toBeInTheDocument();
   });
 });
+
+describe('license menu entry (ENS_LICENSE_MENU_VISIBLE)', () => {
+  const navLinks = async () => {
+    const nav = await screen.findByRole('navigation');
+    await within(nav).findByRole('link', { name: 'Audit log' });
+    return nav;
+  };
+
+  it('is in the menu by default and with true', async () => {
+    mockApi(admin, { '/api/license': license() });
+    const first = renderAt('/');
+    expect(within(await navLinks()).getByRole('link', { name: 'License' })).toHaveAttribute('href', '/admin/license');
+    first.unmount();
+
+    mockApi(admin, { '/api/license': license(ALL, { menuVisible: true }) });
+    renderAt('/');
+    expect(within(await navLinks()).getByRole('link', { name: 'License' })).toHaveAttribute('href', '/admin/license');
+  });
+
+  it('is left out with false; the rest of the menu and the license line stay', async () => {
+    mockApi(admin, { '/api/license': license(ALL, { menuVisible: false }) });
+    renderAt('/');
+    const nav = await navLinks();
+    expect(within(nav).queryByRole('link', { name: 'License' })).not.toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'Permissions' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'License' })).not.toBeInTheDocument();
+    expect(screen.getByText('Licensed to Acme Corp until 2027-12-31')).toBeInTheDocument();
+  });
+
+  it('with false, the license page still opens at its address, for administrators only', async () => {
+    mockApi(admin, { '/api/license': license(ALL, { menuVisible: false }) });
+    const first = renderAt('/admin/license');
+    expect(await screen.findByRole('heading', { name: 'License' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Installation id')).toHaveTextContent('DP-7F3K-29QD');
+    expect(screen.getByLabelText('License file')).toBeInTheDocument();
+    first.unmount();
+
+    mockApi(alice, { '/api/license': license(ALL, { menuVisible: false, details: undefined }) });
+    renderAt('/admin/license');
+    expect(await screen.findByRole('heading', { name: 'Administrators only' })).toBeInTheDocument();
+  });
+
+  it('with false, administrators are still sent to the license screen when there is no license, and its link stays', async () => {
+    mockApi(admin, { '/api/license': { ...unlicensed(), menuVisible: false } });
+    renderAt('/d/staff');
+    expect(await screen.findByText('This portal is not licensed')).toBeInTheDocument();
+    expect(screen.getByTestId('path')).toHaveTextContent('/admin/license');
+    const nav = screen.getByRole('navigation', { name: 'Administration' });
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent?.trim())).toEqual(['License', 'Audit log']);
+    expect(within(nav).getByRole('link', { name: 'License' })).toHaveAttribute('href', '/admin/license');
+  });
+
+  it('with false, the renewal reminder and the read-only notice still link to the license screen', async () => {
+    mockApi(admin, { '/api/license': license(ALL, { menuVisible: false, renewalWarning: true, daysLeft: 12 }) });
+    const first = renderAt('/');
+    expect(await screen.findByRole('link', { name: 'Renew it' })).toHaveAttribute('href', '/admin/license');
+    first.unmount();
+
+    mockApi(admin, {
+      '/api/license': license(ALL, { menuVisible: false, mode: 'READ_ONLY', state: 'EXPIRED', message: 'This license expired on 2026-01-01.' }),
+    });
+    renderAt('/');
+    expect(await screen.findByRole('link', { name: 'Install a renewed license' })).toHaveAttribute('href', '/admin/license');
+  });
+});
