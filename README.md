@@ -389,7 +389,7 @@ properties:
 | `ENS_LICENSE_STATE_DIR` (installation id, highest revisions seen) | `/var/lib/ens/directory-portal` | `/var/lib/ens/directory-portal` |
 
 **Menu entry**: whether the navigation menu lists the license page. A Spring property
-(`ens.license.menu-visible`), unlike the two above:
+(`ens.license-menu-visible`), unlike the two above:
 
 | Variable | Default | Meaning |
 |---|---|---|

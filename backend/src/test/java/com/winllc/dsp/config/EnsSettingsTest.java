@@ -54,7 +54,7 @@ class EnsSettingsTest {
       assertThat(ens.getX509().getRevocationCache()).isEqualTo(Duration.ofMinutes(10));
       assertThat(ens.getX509().allowedIssuerList()).isEmpty();
       // The license page keeps its menu entry unless ENS_LICENSE_MENU_VISIBLE=false.
-      assertThat(ens.getLicense().isMenuVisible()).isTrue();
+      assertThat(ens.isLicenseMenuVisible()).isTrue();
       assertThat(ctx.getEnvironment().getProperty("server.servlet.session.timeout")).isEqualTo("30m");
       assertThat(ctx.getEnvironment().getProperty("server.servlet.session.cookie.secure")).isEqualTo("false");
     });
@@ -113,7 +113,7 @@ class EnsSettingsTest {
           assertThat(ens.getX509().allowedIssuerList()).extracting(Object::toString)
               .containsExactly("CN=DOD ID CA-70, OU=PKI, OU=DoD, O=U.S. Government, C=US", "CN=Other CA");
           assertThat(ens.getX509().problems()).isEmpty();
-          assertThat(ens.getLicense().isMenuVisible()).isFalse();
+          assertThat(ens.isLicenseMenuVisible()).isFalse();
           assertThat(ctx.getEnvironment().getProperty("server.servlet.session.timeout")).isEqualTo("20m");
           assertThat(ctx.getEnvironment().getProperty("server.servlet.session.cookie.secure")).isEqualTo("true");
         });
@@ -143,30 +143,47 @@ class EnsSettingsTest {
     MutablePropertySources sources = env.getPropertySources();
     sources.addFirst(new SystemEnvironmentPropertySource("test-" + StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, Map.of(
         "ENS_CONSENT_BANNER_ENABLED", "true", "ENS_SESSION_IDLE_TIMEOUT", "10m", "ENS_SESSION_MAX_PER_USER", "2",
-        "ENS_X509_REVOCATION_FAIL", "open", "ENS_CSP_REPORT_ONLY", "true", "ENS_LICENSE_MENU_VISIBLE", "false")));
+        "ENS_X509_REVOCATION_FAIL", "open", "ENS_CSP_REPORT_ONLY", "true", "ENS_LICENSE_MENU_VISIBLE", "false",
+        "ENS_LICENSE", "")));
     EnsProperties ens = new Binder(ConfigurationPropertySources.from(sources)).bind("ens", EnsProperties.class).get();
     assertThat(ens.getConsentBanner().isEnabled()).isTrue();
     assertThat(ens.getSession().getIdleTimeout()).isEqualTo(Duration.ofMinutes(10));
     assertThat(ens.getSession().getMaxPerUser()).isEqualTo(2);
     assertThat(ens.getX509().failOpen()).isTrue();
     assertThat(ens.getCsp().isReportOnly()).isTrue();
-    assertThat(ens.getLicense().isMenuVisible()).isFalse();
+    assertThat(ens.isLicenseMenuVisible()).isFalse();
   }
 
   /** ENS_LICENSE_MENU_VISIBLE is a boolean like the other switches: true keeps the entry, anything not a boolean stops the start. */
   @Test
   void theLicenseMenuSwitchIsABoolean() {
     runner.withPropertyValues("ENS_LICENSE_MENU_VISIBLE=true")
-        .run(ctx -> assertThat(ctx.getBean(EnsProperties.class).getLicense().isMenuVisible()).isTrue());
+        .run(ctx -> assertThat(ctx.getBean(EnsProperties.class).isLicenseMenuVisible()).isTrue());
     runner.withPropertyValues("ENS_LICENSE_MENU_VISIBLE=FALSE")
-        .run(ctx -> assertThat(ctx.getBean(EnsProperties.class).getLicense().isMenuVisible()).isFalse());
+        .run(ctx -> assertThat(ctx.getBean(EnsProperties.class).isLicenseMenuVisible()).isFalse());
     for (String bad : new String[] {"maybe", "hidden", "2"}) {
       runner.withPropertyValues("ENS_LICENSE_MENU_VISIBLE=" + bad).run(ctx -> {
         assertThat(ctx).as(bad).hasFailed();
-        assertThat(ctx.getStartupFailure()).as(bad).hasStackTraceContaining("ens.license.menu-visible");
+        assertThat(ctx.getStartupFailure()).as(bad).hasStackTraceContaining("ens.license-menu-visible");
       });
     }
     // The same as the other ENS_* switches.
     runner.withPropertyValues("ENS_CONSENT_BANNER_ENABLED=maybe").run(ctx -> assertThat(ctx).hasFailed());
+  }
+
+  /**
+   * ENS_LICENSE (the license token; the deployment package sets it empty) maps to ens.license by
+   * relaxed binding, so no setting of ours may live under ens.license: the API would not start.
+   */
+  @Test
+  void theLicenseTokenVariableLeavesTheSettingsAlone() {
+    for (String token : new String[] {"", "dGhlIGxpY2Vuc2UgdG9rZW4"}) {
+      runner.withInitializer(ctx -> ctx.getEnvironment().getPropertySources().addFirst(new SystemEnvironmentPropertySource(
+              "test-env", Map.of("ENS_LICENSE", token, "ENS_LICENSE_MENU_VISIBLE", "false"))))
+          .run(ctx -> {
+            assertThat(ctx).as("ENS_LICENSE=" + token).hasNotFailed();
+            assertThat(ctx.getBean(EnsProperties.class).isLicenseMenuVisible()).isFalse();
+          });
+    }
   }
 }

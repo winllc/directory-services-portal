@@ -146,7 +146,7 @@ public class LicenseController {
         admin && renewal ? check.daysLeft().orElse(null) : null,
         features,
         admin ? details(check) : null,
-        ens.getLicense().isMenuVisible());
+        ens.isLicenseMenuVisible());
   }
 
   private LicenseStatus.Details details(LicenseCheck check) {
