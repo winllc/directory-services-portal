@@ -262,7 +262,7 @@ public class SsoSecurity {
     var convert = OpenSaml5AuthenticationProvider.createDefaultResponseAuthenticationConverter();
     provider.setResponseAuthenticationConverter(token -> {
       Saml2Authentication converted = convert.convert(token);
-      // Whether single logout will need the IdP session's identifiers (decided before mapping fails or not).
+      // Single logout needs the identifiers of the IdP session this assertion belongs to.
       boolean singleLogout = samlParties.singleLogout();
       for (Assertion a : token.getResponse().getAssertions()) {
         if (a.getID() == null || !state.firstUse(a.getID(), expiry(a))) {
