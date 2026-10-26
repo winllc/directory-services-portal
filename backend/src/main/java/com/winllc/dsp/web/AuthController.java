@@ -94,7 +94,7 @@ public class AuthController {
     String redirect = sso.signOutUrl(user, request);
     if (user != null) {
       audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName())
-          .detail("providerLogout", redirect != null ? user.authMethod() : null).success();
+          .detail("method", user.authMethod()).detail("providerLogout", redirect != null).success();
     }
     HttpSession session = request.getSession(false);
     if (session != null) {
