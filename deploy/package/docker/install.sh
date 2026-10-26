@@ -107,7 +107,13 @@ if [ -f .env ] && [ -z "$force_env" ]; then
     say "Updated .env for this package: COMPOSE_FILE=$files (published ports unchanged), CONTAINER_ENGINE=$ENGINE" >&2
   fi
 else
-  if [ -f .env ]; then cp .env ".env.bak-$(date +%Y%m%d%H%M%S)"; fi
+  old_key=""; old_key_file=""
+  if [ -f .env ]; then
+    cp .env ".env.bak-$(date +%Y%m%d%H%M%S)"
+    # --force-env keeps the secrets key: the stored webhook secrets can only be read with it.
+    old_key="$(sed -n 's/^DSP_SECRETS_KEY=//p' .env | tail -n 1)"
+    old_key_file="$(sed -n 's/^DSP_SECRETS_KEY_FILE=//p' .env | tail -n 1)"
+  fi
   files="docker-compose.yml"
   # docker-compose.yml publishes HTTP; HTTPS alone (--https without --http) publishes only HTTPS.
   if [ -n "$no_publish" ] || { [ -n "$https_port" ] && [ -z "$http_port" ]; }; then files=docker-compose.no-publish.yml; fi
@@ -145,7 +151,25 @@ else
       ;;
   esac
   [ -n "$https_port" ] && setenv X509_ENABLED true
-  say "Wrote .env"
+  # The key webhook signing secrets are stored encrypted with: generated for a new .env only. An
+  # existing .env keeps what it has, and --force-env carries it over: a key must never change
+  # under stored secrets.
+  if [ -n "$old_key" ] || [ -n "$old_key_file" ]; then
+    [ -z "$old_key" ] || setenv DSP_SECRETS_KEY "$old_key"
+    [ -z "$old_key_file" ] || printf 'DSP_SECRETS_KEY_FILE=%s\n' "$old_key_file" >> .env
+    say "Wrote .env (DSP_SECRETS_KEY${old_key_file:+_FILE} kept from the previous one)"
+  else
+    secrets_key="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+    [ "${#secrets_key}" -eq 44 ] || die "Could not generate DSP_SECRETS_KEY."
+    setenv DSP_SECRETS_KEY "$secrets_key"
+    say "Wrote .env (with a random DSP_SECRETS_KEY: keep a copy of .env with your backups)"
+  fi
+fi
+
+# An .env from a release before DSP_SECRETS_KEY: said, not changed.
+if ! grep -q '^DSP_SECRETS_KEY=.' .env && ! grep -q '^DSP_SECRETS_KEY_FILE=.' .env; then
+  say "Note: DSP_SECRETS_KEY is not set in .env, so webhook signing secrets are stored unencrypted. To encrypt"
+  say "      them, add DSP_SECRETS_KEY=<the output of: openssl rand -base64 32> to .env (keep a copy) and restart."
 fi
 
 # The built-in demo directory (DIRECTORY_MODE=memory) now starts only with DEMO_MODE=true.

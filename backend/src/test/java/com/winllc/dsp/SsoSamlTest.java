@@ -122,7 +122,7 @@ class SsoSamlTest extends ApiTestSupport {
   void servesItsMetadataAndOffersTheProvider() throws Exception {
     MvcResult m = mvc.perform(get("/api/auth/sso/saml/metadata")).andReturn();
     assertThat(status(m)).isEqualTo(200);
-    assertThat(m.getResponse().getContentAsString()).contains("entityID=\"" + SP + "\"").contains(ACS);
+    assertThat(m.getResponse().getContentAsString()).contains("entityID=\"" + SP + "\"").contains(ACS).doesNotContain("SingleLogoutService");
     JsonNode sso = body(anonymous(get("/api/info"))).get("auth").get("sso");
     assertThat(sso.get(0).get("url").asString()).isEqualTo("/api/auth/sso/saml/authenticate/saml");
   }
@@ -135,6 +135,14 @@ class SsoSamlTest extends ApiTestSupport {
     JsonNode user = body(mvc.perform(get("/api/auth/me").session((MockHttpSession) r.getRequest().getSession(false))).andReturn()).get("user");
     assertThat(user.get("username").asString()).isEqualTo("alice");
     assertThat(user.get("authMethod").asString()).isEqualTo("saml");
+    // Without single logout (SSO_SAML_SINGLE_LOGOUT, off by default) signing out ends the
+    // portal's session only, as before: nothing to go on to, nothing kept for it.
+    MockHttpSession session = (MockHttpSession) r.getRequest().getSession(false);
+    assertThat(session.getAttribute(com.winllc.dsp.sso.SamlLogout.ATTRIBUTE)).isNull();
+    MvcResult out = mvc.perform(post("/api/auth/logout").session(session).header("X-DSP-Request", "1")).andReturn();
+    assertThat(status(out)).isEqualTo(200);
+    assertThat(body(out).has("redirect")).isFalse();
+    assertThat(status(mvc.perform(get("/api/auth/sso/saml/logout")).andReturn())).isEqualTo(404);
   }
 
   @Test

@@ -35,6 +35,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -64,10 +68,17 @@ import tools.jackson.databind.json.JsonMapper;
  * acted, a replica stopping mid-send) is made again, with the same {@code X-DSP-Event-Id}, which
  * receivers use to drop repeats.
  *
- * <p>A change whose deliveries can't be queued (the shared database is unreachable) is kept in
- * this replica's memory, up to {@value #SPOOL_MAX} changes in order, and queued again by the next
- * delivery run that can: an outage of the database loses no event unless the replica stops
- * during it. A full outbox ({@code FileDeliveries}' cap) still drops, by design, and audits it.
+ * <p>With the shared database a change's deliveries are queued in the transaction that stores its
+ * audit event ({@link EntryChanged} is published there): both commit, or neither does and the
+ * change is refused as unaudited (503), so no event is lost when a replica stops, whatever the
+ * state of the database. They are written in a savepoint: should only they fail, the audit event
+ * still commits and the change is kept in this replica's memory, as without the database, to be
+ * queued by the next delivery run.
+ *
+ * <p>Without the shared database (one instance; the outbox is a file), a change whose deliveries
+ * can't be queued is kept in memory, up to {@value #SPOOL_MAX} changes in order, and queued again
+ * by the next delivery run that can. A full outbox ({@code FileDeliveries}' cap) still drops, by
+ * design, and audits it.
  */
 @Service
 public class WebhookService {
@@ -95,6 +106,8 @@ public class WebhookService {
   private volatile UrlGuard guard;
   private volatile WebhookSender sender;
   private final ScheduledExecutorService worker;
+  /** With the shared database: a savepoint inside the audit event's transaction (null alone). */
+  private final TransactionTemplate savepoint;
   private volatile Instant lastPurge = Instant.EPOCH;
   /** Held by a delivery run: runs never overlap (the background thread's and a test's). */
   private final Object running = new Object();
@@ -110,6 +123,13 @@ public class WebhookService {
     this.mapper = mapper;
     this.deliveries = cluster.shared() ? new JdbcDeliveries(cluster)
         : new FileDeliveries(Path.of(portal.getDataDir()).toAbsolutePath().resolve(FileDeliveries.FILE), mapper);
+    if (cluster.shared()) {
+      TransactionTemplate nested = new TransactionTemplate(java.util.Objects.requireNonNull(cluster.tx().getTransactionManager()));
+      nested.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+      this.savepoint = nested;
+    } else {
+      this.savepoint = null;
+    }
     this.guard = new UrlGuard(props.getWebhooks().allowedHostList(), InetAddress::getAllByName);
     try {
       this.sender = new WebhookSender(SSLContext.getDefault(), props.getWebhooks().getConnectTimeout(), props.getWebhooks().getReadTimeout(),
@@ -189,6 +209,10 @@ public class WebhookService {
   @EventListener
   public void onEntryChanged(EntryChanged change) {
     Spooled item = new Spooled(change, Instant.now().truncatedTo(ChronoUnit.MILLIS));
+    if (savepoint != null && TransactionSynchronizationManager.isActualTransactionActive()) {
+      inTransaction(item);
+      return;
+    }
     synchronized (spool) {
       // Behind changes still waiting: keep the order.
       if (!spool.isEmpty()) {
@@ -202,6 +226,26 @@ public class WebhookService {
       synchronized (spool) {
         keep(item, e);
       }
+    }
+  }
+
+  /**
+   * Queues a change's deliveries in the audit event's transaction, in a savepoint: should that
+   * fail, the event still commits, and the change is kept in memory once it has.
+   */
+  private void inTransaction(Spooled item) {
+    try {
+      savepoint.executeWithoutResult(status -> queue(item));
+    } catch (RuntimeException e) {
+      item.deliveries = null;
+      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override
+        public void afterCommit() {
+          synchronized (spool) {
+            keep(item, e);
+          }
+        }
+      });
     }
   }
 
@@ -470,6 +514,7 @@ public class WebhookService {
     Integer status = null;
     String error;
     try {
+      String secret = webhooks.signingSecret(w);
       // One deadline for the whole attempt: the name lookup and the send.
       long started = System.nanoTime();
       UrlGuard.Target target = guard.resolve(UrlGuard.parse(w.url()), sender.deadline());
@@ -481,7 +526,7 @@ public class WebhookService {
       headers.put("X-DSP-Delivery", d.id());
       headers.put("X-DSP-Webhook-Id", w.id());
       headers.put(WebhookSender.TIMESTAMP_HEADER, Long.toString(timestamp));
-      headers.put(WebhookSender.SIGNATURE_HEADER, WebhookSender.sign(w.secret(), timestamp, body));
+      headers.put(WebhookSender.SIGNATURE_HEADER, WebhookSender.sign(secret, timestamp, body));
       WebhookSender.Result r = sender.send(target, headers, body, sender.deadline().minusNanos(System.nanoTime() - started));
       if (r.delivered()) {
         deliveries.record(d.attempted(at, r.status(), null, Deliveries.DELIVERED, d.nextAttemptAt()));
@@ -491,6 +536,9 @@ public class WebhookService {
       error = r.error() != null ? r.error() : "HTTP " + r.status();
     } catch (UrlGuard.Refused e) {
       error = "Refused: " + e.getMessage();
+    } catch (com.winllc.dsp.secrets.SecretBox.UnreadableSecretException e) {
+      // Nothing is sent unsigned: set the key the secret was stored with, or rotate the secret.
+      error = "Not sent: the signing secret can't be read. " + e.getMessage();
     }
     error = error.length() > 900 ? error.substring(0, 900) : error;
     int max = Math.max(1, props.getWebhooks().getMaxAttempts());

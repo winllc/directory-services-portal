@@ -222,6 +222,11 @@ spec:
               mountPath: /etc/dsp/sso-saml-metadata
               readOnly: true
             {{- end }}
+            {{- if include "dsp.secretsKeySet" . }}
+            - name: secrets-key
+              mountPath: /etc/dsp/secrets
+              readOnly: true
+            {{- end }}
             {{- if $v.sso.saml.signing.existingSecret }}
             - name: saml-signing
               mountPath: /etc/dsp/sso-saml-signing
@@ -319,6 +324,17 @@ spec:
             items:
               - key: {{ ternary $v.sso.oidc.clientSecret.existingSecretKey "oidc-client-secret" (not (empty $v.sso.oidc.clientSecret.existingSecret)) }}
                 path: client-secret
+        {{- end }}
+        {{- if include "dsp.secretsKeySet" . }}
+        {{- $sk := $v.integrations.webhooks.secretsKey }}
+        - name: secrets-key
+          secret:
+            secretName: {{ $sk.existingSecret | default (include "dsp.fullname" .) }}
+            # Group-readable: the API runs as the pod's fsGroup.
+            defaultMode: 0440
+            items:
+              - key: {{ ternary ($sk.existingSecretKey | default "secrets-key") "secrets-key" (not (empty $sk.existingSecret)) }}
+                path: key
         {{- end }}
         {{- if include "dsp.samlMetadataXml" . }}
         - name: saml-metadata

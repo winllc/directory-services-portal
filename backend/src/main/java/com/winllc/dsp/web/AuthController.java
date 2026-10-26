@@ -6,6 +6,7 @@ import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
 import com.winllc.dsp.service.ConsentService;
 import com.winllc.dsp.service.SessionService;
+import com.winllc.dsp.sso.SsoSecurity;
 import com.winllc.dsp.web.dto.LoginRequest;
 import com.winllc.dsp.x509.CertificateRejectedException;
 import com.winllc.dsp.x509.X509AuthService;
@@ -41,9 +42,11 @@ public class AuthController {
   private final EnsProperties ens;
   private final ConsentService consent;
   private final SessionService sessions;
+  private final SsoSecurity sso;
 
   public AuthController(AuthService auth, X509AuthService x509, SecurityContextRepository contexts, AuditLog audit, EnsProperties ens,
-      ConsentService consent, SessionService sessions) {
+      ConsentService consent, SessionService sessions, SsoSecurity sso) {
+    this.sso = sso;
     this.auth = auth;
     this.x509 = x509;
     this.contexts = contexts;
@@ -80,10 +83,19 @@ public class AuthController {
     return Map.of("user", user);
   }
 
-  /** {@code consentRequired}: the banner must be acknowledged again before the next sign-in. */
+  /**
+   * {@code consentRequired}: the banner must be acknowledged again before the next sign-in.
+   * {@code redirect}: after a single sign-on with provider sign-out configured, where the browser
+   * goes next to sign out at the provider too (the portal's own session has ended already).
+   */
   @PostMapping("/logout")
-  public Map<String, Boolean> logout(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
-    if (user != null) audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName()).success();
+  public Map<String, Object> logout(@AuthenticationPrincipal SessionUser user, HttpServletRequest request, HttpServletResponse response) {
+    // Worked out while the session still holds what single logout needs.
+    String redirect = sso.signOutUrl(user, request);
+    if (user != null) {
+      audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName())
+          .detail("providerLogout", redirect != null).success();
+    }
     HttpSession session = request.getSession(false);
     if (session != null) {
       sessions.signingOut(session);
@@ -91,7 +103,17 @@ public class AuthController {
     }
     SecurityContextHolder.clearContext();
     if (x509.enabled()) setSuppressCookie(request, response, true);
-    return Map.of("ok", true, "consentRequired", consent.enabled());
+    Map<String, Object> body = new HashMap<>();
+    body.put("ok", true);
+    body.put("consentRequired", consent.enabled());
+    if (redirect != null) body.put("redirect", redirect);
+    return body;
+  }
+
+  /** SAML single logout: the IdP returns the browser here; it goes on to the login page. */
+  @GetMapping(SsoSecurity.SAML_LOGOUT_PATH)
+  public void samlLogoutReturn(HttpServletRequest request, HttpServletResponse response) throws java.io.IOException {
+    sso.singleLogoutReturn(request, response);
   }
 
   /**

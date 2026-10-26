@@ -1276,6 +1276,9 @@
             "label": {
               "type": "string"
             },
+            "providerLogout": {
+              "enum": ["", true, false]
+            },
             "clientSecret": {
               "type": "object",
               "properties": {
@@ -1324,6 +1327,9 @@
             },
             "clockSkew": {
               "type": "string"
+            },
+            "singleLogout": {
+              "enum": ["", true, false]
             },
             "adminGroups": {
               "type": "array",
@@ -1392,6 +1398,25 @@
             "runBudget": {
               "type": "string",
               "pattern": "^[1-9][0-9]*(ms|s|m)$"
+            },
+            "secretsKey": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "pattern": "^$|^[A-Za-z0-9+/_-]{43}=?$"
+                },
+                "existingSecret": {
+                  "type": "string"
+                },
+                "existingSecretKey": {
+                  "type": "string"
+                },
+                "generate": {
+                  "type": "boolean"
+                }
+              }
             }
           }
         },

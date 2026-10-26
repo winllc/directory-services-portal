@@ -61,6 +61,19 @@ if [ -f "$ETC/portal.env" ]; then
 else
   install -m 640 -o root -g dsp portal.env "$ETC/portal.env"
   say "Wrote $ETC/portal.env"
+  # The key webhook signing secrets are stored encrypted with (DSP_SECRETS_KEY_FILE in the new
+  # portal.env): generated for a new installation only, never replaced (a key must not change
+  # under stored secrets). An upgraded portal.env without the setting keeps storing them as before.
+  if [ ! -s "$ETC/secrets-key" ]; then
+    (umask 077 && head -c 32 /dev/urandom | base64 | tr -d '\n' > "$ETC/secrets-key")
+    say "Generated the secrets key ($ETC/secrets-key): keep a copy with your backups"
+  fi
+fi
+if [ -e "$ETC/secrets-key" ]; then chown root:dsp "$ETC/secrets-key" && chmod 640 "$ETC/secrets-key"; fi
+if ! grep -q '^DSP_SECRETS_KEY\(_FILE\)\{0,1\}=.' "$ETC/portal.env"; then
+  say "Note: $ETC/portal.env sets no DSP_SECRETS_KEY_FILE, so webhook signing secrets are stored unencrypted. To"
+  say "      encrypt them: (umask 077; openssl rand -base64 32 > $ETC/secrets-key), chgrp dsp it, chmod 640, add"
+  say "      DSP_SECRETS_KEY_FILE=$ETC/secrets-key to portal.env and restart."
 fi
 
 # The X.509 proxy secret: nginx sends it to the API with every request (X-DSP-Proxy-Secret), and

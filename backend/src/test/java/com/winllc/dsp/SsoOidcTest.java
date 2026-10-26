@@ -121,6 +121,41 @@ class SsoOidcTest extends ApiTestSupport {
     assertThat(sso.get(0).get("url").asString()).isEqualTo("/api/auth/sso/authorize/oidc");
   }
 
+  MvcResult logout(MockHttpSession session) throws Exception {
+    return mvc.perform(post("/api/auth/logout").session(session).header("X-DSP-Request", "1")).andReturn();
+  }
+
+  @Test
+  void signingOutLeavesTheProviderUnlessProviderLogoutIsOn() throws Exception {
+    // Off (the default, so an upgrade signs out as before): the portal's session only.
+    MvcResult in = callback(start(null), "code-lo1", Map.of("preferred_username", "alice"));
+    MvcResult out = logout((MockHttpSession) in.getRequest().getSession(false));
+    assertThat(status(out)).isEqualTo(200);
+    assertThat(body(out).has("redirect")).isFalse();
+
+    ssoProps.getOidc().setProviderLogout(true);
+    ssoProps.setPublicUrl("http://localhost");
+    try {
+      in = callback(start(null), "code-lo2", Map.of("preferred_username", "alice"));
+      MockHttpSession session = (MockHttpSession) in.getRequest().getSession(false);
+      out = logout(session);
+      assertThat(status(out)).isEqualTo(200);
+      // On to the provider's end_session_endpoint, with client_id (no token is kept to send as a
+      // hint) and the pinned address to come back to; the portal's session is over already.
+      URI next = URI.create(body(out).get("redirect").asString());
+      assertThat(next.toString()).startsWith(IDP.issuer + "/logout?");
+      assertThat(query(next)).containsEntry("client_id", "portal").containsEntry("post_logout_redirect_uri", "http://localhost/login?signed_out");
+      assertThat(session.isInvalid()).isTrue();
+      // A password sign-in signs out here only.
+      Client alice = login("alice");
+      MvcResult local = alice.post("/api/auth/logout", Map.of());
+      assertThat(body(local).has("redirect")).isFalse();
+    } finally {
+      ssoProps.getOidc().setProviderLogout(false);
+      ssoProps.setPublicUrl("");
+    }
+  }
+
   @Test
   void signsInTheMappedDirectoryUserWithPkce() throws Exception {
     Started s = start(null);

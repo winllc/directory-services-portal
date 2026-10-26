@@ -409,9 +409,9 @@ public class EntryService {
     audit.requireWritable();
     directory.add(dn, attributes);
     // Recorded as soon as the directory accepts it: reading the entry back can still fail.
-    event.success();
     List<AuditEvent.Change> created = attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList();
-    publish(user, EntryChanged.CREATE, def, form, dn, null, titles.isEmpty() ? rdnValues.get(0) : titles.get(0), created, false);
+    event.alongside(changed(user, EntryChanged.CREATE, def, form, dn, null, titles.isEmpty() ? rdnValues.get(0) : titles.get(0), created, false))
+        .success();
     return loadEntry(def, form, dn);
   }
 
@@ -519,8 +519,10 @@ public class EntryService {
     if (!recorded.isEmpty()) {
       List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
       String name = titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0);
-      event.target("entry", targetDn, name).success();
-      publish(user, EntryChanged.UPDATE, def, form, targetDn, Dns.equal(targetDn, current.dn()) ? null : current.dn(), name, recorded, self);
+      event.target("entry", targetDn, name)
+          .alongside(changed(user, EntryChanged.UPDATE, def, form, targetDn, Dns.equal(targetDn, current.dn()) ? null : current.dn(), name,
+              recorded, self))
+          .success();
       // A password set through a form: the user's own change, or an administrator's reset.
       List<String> secrets = recorded.stream().map(AuditEvent.Change::attribute).filter(a -> HIDDEN.contains(a.toLowerCase())).toList();
       if (!secrets.isEmpty()) {
@@ -579,8 +581,7 @@ public class EntryService {
       event.changes(List.of(recorded)).detail("change", "values");
       audit.requireWritable();
       directory.modifyValues(current.dn(), changes);
-      event.success();
-      publish(user, EntryChanged.UPDATE, def, form, current.dn(), null, name, List.of(recorded), false);
+      event.alongside(changed(user, EntryChanged.UPDATE, def, form, current.dn(), null, name, List.of(recorded), false)).success();
       return new ValueChange(current.dn(), attr, toAdd, toRemove, partial);
     });
   }
@@ -595,9 +596,8 @@ public class EntryService {
           .changes(current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList());
       audit.requireWritable();
       directory.delete(current.dn());
-      event.success();
-      publish(user, EntryChanged.DELETE, def, form(def), current.dn(), null, title(def, current),
-          current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList(), false);
+      event.alongside(changed(user, EntryChanged.DELETE, def, form(def), current.dn(), null, title(def, current),
+          current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList(), false)).success();
       return null;
     });
   }
@@ -633,21 +633,29 @@ public class EntryService {
     }
   }
 
-  /** Tells listeners (webhooks) about a change; a listener's failure never fails the change. */
-  private void publish(SessionUser user, String operation, DirectoryDefinition def, FormDefinition form, String dn, String previousDn,
+  /**
+   * Tells listeners (webhooks) about a change, run with its audit event's storage
+   * ({@link AuditLog.Draft#alongside}): with the shared database inside the event's transaction, so
+   * the webhook outbox rows commit with the audit event or not at all. A listener's failure never
+   * fails the change.
+   */
+  private Runnable changed(SessionUser user, String operation, DirectoryDefinition def, FormDefinition form, String dn, String previousDn,
       String name, List<AuditEvent.Change> changes, boolean self) {
     String apiClient = null;
     if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes a
         && a.getRequest().getAttribute(AuditLog.API_CLIENT) instanceof AuditLog.ApiClient c) {
       apiClient = c.id();
     }
-    try {
-      events.publishEvent(new EntryChanged(operation, def.id(), form.id(), dn, previousDn, name, List.copyOf(changes), self,
-          EntryChanged.Actor.of(user, apiClient)));
-    } catch (RuntimeException e) {
-      org.slf4j.LoggerFactory.getLogger(EntryService.class).error("Could not pass on the change of {}: {}",
-          com.winllc.dsp.util.LogSafe.of(dn), com.winllc.dsp.util.LogSafe.of(e.getMessage()));
-    }
+    EntryChanged change = new EntryChanged(operation, def.id(), form.id(), dn, previousDn, name, List.copyOf(changes), self,
+        EntryChanged.Actor.of(user, apiClient));
+    return () -> {
+      try {
+        events.publishEvent(change);
+      } catch (RuntimeException e) {
+        org.slf4j.LoggerFactory.getLogger(EntryService.class).error("Could not pass on the change of {}: {}",
+            com.winllc.dsp.util.LogSafe.of(dn), com.winllc.dsp.util.LogSafe.of(e.getMessage()));
+      }
+    };
   }
 
   private void count(String operation, String outcome) {

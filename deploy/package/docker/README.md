@@ -59,6 +59,11 @@ services without the published port; `COMPOSE_FILE` in `.env`). Your proxy joins
 `directory-services-portal_default` network and forwards to `http://web:8080`.
 
 The installer never overwrites an existing `.env`; `--force-env` recreates it (keeping a copy).
+A new `.env` gets a random `DSP_SECRETS_KEY`, the key webhook signing secrets are stored encrypted
+with (`--force-env` carries the previous one over): **keep a copy of `.env` with, but apart from,
+your backups**, since the stored secrets can't be read without it. An `.env` from an earlier
+release is not given one (secrets stay unencrypted, with a warning); add
+`DSP_SECRETS_KEY=$(openssl rand -base64 32)` to it to encrypt them at the next start.
 
 ### Docker or Podman
 

@@ -144,7 +144,7 @@ secretKeyRef:
 {{/* Whether the chart creates its own Secret. */}}
 {{- define "dsp.hasChartSecret" -}}
 {{- $v := .Values -}}
-{{- if or (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) -}}true{{- end -}}
+{{- if or (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "dsp.licenseSecretName" -}}
@@ -195,6 +195,63 @@ else a new random one. Without access to the cluster (helm template) it is new o
 {{- index $data "proxy-secret" -}}
 {{- else -}}
 {{- randAlphaNum 64 | b64enc -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+"true" when this render can see the cluster (helm install or upgrade), so that lookup answers and
+a value generated now is found and kept by the next upgrade. Empty under helm template,
+--dry-run=client and tools that render that way (Argo CD), where lookup always answers nothing.
+*/}}
+{{- define "dsp.clusterVisible" -}}
+{{- if hasKey (lookup "v1" "Secret" .Release.Namespace "") "items" }}true{{ end }}
+{{- end -}}
+
+{{/*
+The secrets key (DSP_SECRETS_KEY) for the chart's Secret: given inline, kept from the last
+release, or - on a new installation that can see the cluster, with generate - a new random
+32-byte key (base64). Never generated on an upgrade, so a key never appears or changes under
+stored secrets. Empty with existingSecret (that Secret holds it) or when there is none.
+*/}}
+{{- define "dsp.secretsKeyValue" -}}
+{{- $k := .Values.integrations.webhooks.secretsKey -}}
+{{- if $k.existingSecret -}}
+{{- else if $k.value -}}
+{{- $k.value -}}
+{{- else if $k.generate -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace (include "dsp.fullname" .) -}}
+{{- if and $existing $existing.data (hasKey $existing.data "secrets-key") -}}
+{{- index $existing.data "secrets-key" | b64dec -}}
+{{- else if and .Release.IsInstall (include "dsp.clusterVisible" .) -}}
+{{- randBytes 32 -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Whether the API gets a secrets key (mounted at /etc/dsp/secrets/key). */}}
+{{- define "dsp.secretsKeySet" -}}
+{{- if or .Values.integrations.webhooks.secretsKey.existingSecret (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+A setting whose safer value is the default for new installations only: the value when set
+(true/false); otherwise "true" on a new installation that can see the cluster, and on an upgrade
+whatever the last release's ConfigMap had (nothing for a release from before the setting: the
+API's default, as before). Call with (dict "root" $ "value" <value> "key" "<ENV NAME>").
+*/}}
+{{- define "dsp.newInstallDefault" -}}
+{{- $set := .value -}}
+{{- if not (and (kindIs "string" $set) (eq $set "")) -}}
+{{- toString $set -}}
+{{- else if include "dsp.clusterVisible" .root -}}
+{{- if .root.Release.IsInstall -}}
+true
+{{- else -}}
+{{- $existing := lookup "v1" "ConfigMap" .root.Release.Namespace (include "dsp.apiName" .root) -}}
+{{- if and $existing $existing.data (hasKey $existing.data .key) -}}
+{{- index $existing.data .key -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

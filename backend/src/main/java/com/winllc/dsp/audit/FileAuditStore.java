@@ -160,7 +160,14 @@ public class FileAuditStore extends AuditStore {
    * @throws IOException when the line could not be written; the head is not advanced
    */
   @Override
-  public Stored append(AuditEvent event, Consumer<Stored> afterCommit) throws IOException {
+  public Stored append(AuditEvent event, Runnable alongside, Consumer<Stored> afterCommit) throws IOException {
+    Stored stored = write(event, afterCommit);
+    // Outside the store's locks: what goes with the event (queuing webhooks) doesn't hold up other events.
+    runAlongside(alongside);
+    return stored;
+  }
+
+  private Stored write(AuditEvent event, Consumer<Stored> afterCommit) throws IOException {
     lock.readLock().lock();
     try {
       synchronized (this) {
@@ -192,6 +199,17 @@ public class FileAuditStore extends AuditStore {
       }
     } finally {
       lock.readLock().unlock();
+    }
+  }
+
+  /** The event is written already: whatever goes with it can't undo that. */
+  private static void runAlongside(Runnable alongside) {
+    if (alongside == null) return;
+    try {
+      alongside.run();
+    } catch (RuntimeException e) {
+      org.slf4j.LoggerFactory.getLogger(FileAuditStore.class).error("Failed after storing an audit event: {}",
+          com.winllc.dsp.util.LogSafe.of(e.getMessage()));
     }
   }
 

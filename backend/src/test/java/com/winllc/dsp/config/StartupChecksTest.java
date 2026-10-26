@@ -271,6 +271,22 @@ class StartupChecksTest {
     assertThat(output.toString().split(warning, -1).length).isEqualTo(seen);
   }
 
+  @Test
+  void warnsWhileSigningOutLeavesTheProvidersSession(CapturedOutput output) {
+    String[] oidc = {"SSO_OIDC_ISSUER_URI=https://idp.example", "SSO_OIDC_CLIENT_ID=portal", "SSO_OIDC_USERNAME_CLAIM=sub"};
+    String warning = "SSO_OIDC_PROVIDER_LOGOUT is false";
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains(warning);
+    int seen = output.toString().split(warning, -1).length;
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).withPropertyValues("SSO_OIDC_PROVIDER_LOGOUT=true")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen);
+    // SAML single logout without the signing credential stays off, with a warning (still starts).
+    runner.withUserConfiguration(Sso.class).withPropertyValues("SSO_SAML_METADATA=https://idp.example/metadata",
+        "PORTAL_PUBLIC_URL=https://portal.example", "SSO_SAML_SINGLE_LOGOUT=true").run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).contains("SSO_SAML_SINGLE_LOGOUT is true but SSO_SAML_SIGNING_KEY_FILE");
+  }
+
   @Configuration(proxyBeanMethods = false)
   @EnableConfigurationProperties(com.winllc.dsp.sso.SsoProperties.class)
   static class Sso {}

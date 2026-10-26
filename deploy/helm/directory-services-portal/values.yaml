@@ -277,6 +277,12 @@ sso:
     groupsClaim: groups
     adminGroups: []
     label: ""
+    # SSO_OIDC_PROVIDER_LOGOUT: signing out of the portal signs out at the provider too (its
+    # end_session_endpoint, with client_id), then comes back to <server.publicUrl>/login?signed_out:
+    # allow that as a post-logout redirect URI there. Not for providers that require
+    # id_token_hint (Okta). Empty: true on a new installation; an upgrade keeps what it had
+    # (false for a release from before this setting, or when rendered without cluster access).
+    providerLogout: ""
   saml:
     # The IdP's metadata URL (https://), or leave empty and give metadataXml.
     metadataUrl: ""
@@ -291,7 +297,14 @@ sso:
     adminGroups: []
     label: ""
     clockSkew: 2m
-    # A Secret with a PEM certificate and PKCS#8 key, for IdPs that require signed AuthnRequests.
+    # SSO_SAML_SINGLE_LOGOUT: signing out of the portal sends a signed LogoutRequest to the IdP
+    # (needs signing below, and an IdP whose metadata offers a SingleLogoutService by
+    # HTTP-Redirect; this SP's metadata then lists <publicUrl>/api/auth/sso/saml/logout). Empty:
+    # true on a new installation; an upgrade keeps what it had (false for a release from before
+    # this setting, or when rendered without cluster access).
+    singleLogout: ""
+    # A Secret with a PEM certificate and PKCS#8 key, for IdPs that require signed AuthnRequests,
+    # and for single logout.
     signing:
       existingSecret: ""
       certificateKey: tls.crt
@@ -637,6 +650,20 @@ integrations:
     # a run ends within this plus one send timeout (20 s). A receiver that gives no answer is backed
     # off as a whole, and one webhook gets at most 10 attempts and 20 s of a run.
     runBudget: 40s
+    # DSP_SECRETS_KEY(_FILE): the key webhook signing secrets are stored encrypted with (32 random
+    # bytes, base64: openssl rand -base64 32), inline (value) or from a Secret of your own. With
+    # neither and generate: true, a new installation that can see the cluster gets a random key
+    # in the chart's Secret (key secrets-key), kept across upgrades by lookup like the X.509 proxy
+    # secret. An upgrade of a release that had no key does not get one: set value or
+    # existingSecret to start encrypting (what is stored is encrypted at the next start).
+    # Rendering without cluster access (helm template, Argo CD) generates nothing: give the key
+    # yourself there. Without a key, secrets are stored unencrypted (a warning at start). Keep a
+    # copy of the key with your database backups: without it the stored secrets can't be read.
+    secretsKey:
+      value: ""
+      existingSecret: ""
+      existingSecretKey: secrets-key
+      generate: true
   transfer:
     exportMaxEntries: 10000
     # IMPORT_MAX_BYTES: the largest import file. The web tier's upload limit (MAX_BODY_SIZE) follows

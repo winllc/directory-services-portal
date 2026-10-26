@@ -58,6 +58,7 @@ data:
   WEBHOOK_ALLOWED_HOSTS: {{ include "dsp.joinSemi" $v.integrations.webhooks.allowedHosts | quote }}
   WEBHOOK_MAX_ATTEMPTS: {{ include "dsp.str" $v.integrations.webhooks.maxAttempts | quote }}
   WEBHOOK_RUN_BUDGET: {{ $v.integrations.webhooks.runBudget | quote }}
+  DSP_SECRETS_KEY_FILE: {{ ternary "/etc/dsp/secrets/key" "" (eq (include "dsp.secretsKeySet" .) "true") | quote }}
   EXPORT_MAX_ENTRIES: {{ include "dsp.str" $v.integrations.transfer.exportMaxEntries | quote }}
   IMPORT_MAX_BYTES: {{ include "dsp.str" $v.integrations.transfer.importMaxBytes | quote }}
   IMPORT_MAX_ROWS: {{ include "dsp.str" $v.integrations.transfer.importMaxRows | quote }}
@@ -96,6 +97,9 @@ data:
   SSO_OIDC_GROUPS_CLAIM: {{ include "dsp.str" $v.sso.oidc.groupsClaim | quote }}
   SSO_OIDC_ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.sso.oidc.adminGroups | quote }}
   SSO_OIDC_LABEL: {{ include "dsp.str" $v.sso.oidc.label | quote }}
+  {{- with include "dsp.newInstallDefault" (dict "root" . "value" $v.sso.oidc.providerLogout "key" "SSO_OIDC_PROVIDER_LOGOUT") }}
+  SSO_OIDC_PROVIDER_LOGOUT: {{ . | quote }}
+  {{- end }}
   SSO_SAML_METADATA: {{ ternary "/etc/dsp/sso-saml-metadata/idp-metadata.xml" (include "dsp.str" $v.sso.saml.metadataUrl) (not (empty $v.sso.saml.metadataXml)) | quote }}
   SSO_SAML_ENTITY_ID: {{ include "dsp.str" $v.sso.saml.entityId | quote }}
   SSO_SAML_USERNAME_ATTRIBUTE: {{ include "dsp.str" $v.sso.saml.usernameAttribute | quote }}
@@ -104,6 +108,9 @@ data:
   SSO_SAML_ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.sso.saml.adminGroups | quote }}
   SSO_SAML_LABEL: {{ include "dsp.str" $v.sso.saml.label | quote }}
   SSO_SAML_CLOCK_SKEW: {{ include "dsp.str" $v.sso.saml.clockSkew | quote }}
+  {{- with include "dsp.newInstallDefault" (dict "root" . "value" $v.sso.saml.singleLogout "key" "SSO_SAML_SINGLE_LOGOUT") }}
+  SSO_SAML_SINGLE_LOGOUT: {{ . | quote }}
+  {{- end }}
   {{- if $v.sso.saml.signing.existingSecret }}
   SSO_SAML_SIGNING_KEY_FILE: /etc/dsp/sso-saml-signing/signing.key
   SSO_SAML_SIGNING_CERT_FILE: /etc/dsp/sso-saml-signing/signing.crt

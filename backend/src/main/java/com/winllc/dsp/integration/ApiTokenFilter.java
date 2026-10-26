@@ -62,9 +62,10 @@ public class ApiTokenFilter extends OncePerRequestFilter {
     ApiTokens.Check check = tokens.check(header.substring(7).trim());
     if (!check.ok()) {
       // Failures only are counted, per client address (the address Spring resolved from the web
-      // tier's X-Forwarded-For, as for sign-in throttling); a valid token is never blocked by them.
+      // tier's X-Forwarded-For, as for sign-in throttling) and across replicas with the shared
+      // database; a valid token is never blocked by them.
       String client = "bad-token:" + request.getRemoteAddr();
-      long wait = limiter.acquire(client, props.getApi().getFailedTokenLimitPerMinute());
+      long wait = limiter.acquireShared(client, props.getApi().getFailedTokenLimitPerMinute());
       if (wait > 0) {
         response.setHeader("Retry-After", Long.toString(wait));
         write(response, 429, "Too many invalid API tokens from this address; retry after " + wait + " s", "rate_limited");

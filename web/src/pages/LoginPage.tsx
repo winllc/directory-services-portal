@@ -21,6 +21,8 @@ export function LoginPage() {
   const sso = auth.sso ?? [];
   // A single sign-on the server refused comes back here as ?sso_error=<code>.
   const ssoError = ssoErrorMessage(new URLSearchParams(location.search).get('sso_error'));
+  // Back from signing out at the identity provider.
+  const signedOut = new URLSearchParams(location.search).has('signed_out');
 
   if (user) return <Navigate to={from} replace state={SIGNED_IN_STATE} />;
   // The notice-and-consent banner comes before any sign-in.
@@ -72,6 +74,9 @@ export function LoginPage() {
         {error && <Alert tone="danger">{error}</Alert>}
         {!error && ssoError && <Alert tone="danger" title="Single sign-on failed">{ssoError}</Alert>}
         {!error && sessionNotice && <Alert tone="info" title="Signed out">{sessionNotice}</Alert>}
+        {!error && !sessionNotice && !ssoError && signedOut && (
+          <Alert tone="info" title="Signed out">You are signed out of the portal and of your organization&apos;s single sign-on.</Alert>
+        )}
         {!error && certificateError && auth.x509 && <Alert tone="warning" title="Certificate not accepted">{certificateError}</Alert>}
         {info.data && !info.data.connected && (
           <Alert tone="warning" title="Directory unreachable">
