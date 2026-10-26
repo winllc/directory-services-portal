@@ -1276,6 +1276,9 @@
             "label": {
               "type": "string"
             },
+            "providerLogout": {
+              "enum": ["", true, false]
+            },
             "clientSecret": {
               "type": "object",
               "properties": {
@@ -1324,6 +1327,9 @@
             },
             "clockSkew": {
               "type": "string"
+            },
+            "singleLogout": {
+              "enum": ["", true, false]
             },
             "adminGroups": {
               "type": "array",

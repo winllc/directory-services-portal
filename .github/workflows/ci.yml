@@ -264,6 +264,14 @@ jobs:
           own="$(helm template dsp "$CHART" -f "$d" --set integrations.webhooks.secretsKey.existingSecret=dsp-keys --show-only templates/api-deployment.yaml)"
           grep -A5 'secretName: dsp-keys' <<<"$own" | grep -q 'key: secrets-key'
           if helm template dsp "$CHART" -f "$d" --set integrations.webhooks.secretsKey.value=short > /dev/null 2>&1; then echo "accepted a short key"; exit 1; fi
+          # Signing out at the provider: on for a new installation (decided by lookup), kept as it
+          # was by an upgrade, so nothing is rendered without cluster access; explicit values pass.
+          saml="$(helm template dsp "$CHART" -f "$CHART/ci/saml-values.yaml" --show-only templates/configmap.yaml)"
+          if grep -q '_LOGOUT:' <<<"$saml"; then echo "sign-out settings rendered without the cluster"; exit 1; fi
+          saml="$(helm template dsp "$CHART" -f "$CHART/ci/saml-values.yaml" --set sso.oidc.providerLogout=true \
+            --set sso.saml.singleLogout=false --show-only templates/configmap.yaml)"
+          grep -qx '  SSO_OIDC_PROVIDER_LOGOUT: "true"' <<<"$saml"
+          grep -qx '  SSO_SAML_SINGLE_LOGOUT: "false"' <<<"$saml"
           # The built-in demo directory is a demo (the API refuses it otherwise); a real one is not.
           grep -qx '  DEMO_MODE: "false"' <<<"$cm"
           helm template dsp "$CHART" -f "$d" --set directory.mode=memory --show-only templates/configmap.yaml | grep -qx '  DEMO_MODE: "true"'

@@ -233,6 +233,28 @@ stored secrets. Empty with existingSecret (that Secret holds it) or when there i
 {{- if or .Values.integrations.webhooks.secretsKey.existingSecret (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
 {{- end -}}
 
+{{/*
+A setting whose safer value is the default for new installations only: the value when set
+(true/false); otherwise "true" on a new installation that can see the cluster, and on an upgrade
+whatever the last release's ConfigMap had (nothing for a release from before the setting: the
+API's default, as before). Call with (dict "root" $ "value" <value> "key" "<ENV NAME>").
+*/}}
+{{- define "dsp.newInstallDefault" -}}
+{{- $set := .value -}}
+{{- if not (and (kindIs "string" $set) (eq $set "")) -}}
+{{- toString $set -}}
+{{- else if include "dsp.clusterVisible" .root -}}
+{{- if .root.Release.IsInstall -}}
+true
+{{- else -}}
+{{- $existing := lookup "v1" "ConfigMap" .root.Release.Namespace (include "dsp.apiName" .root) -}}
+{{- if and $existing $existing.data (hasKey $existing.data .key) -}}
+{{- index $existing.data .key -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Validation of value combinations that would otherwise fail at runtime. */}}
 {{- define "dsp.validate" -}}
 {{- if gt (int .Values.api.replicaCount) 1 -}}

@@ -277,6 +277,12 @@ sso:
     groupsClaim: groups
     adminGroups: []
     label: ""
+    # SSO_OIDC_PROVIDER_LOGOUT: signing out of the portal signs out at the provider too (its
+    # end_session_endpoint, with client_id), then comes back to <server.publicUrl>/login?signed_out:
+    # allow that as a post-logout redirect URI there. Not for providers that require
+    # id_token_hint (Okta). Empty: true on a new installation; an upgrade keeps what it had
+    # (false for a release from before this setting, or when rendered without cluster access).
+    providerLogout: ""
   saml:
     # The IdP's metadata URL (https://), or leave empty and give metadataXml.
     metadataUrl: ""
@@ -291,7 +297,14 @@ sso:
     adminGroups: []
     label: ""
     clockSkew: 2m
-    # A Secret with a PEM certificate and PKCS#8 key, for IdPs that require signed AuthnRequests.
+    # SSO_SAML_SINGLE_LOGOUT: signing out of the portal sends a signed LogoutRequest to the IdP
+    # (needs signing below, and an IdP whose metadata offers a SingleLogoutService by
+    # HTTP-Redirect; this SP's metadata then lists <publicUrl>/api/auth/sso/saml/logout). Empty:
+    # true on a new installation; an upgrade keeps what it had (false for a release from before
+    # this setting, or when rendered without cluster access).
+    singleLogout: ""
+    # A Secret with a PEM certificate and PKCS#8 key, for IdPs that require signed AuthnRequests,
+    # and for single logout.
     signing:
       existingSecret: ""
       certificateKey: tls.crt
