@@ -273,8 +273,15 @@ LDAP_BIND_PASSWORD_FILE=/etc/directory-services-portal/ldap-bind-password' \
 # and dsp only) and the copy nginx includes into nginx-proxy-secret.conf next to it (root only).\
 # To change it, write a new value to the file (at least 32 characters, e.g. openssl rand -hex 32)\
 # and run install.sh again.\
-X509_PROXY_SECRET_FILE=/etc/directory-services-portal/proxy-secret'
+X509_PROXY_SECRET_FILE=/etc/directory-services-portal/proxy-secret' \
+            -e '/^# The key webhook signing secrets are stored encrypted with/,/^DSP_SECRETS_KEY=$/c\
+# The key webhook signing secrets are stored encrypted with (32 random bytes, base64), in this\
+# file (root and dsp only), which install.sh generates on a new installation. Keep a copy with\
+# your backups: without it the stored secrets can'"'"'t be read. Without this setting they are\
+# stored unencrypted, with a warning at start.\
+DSP_SECRETS_KEY_FILE=/etc/directory-services-portal/secrets-key'
   } > "$dir/portal.env"
+  if grep -q '^DSP_SECRETS_KEY=' "$dir/portal.env"; then die "portal.env: the secrets key block was not replaced"; fi
   if grep -q '^X509_PROXY_SECRET=' "$dir/portal.env"; then die "portal.env: the X.509 proxy secret block was not replaced"; fi
   if grep -q '^LDAP_BIND_PASSWORD=' "$dir/portal.env"; then die "portal.env: the LDAP bind password block was not replaced"; fi
   chmod 644 "$dir/portal.env"

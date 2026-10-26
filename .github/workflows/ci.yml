@@ -251,6 +251,19 @@ jobs:
           np() { helm template dsp "$CHART" -f "$d" --set networkPolicy.enabled=true "$@" --show-only templates/networkpolicy.yaml | grep -c 'port: 443' || true; }
           [ "$(np)" -gt "$(np --set integrations.webhooks.enabled=false)" ] || { echo "no webhook egress"; exit 1; }
           if helm template dsp "$CHART" -f "$d" --set 'integrations.webhooks.allowedHosts={bad host}' > /dev/null 2>&1; then echo "accepted a bad host"; exit 1; fi
+          # The secrets key (DSP_SECRETS_KEY): generated only by an install that can see the cluster
+          # (lookup), so nothing without cluster access; given inline (into the chart's Secret) or
+          # from a Secret of your own, it reaches the API as a file.
+          grep -qx '  DSP_SECRETS_KEY_FILE: ""' <<<"$cm"
+          if helm template dsp "$CHART" -f "$d" --show-only templates/secret.yaml 2>/dev/null | grep -q secrets-key; then echo "a key generated without the cluster"; exit 1; fi
+          key="$(head -c 32 /dev/urandom | base64)"
+          inline="$(helm template dsp "$CHART" -f "$d" --set "integrations.webhooks.secretsKey.value=$key")"
+          grep -qF "secrets-key: \"$(printf '%s' "$key" | base64 -w0)\"" <<<"$inline"
+          grep -qx '  DSP_SECRETS_KEY_FILE: "/etc/dsp/secrets/key"' <<<"$inline"
+          grep -q 'mountPath: /etc/dsp/secrets$' <<<"$inline"
+          own="$(helm template dsp "$CHART" -f "$d" --set integrations.webhooks.secretsKey.existingSecret=dsp-keys --show-only templates/api-deployment.yaml)"
+          grep -A5 'secretName: dsp-keys' <<<"$own" | grep -q 'key: secrets-key'
+          if helm template dsp "$CHART" -f "$d" --set integrations.webhooks.secretsKey.value=short > /dev/null 2>&1; then echo "accepted a short key"; exit 1; fi
           # The built-in demo directory is a demo (the API refuses it otherwise); a real one is not.
           grep -qx '  DEMO_MODE: "false"' <<<"$cm"
           helm template dsp "$CHART" -f "$d" --set directory.mode=memory --show-only templates/configmap.yaml | grep -qx '  DEMO_MODE: "true"'
@@ -355,6 +368,22 @@ jobs:
           sed -i '/^DEMO_MODE=/d' .env
           ./install.sh
           if grep -q '^DEMO_MODE=' .env; then echo "DEMO_MODE added to an .env for a real directory"; exit 1; fi
+          # A new .env gets a random DSP_SECRETS_KEY (32 bytes, base64), which --force-env keeps; an
+          # .env from an earlier package, without one, is not given one (a key must never appear or
+          # change under stored secrets).
+          rm -f .env
+          ./install.sh
+          key="$(sed -n 's/^DSP_SECRETS_KEY=//p' .env)"
+          [ "$(printf '%s' "$key" | base64 -d | wc -c)" -eq 32 ] || { echo "no secrets key in a new .env"; exit 1; }
+          ./install.sh --force-env --https
+          grep -qxF "DSP_SECRETS_KEY=$key" .env || { echo "--force-env changed DSP_SECRETS_KEY"; exit 1; }
+          sed -i '/^DSP_SECRETS_KEY=/d' .env
+          ./install.sh | tee "$RUNNER_TEMP/install.log"
+          if grep -q '^DSP_SECRETS_KEY' .env; then echo "DSP_SECRETS_KEY added to an existing .env"; exit 1; fi
+          grep -q 'DSP_SECRETS_KEY is not set' "$RUNNER_TEMP/install.log"
+          rm -f .env
+          ./install.sh
+          [ "$(sed -n 's/^DSP_SECRETS_KEY=//p' .env)" != "$key" ] || { echo "two new .env files got the same key"; exit 1; }
 
       - name: The demo compose file publishes no port
         run: |

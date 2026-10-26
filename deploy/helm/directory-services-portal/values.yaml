@@ -637,6 +637,20 @@ integrations:
     # a run ends within this plus one send timeout (20 s). A receiver that gives no answer is backed
     # off as a whole, and one webhook gets at most 10 attempts and 20 s of a run.
     runBudget: 40s
+    # DSP_SECRETS_KEY(_FILE): the key webhook signing secrets are stored encrypted with (32 random
+    # bytes, base64: openssl rand -base64 32), inline (value) or from a Secret of your own. With
+    # neither and generate: true, a new installation that can see the cluster gets a random key
+    # in the chart's Secret (key secrets-key), kept across upgrades by lookup like the X.509 proxy
+    # secret. An upgrade of a release that had no key does not get one: set value or
+    # existingSecret to start encrypting (what is stored is encrypted at the next start).
+    # Rendering without cluster access (helm template, Argo CD) generates nothing: give the key
+    # yourself there. Without a key, secrets are stored unencrypted (a warning at start). Keep a
+    # copy of the key with your database backups: without it the stored secrets can't be read.
+    secretsKey:
+      value: ""
+      existingSecret: ""
+      existingSecretKey: secrets-key
+      generate: true
   transfer:
     exportMaxEntries: 10000
     # IMPORT_MAX_BYTES: the largest import file. The web tier's upload limit (MAX_BODY_SIZE) follows
