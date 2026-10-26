@@ -224,6 +224,31 @@ class SharedStoreTest extends ApiTestSupport {
   }
 
   @Test
+  void failedTokensAreCountedAcrossReplicas() throws Exception {
+    int before = integration.getApi().getFailedTokenLimitPerMinute();
+    integration.getApi().setFailedTokenLimitPerMinute(3);
+    try {
+      for (int i = 0; i < 3; i++) {
+        assertThat(status(mvc.perform(get("/api/v1/directories").header("Authorization", "Bearer dspat_wrong")
+            .with(r -> { r.setRemoteAddr("192.0.2.23"); return r; })).andReturn())).isEqualTo(401);
+      }
+      assertThat(jdbc.queryForObject("SELECT count(*) FROM dsp_rate_limit WHERE bucket = 'bad-token:192.0.2.23'", Integer.class)).isEqualTo(1);
+      // Another replica sees the address's attempts used up; this one refuses the next.
+      var replicaB = new com.winllc.dsp.integration.ApiRateLimiter(otherReplica());
+      assertThat(replicaB.acquireShared("bad-token:192.0.2.23", 3)).isPositive();
+      MvcResult r = mvc.perform(get("/api/v1/directories").header("Authorization", "Bearer dspat_wrong")
+          .with(q -> { q.setRemoteAddr("192.0.2.23"); return q; })).andReturn();
+      assertThat(status(r)).isEqualTo(429);
+      assertThat(r.getResponse().getHeader("Retry-After")).isNotBlank();
+      // Another address is not affected.
+      assertThat(replicaB.acquireShared("bad-token:192.0.2.24", 3)).isZero();
+    } finally {
+      integration.getApi().setFailedTokenLimitPerMinute(before);
+      jdbc.update("DELETE FROM dsp_rate_limit");
+    }
+  }
+
+  @Test
   void theDeliveryTableSkipsWebhooksWhenClaimingAndPostponesAWebhookAsAWhole() {
     webhookService.pauseBackground(true);
     try {

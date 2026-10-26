@@ -27,8 +27,9 @@ public class IntegrationProperties {
     /** The longest lifetime an administrator may give a token. */
     private int maxTokenDays = 365;
     /**
-     * Unknown, expired or revoked tokens per minute per client address (per replica); further bad
-     * tokens from it get 429 instead of 401. Requests with a valid token are never refused by it.
+     * Unknown, expired or revoked tokens per minute per client address (across replicas with the
+     * shared database); further bad tokens from it get 429 instead of 401. Requests with a valid
+     * token are never refused by it.
      */
     private int failedTokenLimitPerMinute = 30;
 

@@ -35,9 +35,9 @@ public class SsoProperties {
    */
   private java.time.Duration idpAdminLifetime = java.time.Duration.ofHours(1);
   /**
-   * Sign-ons a client address may start per minute (per API replica); more are sent back to the
-   * login page. Each start keeps a sign-in request for 10 minutes, so this bounds what one client
-   * can make the portal hold.
+   * Sign-ons a client address may start per minute (across replicas with the shared database);
+   * more are sent back to the login page. Each start keeps a sign-in request for 10 minutes, so
+   * this bounds what one client can make the portal hold.
    */
   private int startLimitPerMinute = 30;
   /** Sign-in requests in flight kept in memory at most (without the shared database); more are refused. */

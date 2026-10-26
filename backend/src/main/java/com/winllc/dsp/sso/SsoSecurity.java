@@ -308,7 +308,7 @@ public class SsoSecurity {
   /**
    * No sign-on starts until the notice-and-consent banner is acknowledged (refusal audited). Starts
    * are anonymous and each keeps a sign-in request for 10 minutes, so a client address may start
-   * at most SSO_START_LIMIT_PER_MINUTE (per replica; counted with the API token limiter): more are
+   * at most SSO_START_LIMIT_PER_MINUTE (across replicas with the shared database): more are
    * sent back to the login page with {@code sso_error=busy} and Retry-After, keeping nothing.
    */
   final class ConsentGate extends OncePerRequestFilter {
@@ -327,7 +327,7 @@ public class SsoSecurity {
         SsoSignIn.redirect(request, response, "/login?sso_error=consent");
         return;
       }
-      long wait = limiter.acquire("sso-start:" + request.getRemoteAddr(), props.getStartLimitPerMinute());
+      long wait = limiter.acquireShared("sso-start:" + request.getRemoteAddr(), props.getStartLimitPerMinute());
       if (wait > 0) {
         response.setHeader("Retry-After", Long.toString(wait));
         SsoSignIn.redirect(request, response, "/login?sso_error=busy");
