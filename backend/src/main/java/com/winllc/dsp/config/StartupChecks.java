@@ -65,8 +65,19 @@ public class StartupChecks {
               + " Map an immutable claim instead, held in a directory attribute: sub, or oid for Microsoft Entra ID (README, Single"
               + " sign-on: moving to an immutable claim).", LogSafe.of(claim));
         }
+        if (!single.getOidc().isProviderLogout()) {
+          log.warn("SSO_OIDC_PROVIDER_LOGOUT is false: signing out of the portal leaves the OpenID Connect provider's session, so"
+              + " the next sign-on on this browser needs no password. Set it to true (and allow <PORTAL_PUBLIC_URL>/login?signed_out"
+              + " as a post-logout redirect URI at the provider) to sign out there too.");
+        }
       }
-      if (single.getSaml().enabled()) log.info("Single sign-on: SAML 2.0 (metadata {}) offered", single.getSaml().getMetadataLocation());
+      if (single.getSaml().enabled()) {
+        log.info("Single sign-on: SAML 2.0 (metadata {}) offered", single.getSaml().getMetadataLocation());
+        if (single.getSaml().isSingleLogout() && !single.getSaml().signing()) {
+          log.warn("SSO_SAML_SINGLE_LOGOUT is true but SSO_SAML_SIGNING_KEY_FILE and SSO_SAML_SIGNING_CERT_FILE are not set: a"
+              + " LogoutRequest must be signed, so single logout stays off and signing out ends the portal's session only.");
+        }
+      }
     }
     EnsProperties shared = ens.getIfAvailable();
     if (shared != null) checkRevocation(shared.getX509());

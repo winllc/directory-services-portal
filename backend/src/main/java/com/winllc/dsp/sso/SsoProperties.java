@@ -102,6 +102,13 @@ public class SsoProperties {
     private String usernameClaim = "preferred_username";
     /** The claim listing the user's groups (for {@code admin-groups}). */
     private String groupsClaim = "groups";
+    /**
+     * Signing out of the portal after an OIDC sign-in also signs out at the provider (RP-initiated
+     * logout at its {@code end_session_endpoint}, with {@code client_id} and, with the public URL,
+     * {@code post_logout_redirect_uri} {@code <public url>/login?signed_out}). Off by default, so an
+     * upgrade signs out as before.
+     */
+    private boolean providerLogout = false;
 
     @Override
     public boolean enabled() {
@@ -137,6 +144,8 @@ public class SsoProperties {
     public void setUsernameClaim(String usernameClaim) { this.usernameClaim = usernameClaim; }
     public String getGroupsClaim() { return groupsClaim; }
     public void setGroupsClaim(String groupsClaim) { this.groupsClaim = groupsClaim; }
+    public boolean isProviderLogout() { return providerLogout; }
+    public void setProviderLogout(boolean providerLogout) { this.providerLogout = providerLogout; }
   }
 
   /** SAML 2.0 Web SSO: the portal is the service provider; the IdP is read from its metadata. */
@@ -154,6 +163,13 @@ public class SsoProperties {
     private String signingCertificateFile = "";
     /** Clock skew tolerated when checking an assertion's NotBefore and NotOnOrAfter. */
     private Duration clockSkew = Duration.ofMinutes(2);
+    /**
+     * SAML single logout, SP-initiated: signing out of the portal after a SAML sign-in sends a
+     * signed LogoutRequest (HTTP-Redirect) to the IdP. Only with the signing key and certificate,
+     * and when the IdP's metadata offers a SingleLogoutService by HTTP-Redirect; this SP's metadata
+     * then lists its own ({@code /api/auth/sso/saml/logout}). Off by default.
+     */
+    private boolean singleLogout = false;
 
     @Override
     public boolean enabled() {
@@ -186,6 +202,13 @@ public class SsoProperties {
     public void setSigningCertificateFile(String signingCertificateFile) { this.signingCertificateFile = signingCertificateFile; }
     public Duration getClockSkew() { return clockSkew; }
     public void setClockSkew(Duration clockSkew) { this.clockSkew = clockSkew; }
+    public boolean isSingleLogout() { return singleLogout; }
+    public void setSingleLogout(boolean singleLogout) { this.singleLogout = singleLogout; }
+
+    /** Whether single logout is configured (on, with the signing credential). */
+    public boolean singleLogoutConfigured() {
+      return enabled() && singleLogout && signing();
+    }
   }
 
   /**

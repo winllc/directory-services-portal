@@ -144,6 +144,10 @@ public class SsoSignIn {
     }
     sessions.establish(id.user(), request, response);
     if (id.idpAdmin()) request.getSession().setAttribute(SessionService.IDP_ADMIN, Boolean.TRUE);
+    // SAML single logout names the IdP's session by these (identifiers only, never a credential).
+    if (authentication instanceof SsoSecurity.SamlAuthentication saml && saml.logout() != null) {
+      request.getSession().setAttribute(SamlLogout.ATTRIBUTE, saml.logout());
+    }
     if (pending != null && pending.consentAcknowledged()) consent.carryOver(request);
     redirect(request, response, "/");
   }

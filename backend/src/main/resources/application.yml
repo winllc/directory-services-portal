@@ -173,6 +173,9 @@ portal:
       groups-claim: ${SSO_OIDC_GROUPS_CLAIM:groups}
       admin-groups: ${SSO_OIDC_ADMIN_GROUPS:}
       label: ${SSO_OIDC_LABEL:}
+      # Signing out of the portal signs out at the provider too (its end_session_endpoint), then
+      # returns to PORTAL_PUBLIC_URL/login?signed_out: allow that post-logout redirect URI there.
+      provider-logout: ${SSO_OIDC_PROVIDER_LOGOUT:false}
     saml:
       metadata-location: ${SSO_SAML_METADATA:}
       entity-id: ${SSO_SAML_ENTITY_ID:}
@@ -184,6 +187,9 @@ portal:
       signing-key-file: ${SSO_SAML_SIGNING_KEY_FILE:}
       signing-certificate-file: ${SSO_SAML_SIGNING_CERT_FILE:}
       clock-skew: ${SSO_SAML_CLOCK_SKEW:2m}
+      # SAML single logout (SP-initiated, HTTP-Redirect, signed): needs the signing key and
+      # certificate above and an IdP whose metadata offers a SingleLogoutService by HTTP-Redirect.
+      single-logout: ${SSO_SAML_SINGLE_LOGOUT:false}
   # The integration API (/api/v1, API tokens), outbound webhooks, and entry import and export
   # (see README, Integration API).
   integration:

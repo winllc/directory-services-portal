@@ -39,6 +39,7 @@ import org.springframework.security.saml2.provider.service.authentication.OpenSa
 import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticatedPrincipal;
 import org.springframework.security.saml2.provider.service.authentication.Saml2Authentication;
 import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticationException;
+import org.springframework.security.saml2.provider.service.authentication.Saml2ResponseAssertionAccessor;
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.stereotype.Component;
@@ -68,6 +69,12 @@ public class SsoSecurity {
   public static final String OIDC_START = "/api/auth/sso/authorize/";
   public static final String SAML_START = "/api/auth/sso/saml/authenticate/";
   public static final String SAML_ACS = "/api/auth/sso/saml/acs/";
+  /** This SP's SingleLogoutService: where the IdP returns the browser after single logout. */
+  public static final String SAML_LOGOUT = "/api/auth/sso/saml/logout";
+  /** {@link #SAML_LOGOUT} below {@code /api/auth}. */
+  public static final String SAML_LOGOUT_PATH = "/sso/saml/logout";
+  /** Where the browser lands after signing out at the provider. */
+  public static final String SIGNED_OUT = "/login?signed_out";
 
   private final SsoProperties props;
   private final SsoRequests requests;
@@ -148,6 +155,19 @@ public class SsoSecurity {
           .failureHandler(signIn.failure));
       http.saml2Metadata(m -> m.metadataUrl("/api/auth/sso/saml/metadata"));
     }
+  }
+
+  /**
+   * The IdP returns the browser here after single logout (a LogoutResponse). The portal's session
+   * ended before the browser left, so there is nothing to change: the browser goes on to the
+   * login page. A LogoutRequest from the IdP (IdP-initiated logout) is not acted upon either.
+   */
+  public void singleLogoutReturn(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    if (!samlParties.singleLogout()) {
+      response.sendError(HttpServletResponse.SC_NOT_FOUND);
+      return;
+    }
+    SsoSignIn.redirect(request, response, SIGNED_OUT);
   }
 
   // ---------------------------------------------------------------------------
@@ -242,6 +262,8 @@ public class SsoSecurity {
     var convert = OpenSaml5AuthenticationProvider.createDefaultResponseAuthenticationConverter();
     provider.setResponseAuthenticationConverter(token -> {
       Saml2Authentication converted = convert.convert(token);
+      // Whether single logout will need the IdP session's identifiers (decided before mapping fails or not).
+      boolean singleLogout = samlParties.singleLogout();
       for (Assertion a : token.getResponse().getAssertions()) {
         if (a.getID() == null || !state.firstUse(a.getID(), expiry(a))) {
           throw new Saml2AuthenticationException(new Saml2Error(Saml2ErrorCodes.INVALID_ASSERTION, "The assertion was already used (replay)"));
@@ -250,9 +272,79 @@ public class SsoSecurity {
       Saml2AuthenticatedPrincipal principal = (Saml2AuthenticatedPrincipal) converted.getPrincipal();
       String value = cfg.getUsernameAttribute().isBlank() ? principal.getName() : principal.getFirstAttribute(cfg.getUsernameAttribute()) instanceof Object o ? o.toString() : null;
       Collection<String> groups = cfg.getGroupsAttribute().isBlank() ? List.of() : strings(principal.getAttribute(cfg.getGroupsAttribute()));
-      return new SamlAuthentication(signIn.map("saml", cfg, value, groups));
+      SamlLogout logout = null;
+      if (singleLogout) {
+        String nameId = converted.getCredentials() instanceof Saml2ResponseAssertionAccessor a ? a.getNameId() : principal.getName();
+        List<String> indexes = converted.getCredentials() instanceof Saml2ResponseAssertionAccessor a ? a.getSessionIndexes()
+            : principal.getSessionIndexes();
+        String format = null;
+        for (Assertion a : token.getResponse().getAssertions()) {
+          if (a.getSubject() != null && a.getSubject().getNameID() != null) {
+            format = a.getSubject().getNameID().getFormat();
+            break;
+          }
+        }
+        logout = new SamlLogout(nameId, format, indexes);
+      }
+      return new SamlAuthentication(signIn.map("saml", cfg, value, groups), logout);
     });
     return provider;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Signing out at the provider
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Where the browser goes next when {@code user} signs out of the portal, to sign out at the
+   * provider too: the OIDC provider's end_session_endpoint (SSO_OIDC_PROVIDER_LOGOUT) or the
+   * SAML IdP's SingleLogoutService with a signed LogoutRequest (SSO_SAML_SINGLE_LOGOUT). Null
+   * when the user didn't sign in through one, it isn't configured, or the provider offers none.
+   * Built from the configuration and the provider's metadata only, never from the request. Call
+   * before the session ends (SAML needs what it holds).
+   */
+  public String signOutUrl(com.winllc.dsp.model.SessionUser user, HttpServletRequest request) {
+    if (user == null) return null;
+    try {
+      if ("oidc".equals(user.authMethod()) && props.getOidc().enabled() && props.getOidc().isProviderLogout()) return oidcSignOut();
+      if ("saml".equals(user.authMethod()) && samlParties.singleLogout()) {
+        jakarta.servlet.http.HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute(SamlLogout.ATTRIBUTE) instanceof SamlLogout logout) return samlSignOut(request, logout);
+      }
+    } catch (RuntimeException e) {
+      org.slf4j.LoggerFactory.getLogger(SsoSecurity.class).warn("Single sign-on: could not prepare signing out at the provider: {}",
+          com.winllc.dsp.util.LogSafe.of(e.getMessage()));
+    }
+    return null;
+  }
+
+  private String oidcSignOut() {
+    org.springframework.security.oauth2.client.registration.ClientRegistration r = oidcClients.findByRegistrationId(SsoRegistrations.OIDC);
+    if (r == null) return null;
+    Object endpoint = r.getProviderDetails().getConfigurationMetadata().get("end_session_endpoint");
+    if (!(endpoint instanceof String url) || !SsoProperties.secureUrl(url)) return null;
+    // client_id rather than id_token_hint: the portal keeps no token from the provider.
+    StringBuilder out = new StringBuilder(url).append(url.contains("?") ? '&' : '?').append("client_id=").append(encode(r.getClientId()));
+    if (!props.getPublicUrl().isBlank()) out.append("&post_logout_redirect_uri=").append(encode(props.getPublicUrl() + SIGNED_OUT));
+    return out.toString();
+  }
+
+  private String samlSignOut(HttpServletRequest request, SamlLogout logout) {
+    org.springframework.security.saml2.provider.service.authentication.DefaultSaml2AuthenticatedPrincipal principal =
+        new org.springframework.security.saml2.provider.service.authentication.DefaultSaml2AuthenticatedPrincipal(logout.nameId(), Map.of(),
+            logout.sessionIndexes());
+    principal.setRelyingPartyRegistrationId(SsoRegistrations.SAML);
+    var resolver = new org.springframework.security.saml2.provider.service.web.authentication.logout.OpenSaml5LogoutRequestResolver(samlParties);
+    if (logout.nameIdFormat() != null) resolver.setParametersConsumer(p -> p.getLogoutRequest().getNameID().setFormat(logout.nameIdFormat()));
+    var lr = resolver.resolve(request,
+        org.springframework.security.authentication.UsernamePasswordAuthenticationToken.authenticated(principal, null, AuthorityUtils.NO_AUTHORITIES));
+    if (lr == null || lr.getBinding() != org.springframework.security.saml2.provider.service.registration.Saml2MessageBinding.REDIRECT) return null;
+    String location = lr.getLocation();
+    return location + (location.contains("?") ? "&" : "?") + lr.getParametersQuery();
+  }
+
+  private static String encode(String value) {
+    return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
   }
 
   /** How long an assertion id must be remembered: until the assertion could no longer be accepted. */
@@ -275,14 +367,21 @@ public class SsoSecurity {
     return List.of(claim.toString());
   }
 
-  /** A SAML sign-in mapped to a portal user. */
+  /** A SAML sign-in mapped to a portal user (and, with single logout, what it needs). */
   static final class SamlAuthentication extends AbstractAuthenticationToken implements SsoSignIn.HasIdentity {
     private final SsoSignIn.Identity identity;
+    private final SamlLogout logout;
 
-    SamlAuthentication(SsoSignIn.Identity identity) {
+    SamlAuthentication(SsoSignIn.Identity identity, SamlLogout logout) {
       super(AuthorityUtils.NO_AUTHORITIES);
       this.identity = identity;
+      this.logout = logout;
       setAuthenticated(true);
+    }
+
+    /** Null unless single logout is on. */
+    SamlLogout logout() {
+      return logout;
     }
 
     @Override

@@ -28,6 +28,17 @@ interface MeResponse {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/**
+ * Leaving the portal for another site: signing out at the identity provider after signing out
+ * here (a plain navigation, which the CSP's form-action does not govern). An object, so tests can
+ * replace it.
+ */
+export const browser = {
+  leave(url: string) {
+    window.location.assign(url);
+  },
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,13 +110,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [checkSession]);
 
   const logout = useCallback(async () => {
+    let next: string | undefined;
     try {
-      const r = await api.post<{ consentRequired?: boolean }>('/api/auth/logout');
+      // redirect: after a single sign-on, the provider's sign-out (the portal's session is over already).
+      const r = await api.post<{ consentRequired?: boolean; redirect?: string }>('/api/auth/logout');
       setConsentRequired(!!r.consentRequired);
+      next = r.redirect;
     } finally {
       qc.clear();
       setUser(null);
     }
+    if (next && /^https?:\/\//i.test(next)) browser.leave(next);
   }, [qc]);
 
   const value = useMemo(

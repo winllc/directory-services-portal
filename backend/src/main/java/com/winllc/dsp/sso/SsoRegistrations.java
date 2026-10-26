@@ -125,6 +125,7 @@ final class SsoRegistrations {
                 + " HTTP-Redirect, which the IdP must accept at {}", built.getAssertingPartyMetadata().getSingleSignOnServiceLocation());
             built = built.mutate().assertingPartyMetadata(p -> p.singleSignOnServiceBinding(Saml2MessageBinding.REDIRECT)).build();
           }
+          built = withSingleLogout(built);
           registration = built;
           failedAt = null;
           log.info("Single sign-on: SAML IdP {} ready", LogSafe.of(built.getAssertingPartyMetadata().getEntityId()));
@@ -135,6 +136,37 @@ final class SsoRegistrations {
           return null;
         }
       }
+    }
+
+    /**
+     * With SSO_SAML_SINGLE_LOGOUT (and the signing credential): this SP's SingleLogoutService
+     * ({@code /api/auth/sso/saml/logout}, HTTP-Redirect), when the IdP's metadata offers one by
+     * HTTP-Redirect. The browser goes there by navigation: an HTTP-POST form to the IdP would be
+     * refused by the CSP's form-action 'self', so an IdP offering HTTP-POST first gets none.
+     */
+    private RelyingPartyRegistration withSingleLogout(RelyingPartyRegistration built) {
+      if (!cfg.singleLogoutConfigured()) return built;
+      var idp = built.getAssertingPartyMetadata();
+      if (idp.getSingleLogoutServiceLocation() == null) {
+        log.warn("Single sign-on: SSO_SAML_SINGLE_LOGOUT is on, but the SAML IdP's metadata offers no SingleLogoutService; signing"
+            + " out ends the portal's session only");
+        return built;
+      }
+      if (idp.getSingleLogoutServiceBinding() != Saml2MessageBinding.REDIRECT) {
+        log.warn("Single sign-on: the SAML IdP's metadata offers single logout by HTTP-POST first ({}); the portal sends"
+            + " LogoutRequests by HTTP-Redirect only, so signing out ends the portal's session only", LogSafe.of(idp.getSingleLogoutServiceLocation()));
+        return built;
+      }
+      String location = base + SsoSecurity.SAML_LOGOUT;
+      log.info("Single sign-on: SAML single logout through {}", LogSafe.of(idp.getSingleLogoutServiceLocation()));
+      return built.mutate().singleLogoutServiceLocation(location).singleLogoutServiceResponseLocation(location)
+          .singleLogoutServiceBinding(Saml2MessageBinding.REDIRECT).build();
+    }
+
+    /** Whether single logout is in use: configured, and the IdP offers it as the portal sends it. */
+    boolean singleLogout() {
+      RelyingPartyRegistration r = cfg.singleLogoutConfigured() ? findByRegistrationId(SAML) : null;
+      return r != null && r.getSingleLogoutServiceLocation() != null;
     }
 
     @Override
