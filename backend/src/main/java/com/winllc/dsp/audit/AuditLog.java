@@ -175,6 +175,7 @@ public class AuditLog {
     private final Map<String, Object> details = new LinkedHashMap<>();
     private AuditStore.Stored finished;
     private boolean done;
+    private Runnable alongside;
 
     private Draft(String action) {
       this.action = action;
@@ -248,6 +249,16 @@ public class AuditLog {
       return this;
     }
 
+    /**
+     * Runs {@code write} with the event's storage: inside its database transaction with the shared
+     * database (so what it writes there commits or rolls back with the event), else just after the
+     * event is written. Not run when the event can't be stored. It must not throw.
+     */
+    public Draft alongside(Runnable write) {
+      this.alongside = write;
+      return this;
+    }
+
     public Draft detail(String key, Object value) {
       if (value != null) AuditDetails.put(details, key, value);
       return this;
@@ -269,7 +280,7 @@ public class AuditLog {
     private AuditStore.Stored finish(String outcome, String reason) {
       if (done) return finished;
       done = true;
-      finished = record(build(outcome, reason != null ? reason : this.reason));
+      finished = record(build(outcome, reason != null ? reason : this.reason), alongside);
       return finished;
     }
 
@@ -307,9 +318,13 @@ public class AuditLog {
    * the action may go on regardless (system events, denials); otherwise throws.
    */
   AuditStore.Stored record(AuditEvent event) {
+    return record(event, null);
+  }
+
+  private AuditStore.Stored record(AuditEvent event, Runnable alongside) {
     boolean required = AuditCatalog.mustBeRecorded(event.category(), event.action());
     try {
-      AuditStore.Stored stored = store.append(event, s -> emit(s.line()));
+      AuditStore.Stored stored = store.append(event, alongside, s -> emit(s.line()));
       count(event);
       return stored;
     } catch (IOException e) {

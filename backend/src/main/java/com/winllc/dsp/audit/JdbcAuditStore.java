@@ -133,7 +133,7 @@ public class JdbcAuditStore extends AuditStore {
   }
 
   @Override
-  public Stored append(AuditEvent event, Consumer<Stored> afterCommit) throws IOException {
+  public Stored append(AuditEvent event, Runnable alongside, Consumer<Stored> afterCommit) throws IOException {
     Stored stored;
     try {
       stored = tx.execute(status -> {
@@ -145,6 +145,8 @@ public class JdbcAuditStore extends AuditStore {
         String body = AuditJson.body(chained);
         String line = AuditJson.line(body, AuditJson.hash(prev, body));
         jdbc.update("INSERT INTO dsp_audit_event (seq, event_month, line) VALUES (?, ?, ?)", seq, monthOf(event.time()), line);
+        // What goes with the event (the webhook outbox rows of an entry change) commits with it.
+        if (alongside != null) alongside.run();
         return new Stored(seq, line);
       });
     } catch (RuntimeException e) {

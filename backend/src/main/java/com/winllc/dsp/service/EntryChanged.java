@@ -7,7 +7,9 @@ import java.util.List;
 /**
  * Published (as a Spring application event) after the portal changed an entry: created, updated
  * (renamed too) or deleted, by a person, an API token or an import. {@code changes} are as audited
- * (secrets redacted). Webhooks are sent from these.
+ * (secrets redacted). Webhooks are sent from these. It is published with the change's audit event
+ * as that is stored: with the shared database inside the event's transaction (listeners that write
+ * to the database keep their writes in a savepoint), else just after the event is written.
  */
 public record EntryChanged(
     String operation,

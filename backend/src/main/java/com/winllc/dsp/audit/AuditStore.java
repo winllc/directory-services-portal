@@ -66,7 +66,18 @@ public abstract class AuditStore {
    *
    * @throws IOException when the event could not be stored; nothing was written
    */
-  public abstract Stored append(AuditEvent event, Consumer<Stored> afterCommit) throws IOException;
+  public Stored append(AuditEvent event, Consumer<Stored> afterCommit) throws IOException {
+    return append(event, null, afterCommit);
+  }
+
+  /**
+   * As {@link #append(AuditEvent, Consumer)}, running {@code alongside} with the event's storage:
+   * in the shared database, inside the transaction that inserts the event (what it writes through
+   * the shared database commits or rolls back with the event); in files, once the line is written.
+   * It must not throw (a failure inside the database transaction would undo the event too: it
+   * keeps its own writes in a savepoint).
+   */
+  public abstract Stored append(AuditEvent event, Runnable alongside, Consumer<Stored> afterCommit) throws IOException;
 
   /** Blocks until the head passes {@code seq} or the timeout elapses (forwarders idling). */
   public abstract void awaitAfter(long seq, long timeoutMillis) throws InterruptedException;
