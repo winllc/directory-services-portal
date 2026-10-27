@@ -228,6 +228,51 @@ class WebhooksTest extends ApiTestSupport {
   }
 
   @Test
+  void eventsNameThePersonWhoChangedTheEntryTheEntryAndWhatChanged() throws Exception {
+    Client admin = login("admin");
+    hook(admin, url("/hooks/people"), List.of("entry.changed", "form.submitted"));
+
+    // A user's own profile change, then an administrator deleting a device.
+    MvcResult self = login("alice").put("/api/me/def-staff/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("+1 555 0199"), "title", "CTO")));
+    assertThat(status(self)).as(self.getResponse().getContentAsString()).isEqualTo(200);
+    String device = "cn=LT-0002,ou=devices," + B;
+    assertThat(status(admin.del("/api/directories/devices/entry" + q(device)))).isEqualTo(204);
+    until(() -> received.size() >= 3);
+
+    List<JsonNode> events = new java.util.ArrayList<>();
+    for (Received x : received) {
+      JsonNode e = mapper.readTree(x.body());
+      assertThat(x.header("X-DSP-Event")).isEqualTo(e.get("type").asString());
+      events.add(e);
+    }
+    assertThat(events).extracting(e -> e.get("type").asString() + " " + e.get("actor").get("username").asString())
+        .containsExactlyInAnyOrder("entry.changed alice", "form.submitted alice", "entry.changed admin");
+    java.util.function.BiFunction<String, String, JsonNode> event = (type, actor) -> events.stream()
+        .filter(e -> e.get("type").asString().equals(type) && e.get("actor").get("username").asString().equals(actor)).findFirst().orElseThrow();
+
+    JsonNode changed = event.apply("entry.changed", "alice").get("data");
+    assertThat(changed.get("operation").asString()).isEqualTo("update");
+    assertThat(changed.get("definitionId").asString()).isEqualTo("def-staff");
+    assertThat(changed.get("dn").asString()).isEqualTo(ALICE);
+    assertThat(changed.get("name").asString()).isEqualTo("Alice Anderson");
+    // Only what was written: the title isn't self-editable.
+    assertThat(changed.get("attributes").toString()).isEqualTo("[\"mobile\"]");
+    assertThat(changed.has("previousDn")).isFalse();
+
+    JsonNode submitted = event.apply("form.submitted", "alice").get("data");
+    assertThat(submitted.get("operation").asString()).isEqualTo("self_update");
+    assertThat(submitted.get("formId").asString()).isEqualTo("form-person");
+    assertThat(submitted.get("dn").asString()).isEqualTo(ALICE);
+    assertThat(submitted.get("name").asString()).isEqualTo("Alice Anderson");
+
+    JsonNode deleted = event.apply("entry.changed", "admin").get("data");
+    assertThat(deleted.get("operation").asString()).isEqualTo("delete");
+    assertThat(deleted.get("dn").asString()).isEqualTo(device);
+    assertThat(deleted.get("name").asString()).isEqualTo("LT-0002");
+    assertThat(event.apply("entry.changed", "admin").get("actor").get("authMethod").asString()).isEqualTo("password");
+  }
+
+  @Test
   void aChangeThatCannotBeQueuedIsKeptAndSentOnceTheOutboxIsBack() throws Exception {
     Client admin = login("admin");
     Hook h = hook(admin, url("/spool"), List.of("entry.changed"));
