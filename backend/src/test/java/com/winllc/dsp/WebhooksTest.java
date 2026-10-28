@@ -273,6 +273,24 @@ class WebhooksTest extends ApiTestSupport {
   }
 
   @Test
+  void aDeleteNamesEveryAttributeTheEntryHeldNotOnlyThoseOnItsForm() throws Exception {
+    Client admin = login("admin");
+    hook(admin, url("/hooks/deletes"), List.of("entry.changed"));
+    // Bob's employeeType and password are not on the staff form.
+    assertThat(status(admin.del("/api/directories/staff/entry" + q(BOB)))).isEqualTo(204);
+    until(() -> received.size() >= 1);
+
+    assertThat(received).hasSize(1);
+    JsonNode deleted = mapper.readTree(received.get(0).body()).get("data");
+    assertThat(deleted.get("operation").asString()).isEqualTo("delete");
+    List<String> attributes = new ArrayList<>();
+    deleted.get("attributes").forEach(a -> attributes.add(a.asString()));
+    assertThat(attributes).contains("objectclass", "uid", "title", "mail", "employeetype", "userpassword");
+    // Names only, no values.
+    assertThat(received.get(0).body()).doesNotContain("Full time").doesNotContain("Account Executive");
+  }
+
+  @Test
   void aChangeThatCannotBeQueuedIsKeptAndSentOnceTheOutboxIsBack() throws Exception {
     Client admin = login("admin");
     Hook h = hook(admin, url("/spool"), List.of("entry.changed"));
