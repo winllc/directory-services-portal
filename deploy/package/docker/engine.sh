@@ -9,7 +9,7 @@
 #   4. docker, for an .env written by a package from before Podman support
 #   5. detected: Docker if its daemon answers, else Podman
 # The compose command: Docker Compose v2 ("docker compose"), else docker-compose v1 (1.29); for
-# Podman, podman-compose (1.1 or later), else "podman compose".
+# Podman, podman-compose (1.0.6 or later), else "podman compose".
 #
 # Sets ENGINE (docker or podman), ENGINE_ROOTLESS (true or false) and COMPOSE (the compose
 # command, an array), and says which (unless ENGINE_QUIET is set); compose() runs the compose
@@ -27,13 +27,15 @@ engine_docker_ok() {
   docker info >/dev/null 2>&1
 }
 
-# A version string's major and minor as one number (4.9.3 -> 4009).
+# A version string's major, minor and patch as one number (4.9.3 -> 4009003, 1.0.6 -> 1000006).
 engine_version_number() {
-  local v="${1#v}" major minor
-  major="${v%%.*}"; minor="${v#*.}"; minor="${minor%%.*}"
+  local major minor patch
+  IFS=. read -r major minor patch _ <<<"${1#v}"
+  patch="${patch%%[!0-9]*}"
   [[ "$major" =~ ^[0-9]+$ ]] || major=0
   [[ "$minor" =~ ^[0-9]+$ ]] || minor=0
-  echo $((major * 1000 + minor))
+  [[ "$patch" =~ ^[0-9]+$ ]] || patch=0
+  echo $((major * 1000000 + minor * 1000 + patch))
 }
 
 engine_select() { # engine_select [ENGINE]: ENGINE from --engine, if one was given
@@ -78,12 +80,14 @@ engine_select() { # engine_select [ENGINE]: ENGINE from --engine, if one was giv
     command -v podman >/dev/null 2>&1 || die "Podman is not installed (https://podman.io/docs/installation)."
     podman info >/dev/null 2>&1 || die "Podman does not work for this user ('podman info' fails)."
     version="$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)"
-    [ "$(engine_version_number "$version")" -ge 4000 ] || die "Podman 4.0 or later is required (found ${version:-an unknown version})."
+    [ "$(engine_version_number "$version")" -ge 4000000 ] || die "Podman 4.0 or later is required (found ${version:-an unknown version})."
     [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ] && ENGINE_ROOTLESS=true
     if command -v podman-compose >/dev/null 2>&1; then
-      compose_version="$(podman-compose version 2>/dev/null | sed -n 's/^podman-compose version:* *//p' | head -n 1)"
-      [ "$(engine_version_number "$compose_version")" -ge 1001 ] \
-        || die "podman-compose 1.1 or later is required (found ${compose_version:-an unknown version}): pip install --user --upgrade podman-compose"
+      # "podman-compose version 1.6.0", "podman-compose version: 1.0.6", "podman-composer version  1.0.3"
+      compose_version="$(podman-compose version 2>/dev/null | sed -nE 's/^podman-composer? version:? *//p' | head -n 1)"
+      # 1.0.6 is what EPEL ships for RHEL 8 and 9; CI checks the package with it and the latest.
+      [ "$(engine_version_number "$compose_version")" -ge 1000006 ] \
+        || die "podman-compose 1.0.6 or later is required (found ${compose_version:-an unknown version}): pip install --user --upgrade podman-compose"
       COMPOSE=(podman-compose)
     elif podman compose version >/dev/null 2>&1; then
       COMPOSE=(podman compose)

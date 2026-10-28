@@ -200,7 +200,8 @@ fi
 
 mkdir -p license
 
-compose config -q || die "The compose configuration is invalid; check .env."
+# config without -q: podman-compose 1.0.x has no -q (it fails as an unknown option).
+compose config >/dev/null || die "The compose configuration is invalid; check .env."
 
 # --- ENS license -----------------------------------------------------------------
 # A license.lic placed next to this script goes into .env as ENS_LICENSE, which the API installs as it
