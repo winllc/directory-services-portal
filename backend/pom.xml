@@ -38,7 +38,20 @@
     <jackson-2-bom.version>2.21.8</jackson-2-bom.version>
     <shedlock.version>7.10.1</shedlock.version>
     <springdoc.version>3.1.1</springdoc.version>
+    <!-- Guava, which OpenSAML pulls in for SAML sign-in at 33.0.0-jre: Trivy CVE-2026-102554 (HIGH), fixed in
+         33.7.2. Remove once OpenSAML depends on it or newer. -->
+    <guava.version>33.7.2-jre</guava.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.google.guava</groupId>
+        <artifactId>guava</artifactId>
+        <version>${guava.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <dependency>
