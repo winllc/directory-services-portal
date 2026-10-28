@@ -221,6 +221,47 @@ class EntryChangesTest extends ApiTestSupport {
   }
 
   @Test
+  void aDeleteKeepsEveryAttributeTheEntryHeldOnItsFormOrNotWithSecretsRedacted() throws Exception {
+    // Bob holds attributes his form shows (title, mail, ...) and others it doesn't (employeeType,
+    // roomNumber, a photo, his password).
+    byte[] photo = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F'};
+    directory.modify(BOB, List.of(new Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "jpegPhoto", photo),
+        new Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "roomNumber", "4-117"),
+        new Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "userPassword", "Bobs-Old-Secret-42")));
+    DirectoryEntry before = read(BOB);
+    assertThat(before.attributes()).containsKeys("employeetype", "roomnumber", "jpegphoto", "userpassword");
+
+    MvcResult r = login("admin").del("/api/directories/staff/entry" + q(BOB));
+    assertThat(status(r)).as(error(r)).isEqualTo(204);
+    assertThat(read(BOB)).isNull();
+
+    List<JsonNode> trail = trail(BOB);
+    assertThat(trail).hasSize(1);
+    JsonNode event = trail.get(0);
+    assertThat(event.get("action").asString()).isEqualTo("entry.delete");
+    assertThat(event.get("outcome").asString()).isEqualTo("success");
+    assertThat(event.get("target").get("name").asString()).isEqualTo("Bob Baker");
+    // Every attribute, each as <attribute>.old with nothing new.
+    for (String attribute : before.attributes().keySet()) {
+      assertThat(detailKeys(event)).as(attribute).contains(attribute + ".old", attribute + ".new");
+      assertThat(event.get("details").get(attribute + ".new").isNull()).as(attribute).isTrue();
+    }
+    // On the form.
+    assertThat(detail(event, "title.old")).isEqualTo("Account Executive");
+    assertThat(detail(event, "mail.old")).isEqualTo("bob@example.com");
+    // Not on the form.
+    assertThat(detail(event, "employeetype.old")).isEqualTo("Full time");
+    assertThat(detail(event, "roomnumber.old")).isEqualTo("4-117");
+    assertThat(detail(event, "objectclass.old")).contains("inetOrgPerson", "acmePerson");
+    // Binary values as the API returns them: base64.
+    assertThat(detail(event, "jpegphoto.old")).isEqualTo(java.util.Base64.getEncoder().encodeToString(photo));
+    // Secrets: recorded as held, never their value.
+    assertThat(detail(event, "userpassword.old")).isEqualTo("[redacted]");
+    assertThat(event.toString()).doesNotContain("Bobs-Old-Secret-42");
+    assertThat(java.nio.file.Files.readString(AUDIT_FILE)).doesNotContain("Bobs-Old-Secret-42");
+  }
+
+  @Test
   void theFirstChangeToAnEntryWithoutTheFormsAuxiliaryClassAddsIt() throws Exception {
     // Provisioned by another system: an inetOrgPerson without the acmePerson extension.
     String ivan = "uid=ivan,ou=people," + B;
