@@ -198,11 +198,26 @@ public class EntryService {
 
   /** Read an entry that belongs to the definition (namespace + filter), without access checks. */
   private DirectoryEntry loadEntry(DirectoryDefinition def, FormDefinition form, String dn) {
+    return sanitize(findEntry(def, form, dn, returnAttributes(def, form)));
+  }
+
+  /**
+   * Every attribute an entry of the definition holds (all user attributes, plus the form's and the
+   * definition's own, which may be operational), secrets included: for the record a delete keeps,
+   * which redacts them ({@link #change}). Never returned to clients.
+   */
+  private DirectoryEntry loadEverything(DirectoryDefinition def, FormDefinition form, String dn) {
+    List<String> attributes = new ArrayList<>(List.of("*"));
+    attributes.addAll(returnAttributes(def, form));
+    return findEntry(def, form, dn, attributes);
+  }
+
+  private DirectoryEntry findEntry(DirectoryDefinition def, FormDefinition form, String dn, List<String> attributes) {
     assertInNamespace(def, dn);
     try {
-      List<DirectoryEntry> found = directory.search(dn, SearchScope.BASE, baseFilter(def, form), 1, returnAttributes(def, form)).entries();
+      List<DirectoryEntry> found = directory.search(dn, SearchScope.BASE, baseFilter(def, form), 1, attributes).entries();
       if (found.isEmpty()) throw ApiException.notFound("Entry not found in this directory");
-      return sanitize(found.get(0));
+      return found.get(0);
     } catch (DirectoryException e) {
       if (e.code() == DirectoryException.Code.NO_SUCH_OBJECT) throw ApiException.notFound("Entry not found");
       throw e;
@@ -590,14 +605,16 @@ public class EntryService {
     AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).target("entry", dn, null);
     audited("delete", event, () -> {
       require(user, def, AccessLevel.WRITE);
-      DirectoryEntry current = loadEntry(def, form(def), dn);
-      // What the entry held, so a mistaken delete can be put back by hand.
-      event.target("entry", current.dn(), title(def, current))
-          .changes(current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList());
+      FormDefinition form = form(def);
+      DirectoryEntry current = loadEverything(def, form, dn);
+      // Everything the entry held, on its form or not (secrets redacted), so a mistaken delete can
+      // be put back by hand. The webhook's entry.changed names the same attributes.
+      List<AuditEvent.Change> held = current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList();
+      String name = title(def, current);
+      event.target("entry", current.dn(), name).changes(held);
       audit.requireWritable();
       directory.delete(current.dn());
-      event.alongside(changed(user, EntryChanged.DELETE, def, form(def), current.dn(), null, title(def, current),
-          current.attributes().entrySet().stream().map(e -> change(e.getKey(), e.getValue(), List.of())).toList(), false)).success();
+      event.alongside(changed(user, EntryChanged.DELETE, def, form, current.dn(), null, name, held, false)).success();
       return null;
     });
   }
@@ -668,7 +685,7 @@ public class EntryService {
   }
 
   private static List<String> redact(String attribute, List<String> values) {
-    return values.isEmpty() || !HIDDEN.contains(attribute.toLowerCase()) ? List.copyOf(values) : List.of(REDACTED);
+    return values.isEmpty() || !(isHidden(attribute) || AuditDetails.isSecret(attribute)) ? List.copyOf(values) : List.of(REDACTED);
   }
 
   private static String title(DirectoryDefinition def, DirectoryEntry entry) {

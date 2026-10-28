@@ -179,6 +179,8 @@ An upgraded installation keeps working with no change; new installations get the
   the GitHub environment `release`, and the upload prefers an IAM role (`AWS_RELEASE_ROLE_ARN`)
   over the access-key secrets, which keep working, with a warning, until it is set. See
   [Releases](#releases) for what to create.
+- **A deleted entry's audit record keeps every attribute it held**, not only those on its form
+  (secrets `[redacted]`), and its `entry.changed` webhook names them all. Nothing to configure.
 
 ### Upgrade notes: integration API, webhooks, import and export, accessibility
 
@@ -685,7 +687,7 @@ changes made in the portal, through the API or by an import:
 
 | Event | When |
 | --- | --- |
-| `entry.changed` | an entry was created, updated (or renamed) or deleted (`data.operation`, the changed attribute names) |
+| `entry.changed` | an entry was created, updated (or renamed) or deleted (`data.operation`, the changed attribute names; for a delete, every attribute the entry held) |
 | `group.membership_changed` | member, uniqueMember or memberUid values were added or removed (`data.added`, `data.removed`) |
 | `form.submitted` | an entry form was saved: create, update, or a user's own profile (`self_update`) |
 
@@ -821,7 +823,7 @@ Splunk or any SIEM.
 | authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent` or `account-removed`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
 | authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
 | account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
-| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps everything the entry held; a rename records `previousDn`), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
+| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps every attribute the entry held, on its form or not, with secrets as `[redacted]` and binary values such as `jpegPhoto` in base64; a rename records `previousDn`; like every detail, each attribute's values are cut at 1,000 characters), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
 | configuration | `dashboard.*`, `analysis.create` / `update` / `delete` |
 | license | `license.installed`, `license.rejected` (with the reason), `license.mode-changed` (old and new mode; checked at startup, every minute and after an upload). Older history keeps the original `license.install` |
 | system | `system.started` (version), `system.stopped`, `job.completed` / `job.failed` (the retention job) |
