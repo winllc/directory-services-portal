@@ -23,7 +23,9 @@ Requirements: Linux with about 2 GB of disk and either
   1.29 is used when v2 is missing, best effort), or
 - **Podman** 4.0+ with podman-compose 1.0.6+ (`pip install --user podman-compose`, or your
   distribution's package), rootful or rootless; `podman compose` is used when podman-compose
-  is not installed. See [Docker or Podman](#docker-or-podman).
+  is not installed. See [Docker or Podman](#docker-or-podman). With podman-compose 1.0.x, write
+  `.env` values without quotes: it passes `.env` to Podman as it is, and Podman keeps quotes as part
+  of the value (`BANNER_FOREGROUND="#ffffff"` would stop the API at startup).
 
 ## Install
 
