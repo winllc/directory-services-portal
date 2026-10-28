@@ -81,7 +81,8 @@ setenv API_IMAGE "$API_IMAGE"
 setenv WEB_IMAGE "$WEB_IMAGE"
 if "$ENGINE" image inspect "$OPENLDAP_IMAGE" >/dev/null 2>&1; then setenv OPENLDAP_IMAGE "$OPENLDAP_IMAGE"; fi
 mkdir -p license
-compose config -q || die "The compose configuration is invalid; check .env."
+# config without -q: podman-compose 1.0.x has no -q (it fails as an unknown option).
+compose config >/dev/null || die "The compose configuration is invalid; check .env."
 say "Settings now use $API_IMAGE and $WEB_IMAGE"
 
 # The license volume is kept as is. A license.lic here goes into .env as ENS_LICENSE, which the API

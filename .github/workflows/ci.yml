@@ -554,24 +554,35 @@ jobs:
           # The docker package runs on Podman too: install the images just built with Podman
           # (rootful; rootless needs a systemd user session for cgroup limits), start them with
           # ./portal.sh up (it waits for the API's healthcheck) and reach the port from the host.
-          python3 -m venv "$RUNNER_TEMP/podman-compose"
-          "$RUNNER_TEMP/podman-compose/bin/pip" install -q "podman-compose==1.6.0"
+          # With the oldest podman-compose engine.sh accepts (1.0.6, EPEL's for RHEL 8 and 9) and
+          # the latest, each in a fresh copy of the package.
+          set -o pipefail
           docker tag dsp-api:ci localhost/dsp-api:ci
           docker tag dsp-web:ci localhost/dsp-web:ci
           scripts/package.sh --skip-build --api-image localhost/dsp-api:ci --web-image localhost/dsp-web:ci \
             --version 0.0.0-podman --output "$RUNNER_TEMP/podman-pkg" --keep
-          cd "$RUNNER_TEMP/podman-pkg/directory-services-portal-0.0.0-podman-docker"
-          as_root() { sudo env "PATH=$RUNNER_TEMP/podman-compose/bin:$PATH" "$@"; }
-          # 8080 is taken by the containers of the previous step.
-          as_root ./install.sh --engine podman --demo --http 18080
-          as_root ./portal.sh up || { sudo podman logs directory-services-portal_api_1 2>&1 | tail -n 100; exit 1; }
-          curl -fsS http://127.0.0.1:18080/api/health
-          curl -fsS -o /dev/null http://127.0.0.1:18080/
-          sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 127.0.0.1:18080'
-          as_root ./portal.sh backup "$RUNNER_TEMP/podman-backup.tar.gz"
-          tar -tzf "$RUNNER_TEMP/podman-backup.tar.gz" > /dev/null
-          as_root ./portal.sh down
-          sudo podman volume rm directory-services-portal_portal-data directory-services-portal_ens-license directory-services-portal_ens-audit
+          for pc in 1.0.6 1.6.0; do
+            echo "::group::podman-compose $pc"
+            python3 -m venv "$RUNNER_TEMP/podman-compose-$pc"
+            "$RUNNER_TEMP/podman-compose-$pc/bin/pip" install -q "podman-compose==$pc"
+            cp -a "$RUNNER_TEMP/podman-pkg/directory-services-portal-0.0.0-podman-docker" "$RUNNER_TEMP/podman-run-$pc"
+            (
+              cd "$RUNNER_TEMP/podman-run-$pc"
+              as_root() { sudo env "PATH=$RUNNER_TEMP/podman-compose-$pc/bin:$PATH" "$@"; }
+              # 8080 is taken by the containers of the previous step.
+              as_root ./install.sh --engine podman --demo --http 18080 | tee "$RUNNER_TEMP/podman-install-$pc.log"
+              grep -q "compose: podman-compose $pc" "$RUNNER_TEMP/podman-install-$pc.log"
+              as_root ./portal.sh up || { sudo podman logs directory-services-portal_api_1 2>&1 | tail -n 100; exit 1; }
+              curl -fsS http://127.0.0.1:18080/api/health
+              curl -fsS -o /dev/null http://127.0.0.1:18080/
+              sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 127.0.0.1:18080'
+              as_root ./portal.sh backup "$RUNNER_TEMP/podman-backup-$pc.tar.gz"
+              tar -tzf "$RUNNER_TEMP/podman-backup-$pc.tar.gz" > /dev/null
+              as_root ./portal.sh down
+              sudo podman volume rm directory-services-portal_portal-data directory-services-portal_ens-license directory-services-portal_ens-audit
+            )
+            echo "::endgroup::"
+          done
           rm -f "$RUNNER_TEMP"/podman-pkg/*.tar.gz
 
       - name: Scan the images

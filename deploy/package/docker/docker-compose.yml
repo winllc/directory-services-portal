@@ -5,7 +5,7 @@
 #        on the host as WEB_BIND:WEB_PORT (plain HTTP; install.sh writes 127.0.0.1:8080, this host only)
 #   api  the Spring Boot API (never published on the host)
 #
-# For Docker Compose v2 and podman-compose 1.1+. docker-compose.mtls.yml adds HTTPS (HTTPS_PORT).
+# For Docker Compose v2 and podman-compose 1.0.6+. docker-compose.mtls.yml adds HTTPS (HTTPS_PORT).
 # docker-compose.no-publish.yml, used instead of this file, is the same without the published
 # port (for a reverse proxy on the compose network).
 # The project name is COMPOSE_PROJECT_NAME in .env (no top-level "name:": docker-compose v1

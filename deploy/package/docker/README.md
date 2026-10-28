@@ -21,9 +21,11 @@ Requirements: Linux with about 2 GB of disk and either
 
 - **Docker** Engine 20.10+ with Docker Compose v2 (`docker compose`; the old `docker-compose`
   1.29 is used when v2 is missing, best effort), or
-- **Podman** 4.0+ with podman-compose 1.1+ (`pip install --user podman-compose`, or your
+- **Podman** 4.0+ with podman-compose 1.0.6+ (`pip install --user podman-compose`, or your
   distribution's package), rootful or rootless; `podman compose` is used when podman-compose
-  is not installed. See [Docker or Podman](#docker-or-podman).
+  is not installed. See [Docker or Podman](#docker-or-podman). With podman-compose 1.0.x, write
+  `.env` values without quotes: it passes `.env` to Podman as it is, and Podman keeps quotes as part
+  of the value (`BANNER_FOREGROUND="#ffffff"` would stop the API at startup).
 
 ## Install
 
@@ -74,7 +76,7 @@ environment variable chooses explicitly; the installer records the engine in `.e
 volumes: switching an installed portal to the other engine starts it with empty data (move the
 data with `./portal.sh backup` and `./portal.sh restore`).
 
-With Podman (4.0 or later; podman-compose 1.1 or later):
+With Podman (4.0 or later; podman-compose 1.0.6 or later):
 
 - **Rootless** works: the images run as unprivileged users, and the portal's data is in named
   volumes, so there is nothing to `chown`. Rootless Podman can't publish ports below 1024 (the
