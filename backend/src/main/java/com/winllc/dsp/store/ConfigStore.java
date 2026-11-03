@@ -174,7 +174,14 @@ public class ConfigStore {
   /** Writes a configuration of an earlier version back in the current one (once, at startup). */
   private void persistMigration(int loadedVersion) {
     if (loadedVersion >= StoreData.CURRENT_VERSION) return;
-    update(d -> null);
+    try {
+      update(d -> null);
+    } catch (RuntimeException e) {
+      // In use as upgraded either way; written with the next change.
+      log.warn("Could not write the upgraded portal configuration back ({}); it is used as upgraded and written with the next change",
+          e.getMessage());
+      return;
+    }
     log.info("Portal configuration upgraded to version {}: definitions and grants without a directory now belong to \"{}\"",
         StoreData.CURRENT_VERSION, DirectoryProperties.DEFAULT_ID);
   }
