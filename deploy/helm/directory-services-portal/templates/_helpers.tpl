@@ -96,6 +96,23 @@ port: http
 {{- end -}}
 {{- end -}}
 
+{{/* "a,b" from a list or a string (server URLs). */}}
+{{- define "dsp.joinComma" -}}
+{{- if kindIs "slice" . -}}{{- join "," . -}}{{- else -}}{{- . | default "" -}}{{- end -}}
+{{- end -}}
+
+{{/*
+Whether a directory of .Values.directories has a bind password (inline or existing Secret), and
+the chart Secret key of an inline one. Call with the directory.
+*/}}
+{{- define "dsp.directorySecretSet" -}}
+{{- with .bindPassword -}}{{- if or .value .existingSecret -}}true{{- end -}}{{- end -}}
+{{- end -}}
+
+{{- define "dsp.directoryInlineSecret" -}}
+{{- with .bindPassword -}}{{- if and .value (not .existingSecret) -}}true{{- end -}}{{- end -}}
+{{- end -}}
+
 {{/* "a;b" from a list or a string. */}}
 {{- define "dsp.joinSemi" -}}
 {{- if kindIs "slice" . -}}{{- join ";" . -}}{{- else -}}{{- . | default "" -}}{{- end -}}
@@ -144,7 +161,9 @@ secretKeyRef:
 {{/* Whether the chart creates its own Secret. */}}
 {{- define "dsp.hasChartSecret" -}}
 {{- $v := .Values -}}
-{{- if or (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
+{{- $directorySecret := false -}}
+{{- range $v.directories -}}{{- if include "dsp.directoryInlineSecret" . -}}{{- $directorySecret = true -}}{{- end -}}{{- end -}}
+{{- if or $directorySecret (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "dsp.licenseSecretName" -}}
@@ -257,6 +276,19 @@ true
 
 {{/* Validation of value combinations that would otherwise fail at runtime. */}}
 {{- define "dsp.validate" -}}
+{{- $ids := list -}}
+{{- range $i, $d := .Values.directories -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9_-]{0,31}$" (toString $d.id)) -}}
+{{- fail (printf "directories[%d].id must be 1-32 lower-case letters, digits, - or _ (got %q)" $i (toString $d.id)) -}}
+{{- end -}}
+{{- if has $d.id $ids -}}
+{{- fail (printf "directories: the id %s is used more than once" $d.id) -}}
+{{- end -}}
+{{- $ids = append $ids $d.id -}}
+{{- if not $d.urls -}}
+{{- fail (printf "directories[%d] (%s): urls is required" $i $d.id) -}}
+{{- end -}}
+{{- end -}}
 {{- if gt (int .Values.api.replicaCount) 1 -}}
 {{- if not .Values.database.url -}}
 {{- fail "api.replicaCount > 1 needs database.url (the shared PostgreSQL database for sessions, the sign-in lockout, configuration, the audit store and jobs)" -}}

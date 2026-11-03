@@ -121,6 +121,10 @@ compose files (`COMPOSE_FILE`) and ports; the rest configures the portal:
   container instead). For `ldaps://` with a private CA, put a trust store in the data volume
   and point `JAVA_TOOL_OPTIONS` at it, or set `LDAP_TLS_REJECT_UNAUTHORIZED=false` for testing.
 - `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER`, `LDAP_GROUP_*`: how users and their groups are found.
+- Failover: `LDAP_URL` may list several servers of the directory (commas or spaces); they are
+  tried in order (`LDAP_SERVER_SELECTION=round-robin`: in turn).
+- Several directories (license feature `multi-directory`): the commented `PORTAL_DIRECTORIES_<n>_*`
+  block in `env.template` replaces the `LDAP_*` settings, one block per directory.
 - `ADMIN_USERS`, `ADMIN_GROUPS`: who administers the portal (`;` separated).
 - `ENS_COOKIE_SECURE=true` whenever users reach the portal over HTTPS (including through your
   proxy; `COOKIE_SECURE`, the older name, still works). The web tier sends the security headers

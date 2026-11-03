@@ -426,6 +426,27 @@
       "type": "object",
       "properties": {
         "url": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "serverSelection": {
+          "type": "string",
+          "enum": [
+            "failover",
+            "round-robin"
+          ]
+        },
+        "name": {
           "type": "string"
         },
         "startTls": {
@@ -523,6 +544,137 @@
             "array",
             "string"
           ]
+        }
+      }
+    },
+    "directories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "urls"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "urls": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            ]
+          },
+          "serverSelection": {
+            "type": "string",
+            "enum": [
+              "failover",
+              "round-robin"
+            ]
+          },
+          "bindDn": {
+            "type": "string"
+          },
+          "bindPassword": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              },
+              "existingSecret": {
+                "type": "string"
+              },
+              "existingSecretKey": {
+                "type": "string"
+              }
+            }
+          },
+          "startTls": {
+            "type": "boolean"
+          },
+          "tlsRejectUnauthorized": {
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "type": "integer"
+          },
+          "poolSize": {
+            "type": "integer"
+          },
+          "baseDn": {
+            "type": "string"
+          },
+          "userSearchBase": {
+            "type": "string"
+          },
+          "userFilter": {
+            "type": "string"
+          },
+          "usernameAttribute": {
+            "type": "string"
+          },
+          "groupSearchBase": {
+            "type": "string"
+          },
+          "groupFilter": {
+            "type": "string"
+          },
+          "admin": {
+            "type": "object",
+            "properties": {
+              "users": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "groups": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "x509": {
+            "type": "boolean"
+          },
+          "x509UserFilter": {
+            "type": "string"
+          },
+          "sso": {
+            "type": "boolean"
+          },
+          "ssoUserFilter": {
+            "type": "string"
+          }
         }
       }
     },
@@ -1280,7 +1432,11 @@
               "type": "string"
             },
             "providerLogout": {
-              "enum": ["", true, false]
+              "enum": [
+                "",
+                true,
+                false
+              ]
             },
             "clientSecret": {
               "type": "object",
@@ -1332,7 +1488,11 @@
               "type": "string"
             },
             "singleLogout": {
-              "enum": ["", true, false]
+              "enum": [
+                "",
+                true,
+                false
+              ]
             },
             "adminGroups": {
               "type": "array",
