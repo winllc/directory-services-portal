@@ -35,6 +35,7 @@ import type {
   DirectoryDefinition,
   DirectoryEntry,
   EntryListResponse,
+  LdapDirectoryListing,
   FindingsFilters,
   FindingsPage,
   FormDefinition,
@@ -67,8 +68,9 @@ export const keys = {
   form: (id: string) => ['admin', 'form', id] as const,
   adminDefinitions: ['admin', 'definitions'] as const,
   grants: ['admin', 'grants'] as const,
-  subjects: (q: string, type?: string) => ['admin', 'subjects', q, type] as const,
-  browse: (base: string) => ['admin', 'browse', base] as const,
+  subjects: (q: string, type?: string, directory?: string) => ['admin', 'subjects', q, type, directory] as const,
+  browse: (base: string, directory?: string) => ['admin', 'browse', base, directory] as const,
+  ldapDirectories: (health: boolean) => ['admin', 'ldap-directories', health] as const,
   audit: (params: object) => ['admin', 'audit', params] as const,
   auditActions: ['admin', 'audit-actions'] as const,
   auditStatus: ['admin', 'audit-status'] as const,
@@ -350,11 +352,23 @@ export function useGrantMutations() {
   };
 }
 
-export const useSubjects = (q: string, type?: 'user' | 'group') =>
+/** Users and groups of one LDAP directory (none: the first). */
+export const useSubjects = (q: string, type?: 'user' | 'group', directory?: string) =>
   useQuery({
-    queryKey: keys.subjects(q, type),
-    queryFn: () => api.get<SubjectSearchResult[]>(`/api/admin/subjects${qs({ q, type })}`),
+    queryKey: keys.subjects(q, type, directory),
+    queryFn: () => api.get<SubjectSearchResult[]>(`/api/admin/subjects${qs({ q, type, directory })}`),
     placeholderData: (prev) => prev,
+  });
+
+/**
+ * The configured LDAP directories (administrators). `health`: also check that each answers (slower);
+ * without it, for pickers.
+ */
+export const useLdapDirectories = (health = false) =>
+  useQuery({
+    queryKey: keys.ldapDirectories(health),
+    queryFn: () => api.get<LdapDirectoryListing>(`/api/admin/directories${qs({ health: String(health) })}`),
+    staleTime: health ? 0 : 60_000,
   });
 
 export interface BrowseResult {
@@ -363,11 +377,21 @@ export interface BrowseResult {
   truncated: boolean;
 }
 
-export const useBrowse = (base: string, enabled: boolean) =>
-  useQuery({ queryKey: keys.browse(base), queryFn: () => api.get<BrowseResult>(`/api/admin/browse${qs({ base })}`), enabled });
+export const useBrowse = (base: string, enabled: boolean, directory?: string) =>
+  useQuery({
+    queryKey: keys.browse(base, directory),
+    queryFn: () => api.get<BrowseResult>(`/api/admin/browse${qs({ base, directory })}`),
+    enabled,
+  });
 
-export const previewSearch = (input: { baseDn: string; scope: 'base' | 'one' | 'sub'; filter: string; attributes?: string[] }) =>
-  api.post<{ entries: DirectoryEntry[]; truncated: boolean }>('/api/admin/preview', input);
+export const previewSearch = (input: {
+  baseDn: string;
+  scope: 'base' | 'one' | 'sub';
+  filter: string;
+  attributes?: string[];
+  /** The LDAP directory to search (none: the first). */
+  directory?: string;
+}) => api.post<{ entries: DirectoryEntry[]; truncated: boolean }>('/api/admin/preview', input);
 
 /** Audit log filters (all optional). `from`/`to` are ISO instants or YYYY-MM-DD. */
 export interface AuditFilters {

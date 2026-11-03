@@ -20,6 +20,7 @@ const ALL: LicensedFeatureId[] = [
   'metrics',
   'data-analysis',
   'schema-transfer',
+  'multi-directory',
 ];
 
 function license(enabled: LicensedFeatureId[] = ALL, extra: Partial<LicenseStatus> = {}): LicenseStatus {
@@ -172,7 +173,7 @@ describe('license screen', () => {
     renderAt('/admin/license');
     expect(await screen.findByText('2,500 directory users')).toBeInTheDocument();
     expect(screen.getAllByLabelText('Included')).toHaveLength(1);
-    expect(screen.getAllByLabelText('Not included')).toHaveLength(7);
+    expect(screen.getAllByLabelText('Not included')).toHaveLength(8);
 
     const user = userEvent.setup();
     const input = screen.getByLabelText('License file');

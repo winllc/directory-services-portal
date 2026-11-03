@@ -205,6 +205,11 @@ export interface DirectoryDefinition {
   icon?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The LDAP directory (its id) the definition reads and writes. Definitions saved before there
+   * were several directories have `default`, which also stands for the first configured one.
+   */
+  directory?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +228,8 @@ export interface PermissionGrant {
   subjectLabel?: string;
   access: Exclude<AccessLevel, 'none'>;
   createdAt: string;
+  /** The LDAP directory the subject (user or group) is in; absent: the definition's. */
+  directory?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +264,8 @@ export interface SessionUser {
   authMethod?: 'password' | 'x509' | 'oidc' | 'saml';
   /** Subject DN of the client certificate, for certificate sign-ins. */
   certificateSubject?: string;
+  /** The LDAP directory (its id) the user signed in to: a user is (directory, DN). */
+  directory?: string;
 }
 
 /** Definition as seen by a specific user, including their effective access. */
@@ -272,6 +281,40 @@ export interface SelfEntryResult {
   /** Fields the user may edit on their own entry. */
   editableFields: string[];
   error?: string;
+}
+
+/** An LDAP directory a user can sign in to. */
+export interface DirectoryOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * A configured LDAP directory as administrators see it (read only: configured in the environment).
+ * `servers` are tried in order (failover) or in turn (round-robin); `currentServer` is the one the
+ * latest connection went to; `reachable` is absent when not checked (disabled directories).
+ */
+export interface LdapDirectoryStatus {
+  id: string;
+  name: string;
+  primary: boolean;
+  servers: string[];
+  serverSelection: 'failover' | 'round-robin';
+  currentServer?: string;
+  reachable?: boolean;
+  error?: string;
+  /** False when the license doesn't include multiple directories (only the first is then in use). */
+  enabled: boolean;
+  baseDn: string;
+  x509: boolean;
+  sso: boolean;
+}
+
+export interface LdapDirectoryListing {
+  directories: LdapDirectoryStatus[];
+  multiDirectoryLicensed: boolean;
+  /** Why some directories are disabled. */
+  notice?: string;
 }
 
 /** A single sign-on provider offered on the login page; the browser navigates to {@link url}. */
@@ -292,7 +335,14 @@ export interface ServerInfo {
   error?: string;
   version: string;
   /** Sign-in methods offered by the server. */
-  auth?: { password: boolean; x509: boolean; x509AutoLogin: boolean; sso?: SsoOption[] };
+  auth?: {
+    password: boolean;
+    x509: boolean;
+    x509AutoLogin: boolean;
+    sso?: SsoOption[];
+    /** The directories to sign in to with a password, when there is more than one (the login page then asks which). */
+    directories?: DirectoryOption[];
+  };
   /** Text shown on the login page, e.g. demo credentials. */
   loginHint?: string;
   /** Fixed banner shown at the top and bottom of every page (absent when disabled). */
@@ -316,7 +366,8 @@ export type LicensedFeatureId =
   | 'smart-card-sign-in'
   | 'metrics'
   | 'data-analysis'
-  | 'schema-transfer';
+  | 'schema-transfer'
+  | 'multi-directory';
 
 /** FULL: features as licensed. READ_ONLY: reading only (expired). UNLICENSED: only sign-in and the license screen. */
 export type LicenseMode = 'FULL' | 'READ_ONLY' | 'UNLICENSED';

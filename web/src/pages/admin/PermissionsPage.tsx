@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { KeyRound, Plus, Search, Trash2, User, UsersRound } from 'lucide-react';
-import type { DirectoryDefinition, PermissionGrant, SubjectSearchResult, SubjectType } from '@dsp/shared';
+import type { DirectoryDefinition, LdapDirectoryStatus, PermissionGrant, SubjectSearchResult, SubjectType } from '@dsp/shared';
 import { rdnValue } from '@dsp/shared';
-import { useAdminDefinitions, useGrantMutations, useGrants, useSubjects } from '../../api/hooks';
+import { useAdminDefinitions, useGrantMutations, useGrants, useLdapDirectories, useSubjects } from '../../api/hooks';
 import { DefinitionIcon } from '../../components/Layout';
 import { Alert, Badge, Button, Card, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, cx, useDebounced, useToast } from '../../components/ui';
 
@@ -11,13 +11,29 @@ function SubjectIcon({ type }: { type: SubjectType }) {
   return type === 'user' ? <User size={16} aria-label="User" /> : <UsersRound size={16} aria-label="Group" />;
 }
 
+/** The configured LDAP directories when there are several (grants then name the subject's), else empty. */
+function useSeveralDirectories(): LdapDirectoryStatus[] {
+  const q = useLdapDirectories();
+  const list = q.data?.directories ?? [];
+  return list.length > 1 ? list : [];
+}
+
+/** The id a definition's or grant's directory reference stands for ("default", or none: the first). */
+function resolveDirectory(list: LdapDirectoryStatus[], id?: string): string | undefined {
+  return (list.find((x) => x.id === id) ?? (!id || id === 'default' ? list[0] : undefined))?.id ?? id;
+}
+
 function AddGrant({ definition }: { definition: DirectoryDefinition }) {
   const [type, setType] = useState<SubjectType>('user');
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<SubjectSearchResult | null>(null);
   const [access, setAccess] = useState<'read' | 'write'>('read');
+  const directories = useSeveralDirectories();
+  // Users and groups are searched in one directory: the definition's unless another is chosen.
+  const [chosenDirectory, setChosenDirectory] = useState<string | undefined>(undefined);
+  const subjectDirectory = directories.length ? (chosenDirectory ?? resolveDirectory(directories, definition.directory)) : undefined;
   const debounced = useDebounced(query, 250);
-  const subjects = useSubjects(debounced, type);
+  const subjects = useSubjects(debounced, type, subjectDirectory);
   const { create } = useGrantMutations();
   const toast = useToast();
   const readonly = definition.mode === 'readonly';
@@ -25,7 +41,14 @@ function AddGrant({ definition }: { definition: DirectoryDefinition }) {
   const submit = () => {
     if (!picked) return;
     create.mutate(
-      { definitionId: definition.id, subjectType: picked.type, subject: picked.id, subjectLabel: picked.label, access: readonly ? 'read' : access },
+      {
+        definitionId: definition.id,
+        subjectType: picked.type,
+        subject: picked.id,
+        subjectLabel: picked.label,
+        access: readonly ? 'read' : access,
+        ...(subjectDirectory ? { directory: subjectDirectory } : {}),
+      },
       {
         onSuccess: () => {
           toast.success(`Granted ${readonly ? 'read' : access} access to ${picked.label}`);
@@ -38,6 +61,24 @@ function AddGrant({ definition }: { definition: DirectoryDefinition }) {
 
   return (
     <div className="add-grant">
+      {directories.length > 0 && (
+        <select
+          className="input select"
+          aria-label="Directory of the user or group"
+          value={subjectDirectory}
+          onChange={(e) => {
+            setChosenDirectory(e.target.value);
+            setPicked(null);
+          }}
+        >
+          {directories.map((x) => (
+            <option key={x.id} value={x.id} disabled={!x.enabled}>
+              {x.name}
+              {x.enabled ? '' : ' (not licensed)'}
+            </option>
+          ))}
+        </select>
+      )}
       <div className="segmented" role="radiogroup" aria-label="Subject type">
         {(['user', 'group'] as const).map((t) => (
           <button
@@ -103,6 +144,11 @@ function AddGrant({ definition }: { definition: DirectoryDefinition }) {
 }
 
 function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; definition: DirectoryDefinition }) {
+  const directories = useSeveralDirectories();
+  const directoryName = (g: PermissionGrant) => {
+    const id = resolveDirectory(directories, g.directory ?? definition.directory);
+    return directories.find((x) => x.id === id)?.name ?? id;
+  };
   const { create, remove } = useGrantMutations();
   const toast = useToast();
   if (!grants.length) return <p className="muted">No explicit grants. {definition.everyoneCanRead ? 'Every signed-in user can read.' : 'Only administrators can access this directory.'}</p>;
@@ -125,6 +171,7 @@ function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; defini
                   <div>
                     <strong>{g.subjectLabel ?? (g.subjectType === 'group' ? rdnValue(g.subject) : g.subject)}</strong>
                     <div className="muted small">{g.subject}</div>
+                    {directories.length > 0 && <div className="muted small">Directory: {directoryName(g)}</div>}
                   </div>
                 </div>
               </td>
@@ -136,7 +183,14 @@ function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; defini
                   aria-label={`Access for ${g.subjectLabel ?? g.subject}`}
                   onChange={(e) =>
                     create.mutate(
-                      { definitionId: g.definitionId, subjectType: g.subjectType, subject: g.subject, subjectLabel: g.subjectLabel, access: e.target.value as 'read' | 'write' },
+                      {
+                        definitionId: g.definitionId,
+                        subjectType: g.subjectType,
+                        subject: g.subject,
+                        subjectLabel: g.subjectLabel,
+                        access: e.target.value as 'read' | 'write',
+                        ...(g.directory ? { directory: g.directory } : {}),
+                      },
                       { onSuccess: () => toast.success('Access updated'), onError: (err) => toast.error(err) },
                     )
                   }

@@ -7,7 +7,8 @@ import { api, ApiError, setUnauthorizedHandler } from '../api/client';
 interface AuthState {
   user: SessionUser | null;
   loading: boolean;
-  login(username: string, password: string): Promise<void>;
+  /** Password sign-in; `directory`: the LDAP directory chosen on the login page (none: the first one). */
+  login(username: string, password: string, directory?: string): Promise<void>;
   /** Sign in with the TLS client certificate the browser presented. */
   loginWithCertificate(): Promise<void>;
   /** Why automatic certificate sign-in failed, if it was attempted. */
@@ -94,7 +95,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const login = useCallback(
-    (username: string, password: string) => signIn(() => api.post<{ user: SessionUser }>('/api/auth/login', { username, password })),
+    (username: string, password: string, directory?: string) =>
+      signIn(() => api.post<{ user: SessionUser }>('/api/auth/login', directory ? { username, password, directory } : { username, password })),
     [signIn],
   );
 

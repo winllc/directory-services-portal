@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import type { DirectoryOption } from '@dsp/shared';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Database, IdCard, KeyRound, LogIn } from 'lucide-react';
 import { useServerInfo } from '../api/hooks';
@@ -14,11 +15,16 @@ export function LoginPage() {
   usePageTitle('Sign in');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // The directory chosen last time on this browser (a convenience only: the list decides).
+  const [chosenDirectory, setChosenDirectory] = useState<string>(() => rememberedDirectory());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'password' | 'certificate' | null>(null);
   const from = (location.state as { from?: string } | null)?.from ?? '/';
   const auth = info.data?.auth ?? { password: true, x509: false, x509AutoLogin: false };
   const sso = auth.sso ?? [];
+  // Several directories: the user picks theirs. One: nothing to pick, as before.
+  const directories: DirectoryOption[] = auth.directories && auth.directories.length > 1 ? auth.directories : [];
+  const directory = directories.some((d) => d.id === chosenDirectory) ? chosenDirectory : directories[0]?.id;
   // A single sign-on the server refused comes back here as ?sso_error=<code>.
   const ssoError = ssoErrorMessage(new URLSearchParams(location.search).get('sso_error'));
   // Back from signing out at the identity provider.
@@ -50,7 +56,8 @@ export function LoginPage() {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    run('password', () => login(username.trim(), password));
+    if (directory) rememberDirectory(directory);
+    run('password', () => login(username.trim(), password, directory));
   };
 
   return (
@@ -123,6 +130,17 @@ export function LoginPage() {
 
         {auth.password && (
           <>
+            {directories.length > 0 && (
+              <FormRow label="Directory" htmlFor="directory" hint="The directory that holds your account">
+                <select id="directory" className="input select" value={directory} onChange={(e) => setChosenDirectory(e.target.value)}>
+                  {directories.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
+            )}
             <FormRow label="Username" htmlFor="username">
               <input id="username" className="input" autoComplete="username" autoFocus value={username} onChange={(e) => setUsername(e.target.value)} required />
             </FormRow>
@@ -138,6 +156,25 @@ export function LoginPage() {
       </form>
     </div>
   );
+}
+
+const DIRECTORY_KEY = 'dsp.login.directory';
+
+/** The directory chosen at the last sign-in on this browser ('' when none, or storage is unavailable). */
+function rememberedDirectory(): string {
+  try {
+    return window.localStorage.getItem(DIRECTORY_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function rememberDirectory(id: string) {
+  try {
+    window.localStorage.setItem(DIRECTORY_KEY, id);
+  } catch {
+    // Not remembered: the first directory is preselected next time.
+  }
 }
 
 /** What to tell the user when the server sent them back from a single sign-on with an error. */
