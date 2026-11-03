@@ -67,6 +67,26 @@ Each package has its own README (`deploy/package/docker/README.md`,
 installers verify. Building from source, the demo compose stack in this repository and
 `docker build` are for development only (see [Development](#development)).
 
+### Upgrade notes: multiple directories and failover
+
+Nothing changes on upgrade: the `LDAP_*` settings still describe one directory, now called
+`default`. New and optional:
+
+- **Failover**: `LDAP_URL` may list several servers of one directory, separated by commas or spaces
+  (`ldaps://dc1.example.com:636,ldaps://dc2.example.com:636`); they are tried in order
+  (`LDAP_SERVER_SELECTION=round-robin` takes them in turn). Not a licensed feature.
+- **Several directories** (`PORTAL_DIRECTORIES_<n>_*`, the license feature `multi-directory`), see
+  [Multiple directories](#multiple-directories). Without that feature only the first is used.
+- At its first start the API upgrades the stored configuration (`portal-config.json` in `DATA_DIR`,
+  or the shared database's copy) to version 2: every definition and grant gets
+  `"directory": "default"`. Keep a backup of `DATA_DIR` (or the database) before upgrading if you
+  might go back to an earlier release: it ignores the new field, but don't run both at once.
+- Additive fields: `directory` on definitions, grants, the signed-in user (`/api/auth/me`), the
+  integration API's directories and every webhook payload; `details.directory` and
+  `details.actorDirectory` in audit records; a `directory` tag on the `ens_dsp_ldap_*` metrics.
+  The readiness health check's `ldap` component lists each directory (`details.directories`) once
+  there are several. New administrator page: *Administration > LDAP directories*.
+
 ### Upgrade notes: license menu entry
 
 Nothing changes on upgrade. New and optional: `ENS_LICENSE_MENU_VISIBLE` (default `true`; Helm
@@ -369,6 +389,7 @@ the API with `@RequiresFeature` or in code, and the web client hides what isn't 
 | `metrics` | metrics, explorer and dashboards: `/api/metrics/**`, `/api/admin/dashboards/**`, `/metrics/*` |
 | `data-analysis` | comparisons and quality checks, findings and CSV export: `/api/admin/analysis/**` |
 | `schema-transfer` | schema import and export: `/api/admin/schema/import`, `/api/admin/schema/export` |
+| `multi-directory` (enterprise) | more than one LDAP directory ([Multiple directories](#multiple-directories)). Without it only the first configured directory is used; the others are listed as disabled (*Administration > LDAP directories*, a WARN at startup), nobody signs in to them and their definitions answer `feature_not_licensed`. Several servers of one directory (failover) need no feature |
 
 A feature the license leaves out answers `403` with `"code": "feature_not_licensed"` and
 `"feature": "<id>"`. Core administration (schema, permissions, audit log, banners) needs only a
@@ -428,7 +449,9 @@ why at ERROR.
 
 | variable | meaning |
 |---|---|
-| `LDAP_URL` | `ldap://` or `ldaps://` URL; `LDAP_STARTTLS=true` upgrades plain connections. Certificates are verified against the JVM trust store unless `LDAP_TLS_REJECT_UNAUTHORIZED=false` |
+| `LDAP_URL` | `ldap://` or `ldaps://` URL; `LDAP_STARTTLS=true` upgrades plain connections. Certificates are verified against the JVM trust store unless `LDAP_TLS_REJECT_UNAUTHORIZED=false`. Several servers of the same directory (replicas), separated by commas or spaces, are tried in order: the first that answers is used, and the pool returns to the first once it answers again |
+| `LDAP_SERVER_SELECTION` | `failover` (default: the servers of `LDAP_URL` in order) or `round-robin` (in turn; every URL must then use the same scheme) |
+| `DIRECTORY_NAME` | the directory's display name (default `Directory`); its id is `default` |
 | `LDAP_BIND_DN` / `LDAP_BIND_PASSWORD` | service account used for every read and write. `LDAP_BIND_PASSWORD_FILE` names a file holding the password instead (it wins when set and not empty; the Helm chart mounts it from a Secret, the native package uses `/etc/directory-services-portal/ldap-bind-password`) |
 | `LDAP_BASE_DN` | default suffix (used by the DN browser) |
 | `LDAP_USER_SEARCH_BASE`, `LDAP_USER_FILTER` | how to find a user at login (`{{username}}` is escaped) |
@@ -442,6 +465,101 @@ why at ERROR.
 Users sign in with their own directory password (the portal verifies it with an LDAP bind).
 The service account needs read access to the schema and to the namespaces you expose, and write
 access wherever portal users should be able to edit.
+
+### Multiple directories
+
+One portal can serve several LDAP directories (several forests, a directory per enclave), each with
+its own servers (failover), service account, TLS settings, user and group lookup and
+administrators. It needs the license feature `multi-directory`; failover within one directory
+does not.
+
+**Model.** Every **definition belongs to exactly one directory** (`directory`, its id), and
+everything done through a definition happens there: browsing, search, create, edit and delete,
+import and export, drop-down lookups, metrics, dashboards and analyses (an analysis may compare
+definitions of different directories), webhooks and the integration API. A **signed-in user is
+(directory, DN)**: the same user name or DN in two directories is two people. **Grants** name the
+directory of their subject (`directory`; none: the definition's), so a grant matches only users,
+and groups, of that directory; a definition may grant users of another directory. *Everyone can
+read* means every signed-in user, of any directory. **Administrators** are listed per directory
+(`ADMIN_USERS` / `ADMIN_GROUPS` of each) and administer the whole portal. **My profile** shows only
+definitions of the user's own directory. Forms, the custom schema, dashboards and analyses are
+shared by all directories; each directory's server schema is read and cached separately (*Schema*
+and the APIs take `?directory=`). The audit record names the directory acted on
+(`details.directory`) and the actor's (`details.actorDirectory`).
+
+**Signing in.** With more than one enabled directory the login page asks which one holds the
+account (a list, the last choice remembered on that browser) and sends it as `directory` with
+`POST /api/auth/login`; without one, the first directory is used, as before. A picker rather than
+trying each directory in turn: names may exist in several directories (different people), a
+password is never sent to a directory it isn't meant for, and the lockout counts per directory.
+With one directory nothing changes on the login page. **Certificate sign-in and single sign-on**
+search every enabled directory whose `x509` / `sso` setting is on (the default), each with its own
+`x509-user-filter` / `sso-user-filter` if set (else `X509_USER_FILTER` / the provider's filter);
+exactly one entry in all of them must match, so an account found in two directories is refused,
+not guessed. Turn a directory's `x509` or `sso` off, or give it a narrower filter, to resolve
+that. With `X509_MAPPING=subject-dn` only directories whose user search base holds the subject DN
+are searched.
+
+**Configuration.** `PORTAL_DIRECTORIES_<n>_<SETTING>` (n from 0; the first is the primary
+directory), or the list `portal.directories` in a Spring configuration file. When set, the
+`LDAP_*`, `LDAP_BASE_DN`, `ADMIN_*` etc. connection settings are not used:
+
+| Setting (`PORTAL_DIRECTORIES_0_...`) | Default | Meaning |
+|---|---|---|
+| `ID` | (required) | 1-32 lower-case letters, digits, `-`, `_`; unique. Appears in URLs, audit records and payloads: don't change it once used. `default` is also what stored definitions of earlier versions name; when no directory has that id it stands for the first |
+| `NAME` | the id | shown on the login page and to administrators |
+| `URLS` | (required) | one or more `ldap://` / `ldaps://` URLs of the same directory, separated by commas or spaces |
+| `SERVERSELECTION` | `failover` | or `round-robin` |
+| `BINDDN`, `BINDPASSWORD`, `BINDPASSWORDFILE` | | the service account; prefer `BINDPASSWORDFILE` (a mounted secret) |
+| `STARTTLS`, `TLSREJECTUNAUTHORIZED`, `TIMEOUTMS`, `POOLSIZE` | `false`, `true`, `10000`, `10` | as `LDAP_STARTTLS` etc. |
+| `BASEDN`, `USERSEARCHBASE`, `USERFILTER`, `USERNAMEATTRIBUTE`, `GROUPSEARCHBASE`, `GROUPFILTER` | as the `LDAP_*` defaults | user and group lookup |
+| `ADMINUSERS`, `ADMINGROUPS` | | this directory's portal administrators (`;`-separated) |
+| `X509`, `X509USERFILTER` | `true`, (`X509_USER_FILTER`) | certificate sign-in looks here, with this filter |
+| `SSO`, `SSOUSERFILTER` | `true`, (the provider's) | single sign-on looks here, with this filter (`{{value}}`) |
+
+```bash
+PORTAL_DIRECTORIES_0_ID=corp
+PORTAL_DIRECTORIES_0_NAME=Corporate
+PORTAL_DIRECTORIES_0_URLS=ldaps://dc1.corp.example:636,ldaps://dc2.corp.example:636
+PORTAL_DIRECTORIES_0_BINDDN=CN=svc-portal,OU=Service,DC=corp,DC=example
+PORTAL_DIRECTORIES_0_BINDPASSWORDFILE=/run/secrets/corp-bind-password
+PORTAL_DIRECTORIES_0_BASEDN=DC=corp,DC=example
+PORTAL_DIRECTORIES_0_USERFILTER=(&(objectClass=user)(sAMAccountName={{username}}))
+PORTAL_DIRECTORIES_0_USERNAMEATTRIBUTE=sAMAccountName
+PORTAL_DIRECTORIES_0_ADMINGROUPS=CN=Portal Admins,OU=Groups,DC=corp,DC=example
+PORTAL_DIRECTORIES_1_ID=enclave-b
+PORTAL_DIRECTORIES_1_NAME=Enclave B
+PORTAL_DIRECTORIES_1_URLS=ldaps://ldap1.b.example ldaps://ldap2.b.example
+PORTAL_DIRECTORIES_1_BINDDN=cn=portal,ou=system,o=enclave-b
+PORTAL_DIRECTORIES_1_BINDPASSWORDFILE=/run/secrets/enclave-b-bind-password
+PORTAL_DIRECTORIES_1_BASEDN=o=enclave-b
+PORTAL_DIRECTORIES_1_X509=false
+```
+
+The API checks the list at startup and **refuses to start** on an id that is missing, malformed or
+used twice, a directory without a URL, a URL that isn't `ldap://` or `ldaps://`, round robin over
+mixed schemes, an invalid filter or an unreadable password file; the message names the setting,
+never a password. It logs each directory (id, name, servers, failover or round robin) at startup.
+Moving from `LDAP_*` to the list: give the first directory the id `default` (or any id: `default`
+then stands for the first), and existing definitions and grants keep working.
+
+**Upgrading stored data.** Definitions and grants saved by earlier versions have no directory: at
+the first start they are given `default` and written back (version 2 of `portal-config.json`, or of
+the shared database's configuration document); nothing else moves.
+
+**Administration.** *Administration > LDAP directories* (`GET /api/admin/directories`) lists each
+directory read only: name, id, servers in order, the server the latest connection went to, whether
+it answers now, and whether the license enables it. The definition editor has a directory select
+(and its DN browser and preview use that directory), the definitions list a directory column, and
+*Permissions* a directory select for the user or group to grant to; all only when there are several
+directories. `/api/admin/subjects`, `/api/admin/browse`, `/api/admin/preview`,
+`/api/admin/schema`, `/api/admin/schema/refresh` and `/api/admin/forms/preview-options` take a
+`directory` (none: the first).
+
+**Health.** With one directory, `ldap` is UP or DOWN as before. With several it is UP while at least
+one enabled directory answers, with `details.directories.<id>.status` (`UP`, `DOWN` with `error`,
+or `DISABLED` when not licensed) and `details.degraded: true` while some don't: one directory down
+doesn't take the portal out of service. It is DOWN when none answers.
 
 ## Features
 
