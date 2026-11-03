@@ -79,8 +79,17 @@ portal:
   # and the chart set DIRECTORY_MODE themselves.
   directory-mode: ${DIRECTORY_MODE:memory}
   demo-mode: ${DEMO_MODE:false}
+  # One directory (id "default") from the LDAP_* settings below; LDAP_URL may list several servers
+  # of one replica set, separated by commas or spaces: they are tried in order (failover), or in turn
+  # with LDAP_SERVER_SELECTION=round-robin. Several directories: PORTAL_DIRECTORIES_<n>_* instead
+  # (see README, Multiple directories); the LDAP_* settings are then not used. The list is not in this
+  # file on purpose: set it in the environment or in a separate configuration file.
+  directory-name: ${DIRECTORY_NAME:}
+  # Memory mode only: 2 runs a second embedded demo directory ("lab").
+  demo-directories: ${DEMO_DIRECTORIES:1}
   ldap:
     url: ${LDAP_URL:ldap://localhost:389}
+    server-selection: ${LDAP_SERVER_SELECTION:failover}
     bind-dn: ${LDAP_BIND_DN:}
     bind-password: ${LDAP_BIND_PASSWORD:}
     # A file holding the password, read instead of LDAP_BIND_PASSWORD when set (preferred: the

@@ -95,7 +95,8 @@ public class AdminApiTokensController {
       if (entries.access(user, def) == AccessLevel.NONE) throw ApiException.forbidden("You cannot give a token a directory you cannot access");
       defs.add(def.id());
     }
-    ApiTokens.Created created = tokens.create(name, List.copyOf(scopes), List.copyOf(defs), Duration.ofDays(days), rate, user.username(), user.dn());
+    ApiTokens.Created created = tokens.create(name, List.copyOf(scopes), List.copyOf(defs), Duration.ofDays(days), rate, user.username(), user.dn(),
+        user.directory());
     audit.event("api.token-created").target("api-token", created.token().id(), name)
         .detail("prefix", created.token().prefix()).detail("scopes", String.join(" ", scopes))
         .detail("definitions", defs.isEmpty() ? "all accessible" : String.join(" ", defs))

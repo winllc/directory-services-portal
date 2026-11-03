@@ -4,7 +4,10 @@ import com.winllc.dsp.cluster.Cluster;
 import com.winllc.dsp.cluster.DatabaseProperties;
 import com.winllc.dsp.cluster.SharedDocuments;
 import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.config.DirectoryProperties;
 import com.winllc.dsp.model.CustomSchema;
+import com.winllc.dsp.model.DirectoryDefinition;
+import com.winllc.dsp.model.PermissionGrant;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -51,6 +54,7 @@ public class ConfigStore {
     this.refreshMillis = refresh == null ? 0 : Math.max(0, refresh.toMillis());
     if (shared == null) {
       this.data = loadFile();
+      if (Files.exists(file)) persistMigration(loadedVersion);
     } else {
       StoreData local = loadFile();
       boolean hasLocal = hasContent(local);
@@ -65,7 +69,7 @@ public class ConfigStore {
         }
       }
       SharedDocuments.Doc marker = shared.get(IMPORT_MARKER);
-      if (hasLocal && marker.exists() && !marker.content().equals(contentHash(local))) {
+      if (hasLocal && marker.exists() && !marker.content().equals(contentHash(local)) && !marker.content().equals(legacyHash(local))) {
         // The database copy wins; say so, so an operator can tell this file is not in use.
         log.warn("{} differs from the configuration imported into the shared database; this file is not used (the shared"
             + " configuration is). Move it away once you have checked nothing in it is missing.", file);
@@ -79,13 +83,19 @@ public class ConfigStore {
       this.data = parse(doc.content());
       this.version = doc.version();
       this.checkedAt = System.currentTimeMillis();
+      persistMigration(loadedVersion);
     }
   }
+
+  /** The version of the configuration as last read, before {@link #normalize} upgraded it. */
+  private int loadedVersion = StoreData.CURRENT_VERSION;
 
   private StoreData loadFile() {
     if (!Files.exists(file)) return new StoreData();
     try {
-      StoreData loaded = normalize(mapper.readValue(file.toFile(), StoreData.class));
+      StoreData raw = mapper.readValue(file.toFile(), StoreData.class);
+      loadedVersion = raw.version;
+      StoreData loaded = normalize(raw);
       log.info("Loaded portal configuration from {}", file);
       return loaded;
     } catch (RuntimeException e) {
@@ -98,13 +108,25 @@ public class ConfigStore {
     return com.winllc.dsp.audit.AuditJson.sha256Hex(mapper.writeValueAsString(d));
   }
 
+  /** {@link #contentHash} of the configuration as version 1 wrote it (no directories), as imported by an earlier version. */
+  private String legacyHash(StoreData d) {
+    StoreData v1 = mapper.convertValue(d, StoreData.class);
+    v1.version = 1;
+    v1.schemaCaches = null;
+    v1.definitions.replaceAll(x -> x.withDirectory(null));
+    v1.grants.replaceAll(x -> x.withDirectory(null));
+    return contentHash(v1);
+  }
+
   /** Whether a configuration holds anything an administrator made (worth importing). */
   static boolean hasContent(StoreData d) {
     return !d.forms.isEmpty() || !d.definitions.isEmpty() || !d.grants.isEmpty() || !d.dashboards.isEmpty() || !d.analyses.isEmpty();
   }
 
   private StoreData parse(String json) {
-    return normalize(mapper.readValue(json, StoreData.class));
+    StoreData raw = mapper.readValue(json, StoreData.class);
+    loadedVersion = raw.version;
+    return normalize(raw);
   }
 
   private static StoreData normalize(StoreData loaded) {
@@ -112,7 +134,49 @@ public class ConfigStore {
     // Files written before dashboards and analyses existed.
     if (loaded.dashboards == null) loaded.dashboards = new java.util.ArrayList<>();
     if (loaded.analyses == null) loaded.analyses = new java.util.ArrayList<>();
+    if (loaded.schemaCaches == null) loaded.schemaCaches = new java.util.LinkedHashMap<>();
+    migrateDirectories(loaded);
     return loaded;
+  }
+
+  /**
+   * Version 2 (several LDAP directories): every definition belongs to a directory, and every grant
+   * names the directory of its subject. What was stored before has neither, and belongs to the one
+   * directory there was: {@value DirectoryProperties#DEFAULT_ID}, which also stands for the primary
+   * directory when no directory has that id. Returns whether anything changed.
+   */
+  static boolean migrateDirectories(StoreData d) {
+    boolean changed = d.version < StoreData.CURRENT_VERSION;
+    if (d.definitions != null) {
+      for (int i = 0; i < d.definitions.size(); i++) {
+        DirectoryDefinition def = d.definitions.get(i);
+        if (def.directory() == null || def.directory().isBlank()) {
+          d.definitions.set(i, def.withDirectory(DirectoryProperties.DEFAULT_ID));
+          changed = true;
+        }
+      }
+    }
+    if (d.grants != null) {
+      for (int i = 0; i < d.grants.size(); i++) {
+        PermissionGrant g = d.grants.get(i);
+        if (g.directory() == null || g.directory().isBlank()) {
+          String owner = d.definitions == null ? null : d.definitions.stream().filter(x -> x.id().equals(g.definitionId()))
+              .map(DirectoryDefinition::directory).findFirst().orElse(null);
+          d.grants.set(i, g.withDirectory(owner != null ? owner : DirectoryProperties.DEFAULT_ID));
+          changed = true;
+        }
+      }
+    }
+    d.version = Math.max(d.version, StoreData.CURRENT_VERSION);
+    return changed;
+  }
+
+  /** Writes a configuration of an earlier version back in the current one (once, at startup). */
+  private void persistMigration(int loadedVersion) {
+    if (loadedVersion >= StoreData.CURRENT_VERSION) return;
+    update(d -> null);
+    log.info("Portal configuration upgraded to version {}: definitions and grants without a directory now belong to \"{}\"",
+        StoreData.CURRENT_VERSION, DirectoryProperties.DEFAULT_ID);
   }
 
   /** Current configuration. Treat as read-only; use {@link #update} to change it. */

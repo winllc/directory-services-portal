@@ -28,7 +28,12 @@ public enum LicensedFeature {
   DATA_ANALYSIS("data-analysis", "Data-quality analysis",
       "Finds missing, malformed and duplicate data, with CSV export of the findings."),
   /** Schema import and export: /api/admin/schema/import, /api/admin/schema/export. */
-  SCHEMA_TRANSFER("schema-transfer", "Schema import and export", "Moves schema between directories.");
+  SCHEMA_TRANSFER("schema-transfer", "Schema import and export", "Moves schema between directories."),
+  /**
+   * More than one LDAP directory (portal.directories): without it only the first is enabled. Several
+   * servers of one directory (failover) need no license feature. An enterprise feature in the catalog.
+   */
+  MULTI_DIRECTORY("multi-directory", "Multiple directories", "Several LDAP directories, each with failover, in one portal.");
 
   private final String id;
   private final String label;

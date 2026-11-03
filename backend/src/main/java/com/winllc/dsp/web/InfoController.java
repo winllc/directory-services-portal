@@ -1,7 +1,7 @@
 package com.winllc.dsp.web;
 
 import com.winllc.dsp.config.PortalProperties;
-import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.model.ServerInfo;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.ConsentService;
@@ -15,16 +15,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class InfoController {
   public static final String VERSION = "0.1.0";
 
-  private final LdapDirectory directory;
+  private final Directories directories;
   private final PortalProperties props;
   private final X509AuthService x509;
   private final ConsentService consent;
   private final com.winllc.dsp.sso.SsoSecurity sso;
 
-  public InfoController(LdapDirectory directory, PortalProperties props, X509AuthService x509, ConsentService consent,
+  public InfoController(Directories directories, PortalProperties props, X509AuthService x509, ConsentService consent,
       com.winllc.dsp.sso.SsoSecurity sso) {
     this.sso = sso;
-    this.directory = directory;
+    this.directories = directories;
     this.props = props;
     this.x509 = x509;
     this.consent = consent;
@@ -49,8 +49,10 @@ public class InfoController {
   public ServerInfo info(@AuthenticationPrincipal SessionUser user) {
     boolean admin = user != null && user.isAdmin();
     String mode = props.isMemoryMode() ? "memory" : "ldap";
-    String url = props.isMemoryMode() || !admin ? null : directory.url();
-    String baseDn = user == null ? null : props.getBaseDn();
+    // The primary directory's (several: see /api/admin/directories); a user's own directory's base DN.
+    Directories.Directory primary = directories.primary();
+    String url = props.isMemoryMode() || !admin ? null : primary.ldap().url();
+    String baseDn = user == null ? null : directories.find(user.directory()).orElse(primary).config().getBaseDn();
     PortalProperties.Banner b = props.getBanner();
     // Colors are validated at startup; re-check so an invalid value can never reach the page styles.
     ServerInfo.Banner banner = b.enabled() && b.problems().isEmpty()
@@ -60,10 +62,11 @@ public class InfoController {
     ServerInfo.AuthOptions auth = new ServerInfo.AuthOptions(
         // Certificate sign-in is offered only when the license includes it (smart-card-sign-in).
         props.isPasswordLoginEnabled(), x509.available(), x509.available() && props.getX509().isAutoLogin(),
-        sso.options().stream().map(o -> new ServerInfo.Sso(o.id(), o.label(), o.url())).toList());
+        sso.options().stream().map(o -> new ServerInfo.Sso(o.id(), o.label(), o.url())).toList(),
+        directories.several() ? directories.enabled().stream().map(d -> new ServerInfo.DirectoryOption(d.id(), d.name())).toList() : null);
     ServerInfo.Consent notice = consent.enabled() ? new ServerInfo.Consent(consent.title(), consent.text()) : null;
     try {
-      directory.ping();
+      primary.ldap().ping();
       return new ServerInfo(mode, url, baseDn, true, null, VERSION, auth, hint, banner, notice);
     } catch (RuntimeException e) {
       return new ServerInfo(mode, url, baseDn, false, admin ? e.getMessage() : null, VERSION, auth, hint, banner, notice);

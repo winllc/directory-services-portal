@@ -239,7 +239,7 @@ public class SessionService implements HttpSessionListener {
       return;
     }
     unregister(session);
-    String owner = user.dn().toLowerCase(Locale.ROOT);
+    String owner = ownerKey(user);
     String key = UUID.randomUUID().toString();
     session.setAttribute(KEY, key);
     session.setAttribute(OWNER, owner);
@@ -261,9 +261,19 @@ public class SessionService implements HttpSessionListener {
     }
   }
 
-  /** The value of the principal-name index of a user's shared sessions: SHA-256 of the DN. */
+  /**
+   * Who a session belongs to: the DN (lower case), prefixed with the directory id for a directory
+   * other than {@code default}, as the same DN in two directories is two users.
+   */
+  static String ownerKey(SessionUser user) {
+    String dn = user.dn().toLowerCase(Locale.ROOT);
+    String dir = user.directory();
+    return dir == null || dir.isBlank() || dir.equals(com.winllc.dsp.config.DirectoryProperties.DEFAULT_ID) ? dn : dir + ":" + dn;
+  }
+
+  /** The value of the principal-name index of a user's shared sessions: SHA-256 of {@link #ownerKey}. */
   static String sharedOwner(SessionUser user) {
-    return AuditJson.sha256Hex(user.dn().toLowerCase(Locale.ROOT));
+    return AuditJson.sha256Hex(ownerKey(user));
   }
 
   /**
@@ -307,7 +317,7 @@ public class SessionService implements HttpSessionListener {
   /** Signed-in sessions of a user (for tests and diagnostics). */
   public int sessionsOf(SessionUser user) {
     if (shared != null) return shared.findByPrincipalName(sharedOwner(user)).size();
-    LinkedHashMap<String, HttpSession> sessions = byUser.get(user.dn().toLowerCase(Locale.ROOT));
+    LinkedHashMap<String, HttpSession> sessions = byUser.get(ownerKey(user));
     if (sessions == null) return 0;
     synchronized (sessions) {
       return sessions.size();

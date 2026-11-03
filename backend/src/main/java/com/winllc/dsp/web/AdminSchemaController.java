@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Schema browsing, pulling from the directory, import/export and custom definitions. */
@@ -33,8 +34,10 @@ public class AdminSchemaController {
   private final SchemaService schema;
   private final ConfigStore store;
   private final AuditLog audit;
+  private final com.winllc.dsp.ldap.Directories directories;
 
-  public AdminSchemaController(SchemaService schema, ConfigStore store, AuditLog audit) {
+  public AdminSchemaController(SchemaService schema, ConfigStore store, AuditLog audit, com.winllc.dsp.ldap.Directories directories) {
+    this.directories = directories;
     this.schema = schema;
     this.store = store;
     this.audit = audit;
@@ -48,12 +51,18 @@ public class AdminSchemaController {
     return wanted == null ? null : items.stream().filter(x -> oid.apply(x).equals(wanted)).findFirst().orElse(null);
   }
 
+  /**
+   * A directory's schema ({@code directory}: its id; none: the primary one): the server's, as last
+   * read, merged with the custom definitions, which all directories share.
+   */
   @GetMapping
-  public Map<String, Object> get() {
+  public Map<String, Object> get(@RequestParam(required = false) String directory) {
+    String dir = directories.require(directory).id();
     Map<String, Object> body = new LinkedHashMap<>();
-    body.put("merged", schema.mergedIndex().schema());
+    body.put("directory", dir);
+    body.put("merged", schema.mergedIndex(dir).schema());
     body.put("custom", schema.custom());
-    SchemaSnapshot server = store.snapshot().schemaCache;
+    SchemaSnapshot server = schema.serverSchema(dir);
     if (server == null) {
       body.put("server", null);
     } else {
@@ -68,8 +77,8 @@ public class AdminSchemaController {
   }
 
   @PostMapping("/refresh")
-  public Map<String, Object> refresh() {
-    SchemaSnapshot s = schema.refresh();
+  public Map<String, Object> refresh(@RequestParam(required = false) String directory) {
+    SchemaSnapshot s = schema.refresh(directory);
     return Map.of("fetchedAt", s.fetchedAt(), "attributeTypes", s.attributeTypes().size(), "objectClasses", s.objectClasses().size());
   }
 

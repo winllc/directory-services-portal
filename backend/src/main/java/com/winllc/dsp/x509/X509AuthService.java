@@ -7,7 +7,7 @@ import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
-import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.Licensing;
 import com.winllc.dsp.model.DirectoryEntry;
@@ -40,18 +40,18 @@ public class X509AuthService {
   private final PortalProperties props;
   private final ClientCertificateExtractor extractor;
   private final CertificateValidator validator;
-  private final LdapDirectory directory;
+  private final Directories directories;
   private final AuthService auth;
   private final AuditLog audit;
   private final Licensing licensing;
 
   public X509AuthService(PortalProperties props, ClientCertificateExtractor extractor, CertificateValidator validator,
-      LdapDirectory directory, AuthService auth, AuditLog audit, Licensing licensing) {
+      Directories directories, AuthService auth, AuditLog audit, Licensing licensing) {
     this.licensing = licensing;
     this.props = props;
     this.extractor = extractor;
     this.validator = validator;
-    this.directory = directory;
+    this.directories = directories;
     this.auth = auth;
     this.audit = audit;
   }
@@ -107,11 +107,13 @@ public class X509AuthService {
         .detail("method", "x509").detail("certificateSerial", identity.serial()).detail("certificateIssuer", identity.issuer());
     try {
       validator.validate(chain);
-      String dn = mapToUser(identity);
-      if (props.getX509().isRequireCertificateMatch()) requireMatch(dn, chain[0]);
+      Mapped mapped = mapToUser(identity);
+      String dn = mapped.dn();
+      event.directory(mapped.directory().id());
+      if (props.getX509().isRequireCertificateMatch()) requireMatch(mapped.directory(), dn, chain[0]);
       String username = identity.cn() != null ? identity.cn() : identity.subject();
-      SessionUser user = auth.buildUser(dn, username, "x509", identity.subject());
-      log.info("Certificate sign-in: {} (serial {}) -> {}", identity.subject(), identity.serial(), dn);
+      SessionUser user = auth.buildUser(mapped.directory(), dn, username, "x509", identity.subject());
+      log.info("Certificate sign-in: {} (serial {}) -> {} in directory {}", identity.subject(), identity.serial(), dn, mapped.directory().id());
       event.by(user).target("user", user.dn(), user.displayName()).detail("certificateSubject", identity.subject()).success();
       return user;
     } catch (CertificateRejectedException e) {
@@ -134,33 +136,50 @@ public class X509AuthService {
     event.failed(e.getMessage());
   }
 
-  String mapToUser(CertificateIdentity identity) {
-    PortalProperties.X509 cfg = props.getX509();
-    String base = props.effectiveUserSearchBase();
-    if ("subject-dn".equalsIgnoreCase(cfg.getMapping())) {
-      String subject = identity.subject();
-      if (!Dns.isValid(subject) || !Dns.isUnder(subject, base, true)) {
-        throw new CertificateRejectedException("The certificate subject is not a user in this directory");
-      }
-      // The entry must look like a user (same shape password sign-in accepts), so certificates
-      // naming service accounts or containers are refused.
-      Filter userShape = AuthService.template(props.getUserFilter().replace("{{username}}", "*"), Map.of());
-      List<DirectoryEntry> found;
-      try {
-        found = directory.search(subject, SearchScope.BASE, userShape, 1, List.of("1.1")).entries();
-      } catch (DirectoryException e) {
-        if (e.code() != DirectoryException.Code.NO_SUCH_OBJECT) throw e;
-        found = List.of();
-      }
-      if (found.isEmpty()) throw new CertificateRejectedException("No directory account matches this certificate");
-      return found.get(0).dn();
-    }
+  /** The user a certificate maps to: their directory and DN. */
+  record Mapped(Directories.Directory directory, String dn) {}
 
-    Filter filter = userFilter(cfg.getUserFilter(), identity.placeholders());
-    List<DirectoryEntry> found = directory.search(base, SearchScope.SUB, filter, 2, List.of("1.1")).entries();
-    if (found.isEmpty()) throw new CertificateRejectedException("No directory account matches this certificate");
+  /**
+   * The one directory user the certificate maps to. Every enabled directory that takes certificate
+   * sign-in (its {@code x509} setting, default true) is searched, in order, with its own user search
+   * base and its {@code x509-user-filter} (or X509_USER_FILTER); exactly one entry in all of them must
+   * match, so the same name in two directories is refused rather than guessed.
+   */
+  Mapped mapToUser(CertificateIdentity identity) {
+    PortalProperties.X509 cfg = props.getX509();
+    List<Mapped> found = new java.util.ArrayList<>();
+    boolean subjectDn = "subject-dn".equalsIgnoreCase(cfg.getMapping());
+    for (Directories.Directory dir : directories.enabled()) {
+      if (!dir.config().isX509()) continue;
+      String base = dir.config().effectiveUserSearchBase();
+      if (subjectDn) {
+        String subject = identity.subject();
+        if (!Dns.isValid(subject) || !Dns.isUnder(subject, base, true)) continue;
+        // The entry must look like a user (same shape password sign-in accepts), so certificates
+        // naming service accounts or containers are refused.
+        Filter userShape = AuthService.template(dir.config().getUserFilter().replace("{{username}}", "*"), Map.of());
+        try {
+          for (DirectoryEntry e : dir.ldap().search(subject, SearchScope.BASE, userShape, 1, List.of("1.1")).entries()) {
+            found.add(new Mapped(dir, e.dn()));
+          }
+        } catch (DirectoryException e) {
+          if (e.code() != DirectoryException.Code.NO_SUCH_OBJECT) throw e;
+        }
+        continue;
+      }
+      String template = dir.config().getX509UserFilter() == null || dir.config().getX509UserFilter().isBlank()
+          ? cfg.getUserFilter() : dir.config().getX509UserFilter();
+      Filter filter = userFilter(template, identity.placeholders());
+      for (DirectoryEntry e : dir.ldap().search(base, SearchScope.SUB, filter, 2, List.of("1.1")).entries()) found.add(new Mapped(dir, e.dn()));
+      if (found.size() > 1) break;
+    }
+    if (found.isEmpty()) {
+      throw new CertificateRejectedException(subjectDn && directories.enabled().stream().noneMatch(d -> d.config().isX509()
+          && Dns.isValid(identity.subject()) && Dns.isUnder(identity.subject(), d.config().effectiveUserSearchBase(), true))
+          ? "The certificate subject is not a user in this directory" : "No directory account matches this certificate");
+    }
     if (found.size() > 1) throw new CertificateRejectedException("More than one directory account matches this certificate");
-    return found.get(0).dn();
+    return found.get(0);
   }
 
   /** The mapping filter with each placeholder replaced by its filter-escaped value. */
@@ -181,14 +200,14 @@ public class X509AuthService {
     }
   }
 
-  private void requireMatch(String dn, X509Certificate cert) {
+  private void requireMatch(Directories.Directory dir, String dn, X509Certificate cert) {
     String presented;
     try {
       presented = Base64.getEncoder().encodeToString(cert.getEncoded());
     } catch (CertificateEncodingException e) {
       throw new CertificateRejectedException("The client certificate could not be encoded", e);
     }
-    DirectoryEntry entry = directory.get(dn, List.of("userCertificate", "userCertificate;binary"));
+    DirectoryEntry entry = dir.ldap().get(dn, List.of("userCertificate", "userCertificate;binary"));
     boolean published = entry != null
         && (entry.values("userCertificate").contains(presented) || entry.values("userCertificate;binary").contains(presented));
     if (!published) throw new CertificateRejectedException("This certificate is not registered on your directory account");

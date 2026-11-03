@@ -32,7 +32,7 @@ final class TestLicenses {
   static final String TEST_PUBLIC_KEY = "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=";
   static final String PRODUCT = "directory-portal";
   static final List<String> ALL_FEATURES = List.of("directory-editor", "form-builder", "self-service-profile", "white-pages",
-      "smart-card-sign-in", "metrics", "data-analysis", "schema-transfer");
+      "smart-card-sign-in", "metrics", "data-analysis", "schema-transfer", "multi-directory");
 
   private static final PrivateKey KEY;
   private static final String KEY_ID;

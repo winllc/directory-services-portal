@@ -65,7 +65,14 @@ public final class SchemaRequests {
       @ValidDn String baseDn,
       @NotNull @Pattern(regexp = "base|one|sub") String scope,
       @LdapFilter String filter,
-      @Size(max = 20) List<@Pattern(regexp = Patterns.ATTRIBUTE) String> attributes) {}
+      @Size(max = 20) List<@Pattern(regexp = Patterns.ATTRIBUTE) String> attributes,
+      /** The LDAP directory searched (its id); none: the primary one. */
+      @Size(max = 64) String directory) {
+
+    public Preview(String baseDn, String scope, String filter, List<String> attributes) {
+      this(baseDn, scope, filter, attributes, null);
+    }
+  }
 
   private static String blank(String s) {
     return s == null || s.isBlank() ? null : s;

@@ -27,4 +27,6 @@ public record DefinitionInput(
     @NotBlank @Pattern(regexp = Patterns.ATTRIBUTE) String titleAttribute,
     @NotNull @Size(max = 50) List<@ValidDn String> createContainers,
     @NotNull @Valid SelfMatch selfMatch,
-    @Size(max = 32) String icon) {}
+    @Size(max = 32) String icon,
+    /** The LDAP directory's id; none: the primary directory. */
+    @Size(max = 64) String directory) {}

@@ -25,6 +25,16 @@ public class PortalProperties {
    */
   private boolean demoMode;
 
+  /**
+   * Several directories ({@code PORTAL_DIRECTORIES_<n>_*}); empty: the one directory of the older
+   * {@code LDAP_*} settings, with id {@value DirectoryProperties#DEFAULT_ID} (see {@link #directoryList}).
+   */
+  private List<DirectoryProperties> directories = new ArrayList<>();
+  /** Display name of the directory made from the {@code LDAP_*} settings (DIRECTORY_NAME). */
+  private String directoryName = "";
+  /** Memory mode: how many embedded demo directories to run (1, or 2 for a second one, "lab"). */
+  private int demoDirectories = 1;
+
   private final Ldap ldap = new Ldap();
   private final X509 x509 = new X509();
   private final Audit audit = new Audit();
@@ -63,7 +73,11 @@ public class PortalProperties {
     private boolean tlsRejectUnauthorized = true;
     private int timeoutMs = 10_000;
     private int poolSize = 10;
+    /** "failover" (the servers of LDAP_URL in order) or "round-robin". */
+    private String serverSelection = "failover";
 
+    public String getServerSelection() { return serverSelection; }
+    public void setServerSelection(String serverSelection) { this.serverSelection = serverSelection; }
     public String getUrl() { return url; }
     public void setUrl(String url) { this.url = url; }
     public String getBindDn() { return bindDn; }
@@ -323,6 +337,47 @@ public class PortalProperties {
     }
   }
 
+  /**
+   * The configured directories, in order (the first is the primary one): {@code portal.directories}
+   * when set, else one directory (id {@value DirectoryProperties#DEFAULT_ID}) from the older
+   * {@code LDAP_*} settings, whose {@code LDAP_URL} may list several servers (separated by commas or
+   * spaces) for failover. Memory mode replaces these with the embedded demo directories.
+   */
+  public List<DirectoryProperties> directoryList() {
+    if (directories != null && !directories.isEmpty()) return directories;
+    return List.of(legacyDirectory());
+  }
+
+  /** Whether {@code portal.directories} is used (rather than the older single-directory settings). */
+  public boolean directoriesConfigured() {
+    return directories != null && !directories.isEmpty();
+  }
+
+  /** The single directory described by the older {@code LDAP_*} / {@code portal.ldap.*} settings. */
+  public DirectoryProperties legacyDirectory() {
+    DirectoryProperties d = new DirectoryProperties();
+    d.setId(DirectoryProperties.DEFAULT_ID);
+    d.setName(directoryName == null || directoryName.isBlank() ? "Directory" : directoryName.trim());
+    d.setUrls(ldap.getUrl() == null ? List.of() : List.of(ldap.getUrl()));
+    d.setServerSelection(ldap.getServerSelection());
+    d.setBindDn(ldap.getBindDn());
+    d.setBindPassword(ldap.getBindPassword());
+    d.setBindPasswordFile(ldap.getBindPasswordFile());
+    d.setStartTls(ldap.isStartTls());
+    d.setTlsRejectUnauthorized(ldap.isTlsRejectUnauthorized());
+    d.setTimeoutMs(ldap.getTimeoutMs());
+    d.setPoolSize(ldap.getPoolSize());
+    d.setBaseDn(baseDn);
+    d.setUserSearchBase(userSearchBase);
+    d.setUserFilter(userFilter);
+    d.setUsernameAttribute(usernameAttribute);
+    d.setGroupSearchBase(groupSearchBase);
+    d.setGroupFilter(groupFilter);
+    d.setAdminUsers(adminUsers);
+    d.setAdminGroups(adminGroups);
+    return d;
+  }
+
   public boolean isMemoryMode() {
     return "memory".equalsIgnoreCase(directoryMode);
   }
@@ -357,6 +412,12 @@ public class PortalProperties {
   public void setDemoMode(boolean demoMode) { this.demoMode = demoMode; }
   public void setDirectoryMode(String directoryMode) { this.directoryMode = directoryMode; }
   public Ldap getLdap() { return ldap; }
+  public List<DirectoryProperties> getDirectories() { return directories; }
+  public void setDirectories(List<DirectoryProperties> directories) { this.directories = directories; }
+  public String getDirectoryName() { return directoryName; }
+  public void setDirectoryName(String directoryName) { this.directoryName = directoryName; }
+  public int getDemoDirectories() { return demoDirectories; }
+  public void setDemoDirectories(int demoDirectories) { this.demoDirectories = demoDirectories; }
   public X509 getX509() { return x509; }
   public Audit getAudit() { return audit; }
   public Metrics getMetrics() { return metrics; }

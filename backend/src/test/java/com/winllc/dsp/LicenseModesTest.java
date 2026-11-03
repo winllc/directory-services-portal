@@ -176,7 +176,8 @@ class LicenseModesTest extends ApiTestSupport {
       status.get("features").forEach(f -> enabled.put(f.get("id").asString(), f.get("enabled").asBoolean()));
       assertThat(enabled).containsExactlyInAnyOrderEntriesOf(Map.of(
           "directory-editor", true, "form-builder", false, "self-service-profile", false, "white-pages", false,
-          "smart-card-sign-in", false, "metrics", true, "data-analysis", false, "schema-transfer", false));
+          "smart-card-sign-in", false, "metrics", true, "data-analysis", false, "schema-transfer", false,
+          "multi-directory", false));
       JsonNode d = status.get("details");
       assertThat(d.get("licensee").asString()).isEqualTo("Test Suite, ENS QA");
       assertThat(d.get("edition").asString()).isEqualTo("subscription");

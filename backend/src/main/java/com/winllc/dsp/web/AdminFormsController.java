@@ -45,9 +45,12 @@ public class AdminFormsController {
   private final AuditLog audit;
 
   private final DirectoryOptions options;
+  private final com.winllc.dsp.ldap.Directories directories;
 
-  public AdminFormsController(ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options) {
+  public AdminFormsController(ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options,
+      com.winllc.dsp.ldap.Directories directories) {
     this.options = options;
+    this.directories = directories;
     this.store = store;
     this.schema = schema;
     this.audit = audit;
@@ -96,8 +99,11 @@ public class AdminFormsController {
     return store.snapshot().forms.stream().filter(f -> f.id().equals(id)).findFirst().orElseThrow(() -> ApiException.notFound("Form not found"));
   }
 
-  /** Test a directory-search drop down's settings (unsaved) with optional typed text. */
-  public record OptionPreviewRequest(@NotNull @Valid DropdownSource.Ldap source, @Size(max = 256) String q) {}
+  /**
+   * Test a directory-search drop down's settings (unsaved) with optional typed text, in
+   * {@code directory} (an LDAP directory id; none: the primary one).
+   */
+  public record OptionPreviewRequest(@NotNull @Valid DropdownSource.Ldap source, @Size(max = 256) String q, @Size(max = 64) String directory) {}
 
   public record OptionPreview(List<OptionItem> options, boolean truncated, String filter, long durationMs, String error) {}
 
@@ -110,7 +116,8 @@ public class AdminFormsController {
       DropdownSource.Ldap uncached = new DropdownSource.Ldap(src.baseDn(), src.scope(), src.filter(), src.valueAttribute(), src.labelAttribute(),
           src.mode(), src.searchAttributes(), src.match(), src.minChars(), src.limit(), src.sortAttribute(), src.descriptionAttribute(),
           src.labelTemplate(), 0);
-      DirectoryOptions.Page page = in.q() == null || in.q().isBlank() ? options.list(uncached) : options.search(uncached, in.q());
+      com.winllc.dsp.ldap.LdapDirectory dir = directories.require(in.directory()).ldap();
+      DirectoryOptions.Page page = in.q() == null || in.q().isBlank() ? options.list(dir, uncached) : options.search(dir, uncached, in.q());
       String filter = page.filter() != null ? page.filter() : DirectoryOptions.searchFilter(uncached, in.q()).toString();
       return new OptionPreview(page.options(), page.truncated(), filter, System.currentTimeMillis() - started, null);
     } catch (DirectoryException | ApiException e) {

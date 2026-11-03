@@ -365,12 +365,13 @@ public class WebhookService {
         null, null);
   }
 
-  private static Map<String, Object> actor(EntryChanged c) {
+  static Map<String, Object> actor(EntryChanged c) {
     Map<String, Object> actor = new LinkedHashMap<>();
     EntryChanged.Actor a = c.actor();
     actor.put("username", a.username());
     actor.put("authMethod", a.authMethod());
     if (a.apiClientId() != null) actor.put("apiClientId", a.apiClientId());
+    if (a.directory() != null) actor.put("directory", a.directory());
     return actor;
   }
 
@@ -380,6 +381,7 @@ public class WebhookService {
     Map<String, Object> entry = new LinkedHashMap<>();
     entry.put("operation", c.operation());
     entry.put("definitionId", c.definitionId());
+    if (c.directory() != null) entry.put("directory", c.directory());
     entry.put("dn", c.dn());
     if (c.previousDn() != null) entry.put("previousDn", c.previousDn());
     entry.put("name", c.name());
@@ -396,6 +398,7 @@ public class WebhookService {
         if (added.isEmpty() && removed.isEmpty()) continue;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("definitionId", c.definitionId());
+        if (c.directory() != null) m.put("directory", c.directory());
         m.put("dn", c.dn());
         m.put("name", c.name());
         m.put("attribute", ch.attribute());
@@ -406,6 +409,7 @@ public class WebhookService {
       }
       Map<String, Object> form = new LinkedHashMap<>();
       form.put("definitionId", c.definitionId());
+      if (c.directory() != null) form.put("directory", c.directory());
       form.put("formId", c.formId());
       form.put("operation", c.self() ? "self_update" : c.operation());
       form.put("dn", c.dn());

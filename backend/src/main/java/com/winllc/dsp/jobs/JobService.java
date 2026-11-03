@@ -145,7 +145,7 @@ public class JobService implements DisposableBean {
     Instant now = Instant.now();
     Job best = null;
     for (Job j : jobs.values()) {
-      if (!Objects.equals(j.dedupeKey, spec.dedupeKey()) || !j.owner.equals(user.username()) || j.status() != Job.Status.SUCCEEDED) continue;
+      if (!Objects.equals(j.dedupeKey, spec.dedupeKey()) || !j.owner.equals(user.key()) || j.status() != Job.Status.SUCCEEDED) continue;
       Duration window = j.background() && BACKGROUND_REUSE.compareTo(reuse) > 0 ? BACKGROUND_REUSE : reuse;
       if (j.finishedAt() != null && j.finishedAt().isAfter(now.minus(window)) && (best == null || j.finishedAt().isAfter(best.finishedAt()))) {
         best = j;
@@ -162,16 +162,16 @@ public class JobService implements DisposableBean {
       if (spec.dedupeKey() != null) {
         for (Job j : jobs.values()) {
           // Join the same work already running for this user, unless a fresh run was asked for.
-          if (!j.status().finished() && j.owner.equals(user.username()) && spec.dedupeKey().equals(j.dedupeKey) && !forceNew) return j;
+          if (!j.status().finished() && j.owner.equals(user.key()) && spec.dedupeKey().equals(j.dedupeKey) && !forceNew) return j;
         }
       }
-      long active = jobs.values().stream().filter(j -> j.owner.equals(user.username()) && !j.status().finished()).count();
+      long active = jobs.values().stream().filter(j -> j.owner.equals(user.key()) && !j.status().finished()).count();
       if (mirror != null) active = Math.max(active, activeShared(user));
       if (active >= maxActivePerUser) {
         throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,
             "You already have " + active + " computations running. Wait for one to finish, or cancel one.");
       }
-      job = new Job("job-" + UUID.randomUUID(), spec.kind(), spec.title(), user.username(), spec.target(), spec.link(), spec.dedupeKey());
+      job = new Job("job-" + UUID.randomUUID(), spec.kind(), spec.title(), user.key(), spec.target(), spec.link(), spec.dedupeKey());
       jobs.put(job.id, job);
     }
     publish(job);
@@ -237,7 +237,7 @@ public class JobService implements DisposableBean {
     if (mirror != null) return shared(user, null, null);
     List<Job.View> out = new ArrayList<>();
     for (Job j : jobs.values()) {
-      if (j.owner.equals(user.username()) && j.background()) out.add(j.view());
+      if (j.owner.equals(user.key()) && j.background()) out.add(j.view());
     }
     out.sort(Comparator.comparing(Job.View::createdAt).reversed());
     return out;
@@ -259,7 +259,7 @@ public class JobService implements DisposableBean {
         log.warn("Could not read shared job {}: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
       }
     }
-    if (j == null || !j.owner.equals(user.username())) throw ApiException.notFound("Job not found (finished jobs are kept for a while)");
+    if (j == null || !j.owner.equals(user.key())) throw ApiException.notFound("Job not found (finished jobs are kept for a while)");
     return j;
   }
 
@@ -267,7 +267,7 @@ public class JobService implements DisposableBean {
   public synchronized List<Job.View> forTarget(SessionUser user, String type, String id) {
     if (mirror != null) return shared(user, type, id);
     return jobs.values().stream()
-        .filter(j -> j.owner.equals(user.username()) && j.background() && j.target != null && j.target.type().equals(type) && j.target.id().equals(id))
+        .filter(j -> j.owner.equals(user.key()) && j.background() && j.target != null && j.target.type().equals(type) && j.target.id().equals(id))
         .map(Job::view)
         .sorted(Comparator.comparing(Job.View::createdAt).reversed())
         .toList();
@@ -277,16 +277,16 @@ public class JobService implements DisposableBean {
   private List<Job.View> shared(SessionUser user, String type, String id) {
     List<Job.View> out = new ArrayList<>();
     try {
-      for (Job j : mirror.backgroundOf(user.username())) {
+      for (Job j : mirror.backgroundOf(user.key())) {
         Job local = jobs.get(j.id);
         Job.View v = (local != null ? local : j).view();
         if (type != null && (v.target() == null || !v.target().type().equals(type) || !Objects.equals(v.target().id(), id))) continue;
         out.add(v);
       }
     } catch (RuntimeException e) {
-      log.warn("Could not read the shared jobs of {}: {}", LogSafe.of(user.username()), LogSafe.of(e.getMessage()));
+      log.warn("Could not read the shared jobs of {}: {}", LogSafe.of(user.key()), LogSafe.of(e.getMessage()));
       for (Job j : jobs.values()) {
-        if (!j.owner.equals(user.username()) || !j.background()) continue;
+        if (!j.owner.equals(user.key()) || !j.background()) continue;
         if (type != null && (j.target == null || !j.target.type().equals(type) || !Objects.equals(j.target.id(), id))) continue;
         out.add(j.view());
       }
@@ -297,7 +297,7 @@ public class JobService implements DisposableBean {
 
   private long activeShared(SessionUser user) {
     try {
-      return mirror.activeOf(user.username());
+      return mirror.activeOf(user.key());
     } catch (RuntimeException e) {
       return 0;
     }
@@ -319,7 +319,7 @@ public class JobService implements DisposableBean {
       Job j;
       synchronized (this) {
         j = jobs.get(id);
-        if (j != null && j.owner.equals(user.username())) j.markSeen();
+        if (j != null && j.owner.equals(user.key())) j.markSeen();
       }
       if (mirror == null) continue;
       if (j != null) {
@@ -327,7 +327,7 @@ public class JobService implements DisposableBean {
       } else {
         try {
           Job remote = mirror.find(id, false);
-          if (remote != null && remote.owner.equals(user.username())) mirror.markSeen(id);
+          if (remote != null && remote.owner.equals(user.key())) mirror.markSeen(id);
         } catch (RuntimeException e) {
           log.warn("Could not mark shared job {} seen: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
         }

@@ -6,7 +6,7 @@ import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.audit.AuditUnavailableException;
 import com.winllc.dsp.config.PortalProperties;
-import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.model.DirectoryEntry;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.AuthService;
@@ -72,7 +72,7 @@ public class SsoSignIn {
     }
   }
 
-  private final LdapDirectory directory;
+  private final Directories directories;
   private final PortalProperties props;
   private final AuthService auth;
   private final SessionService sessions;
@@ -80,10 +80,10 @@ public class SsoSignIn {
   private final AuditLog audit;
   private final SecurityContextRepository contexts;
 
-  public SsoSignIn(LdapDirectory directory, PortalProperties props, AuthService auth, SessionService sessions, ConsentService consent,
+  public SsoSignIn(Directories directories, PortalProperties props, AuthService auth, SessionService sessions, ConsentService consent,
       AuditLog audit, SecurityContextRepository contexts) {
     this.contexts = contexts;
-    this.directory = directory;
+    this.directories = directories;
     this.props = props;
     this.auth = auth;
     this.sessions = sessions;
@@ -102,11 +102,23 @@ public class SsoSignIn {
     }
     String value = asserted.trim();
     if (value.length() > 256) throw new MappingException("no_account", value.substring(0, 256), "The asserted identity is too long");
-    Filter filter = AuthService.template(provider.getUserFilter(), Map.of("value", value));
-    List<DirectoryEntry> found = directory.search(props.effectiveUserSearchBase(), SearchScope.SUB, filter, 2, List.of("1.1")).entries();
+    // Every enabled directory that takes single sign-on (its sso setting, default true) is searched,
+    // with its own sso-user-filter or the provider's; exactly one entry in all of them must match.
+    List<DirectoryEntry> found = new java.util.ArrayList<>();
+    Directories.Directory home = null;
+    for (Directories.Directory dir : directories.enabled()) {
+      if (!dir.config().isSso()) continue;
+      String template = dir.config().getSsoUserFilter() == null || dir.config().getSsoUserFilter().isBlank()
+          ? provider.getUserFilter() : dir.config().getSsoUserFilter();
+      Filter filter = AuthService.template(template, Map.of("value", value));
+      List<DirectoryEntry> hits = dir.ldap().search(dir.config().effectiveUserSearchBase(), SearchScope.SUB, filter, 2, List.of("1.1")).entries();
+      if (!hits.isEmpty() && home == null) home = dir;
+      found.addAll(hits);
+      if (found.size() > 1) break;
+    }
     if (found.isEmpty()) throw new MappingException("no_account", value, "No directory entry matches the asserted identity");
     if (found.size() > 1) throw new MappingException("no_account", value, "More than one directory entry matches the asserted identity");
-    SessionUser user = auth.buildUser(found.get(0).dn(), value, method, null);
+    SessionUser user = auth.buildUser(home, found.get(0).dn(), value, method, null);
     List<String> adminGroups = provider.adminGroupList();
     // idpAdmin: administrator only through the provider's groups (the directory doesn't say so).
     boolean idpAdmin = !user.isAdmin() && idpGroups != null
@@ -137,6 +149,7 @@ public class SsoSignIn {
     try {
       // Recorded before the session exists: a sign-in that can't be audited doesn't happen.
       audit.event("auth.login").by(id.user()).target("user", id.user().dn(), id.user().displayName()).detail("method", id.method())
+          .directory(id.user().directory())
           .detail("idpAdmin", id.idpAdmin() ? Boolean.TRUE : null).success();
     } catch (AuditUnavailableException e) {
       redirect(request, response, "/login?sso_error=unavailable");

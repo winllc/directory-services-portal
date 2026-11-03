@@ -244,6 +244,11 @@ public class AuditLog {
       return detail("definitionId", definitionId);
     }
 
+    /** The LDAP directory acted on (its id), in {@code details.directory}. */
+    public Draft directory(String directoryId) {
+      return detail("directory", directoryId);
+    }
+
     public Draft changes(Collection<AuditEvent.Change> changes) {
       changes.forEach(c -> AuditDetails.putChange(details, c));
       return this;
@@ -295,6 +300,8 @@ public class AuditLog {
         if (u != null) {
           who = new AuditEvent.Actor("user", u.username(), u.displayName(), u.isAdmin() ? List.of("ADMIN", "USER") : List.of("USER"));
           d.put("actorDn", AuditDetails.truncate(u.dn()));
+          // The user's directory: with several, the DN alone doesn't say whose.
+          if (u.directory() != null) d.put("actorDirectory", u.directory());
           d.put("authMethod", u.authMethod());
         } else {
           who = request != null ? new AuditEvent.Actor("anonymous", null, null, List.of()) : AuditEvent.Actor.SYSTEM;

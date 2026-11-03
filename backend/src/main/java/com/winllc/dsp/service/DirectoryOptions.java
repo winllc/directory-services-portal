@@ -37,7 +37,6 @@ public class DirectoryOptions {
   static final int MAX_LOOKUP = 200;
   private static final int SEARCH_CACHE_SIZE = 500;
 
-  private final LdapDirectory directory;
   private final Map<String, Cached> cache = new LinkedHashMap<>(64, 0.75f, true) {
     @Override
     protected boolean removeEldestEntry(Map.Entry<String, Cached> eldest) {
@@ -54,9 +53,7 @@ public class DirectoryOptions {
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Page(List<OptionItem> options, boolean truncated, String filter) {}
 
-  public DirectoryOptions(LdapDirectory directory) {
-    this.directory = directory;
-  }
+  public DirectoryOptions() {}
 
   private static SearchScope scope(DropdownSource.Ldap src) {
     return "one".equals(src.scope()) ? SearchScope.ONE : SearchScope.SUB;
@@ -142,7 +139,7 @@ public class DirectoryOptions {
     return sorted;
   }
 
-  private Page run(DropdownSource.Ldap src, Filter filter) {
+  private Page run(LdapDirectory directory, DropdownSource.Ldap src, Filter filter) {
     int limit = src.limitOrDefault();
     LdapDirectory.Result r = directory.search(src.baseDn(), scope(src), filter, limit, attributes(src));
     // The base entry itself is never an option of a sub-tree search.
@@ -166,26 +163,26 @@ public class DirectoryOptions {
     return page;
   }
 
-  /** All options (up to the limit). */
-  public Page list(DropdownSource.Ldap src) {
-    return cached(src + "\u0000", src.cacheSecondsOrDefault(), () -> run(src, baseFilter(src)));
+  /** All options (up to the limit), searched in {@code directory} (the definition's). */
+  public Page list(LdapDirectory directory, DropdownSource.Ldap src) {
+    return cached(directory.id() + "\u0000" + src + "\u0000", src.cacheSecondsOrDefault(), () -> run(directory, src, baseFilter(src)));
   }
 
   /** Options matching typed text; fewer than {@code minChars} characters gives no options. */
-  public Page search(DropdownSource.Ldap src, String query) {
+  public Page search(LdapDirectory directory, DropdownSource.Ldap src, String query) {
     String q = query == null ? "" : query.trim();
-    if (q.isEmpty() && !src.searchMode()) return list(src);
+    if (q.isEmpty() && !src.searchMode()) return list(directory, src);
     if (q.length() < src.minCharsOrDefault()) return new Page(List.of(), false, null);
     // Searches are reused briefly (typing the same text again), at most as long as the list.
     int seconds = Math.min(src.cacheSecondsOrDefault(), 30);
-    return cached(src + "\u0000" + q.toLowerCase(Locale.ROOT), seconds, () -> run(src, searchFilter(src, q)));
+    return cached(directory.id() + "\u0000" + src + "\u0000" + q.toLowerCase(Locale.ROOT), seconds, () -> run(directory, src, searchFilter(src, q)));
   }
 
   /**
    * The options for these values, as submitted (values that aren't options are left out). Used
    * to label stored values and to validate input without loading every option.
    */
-  public List<OptionItem> lookup(DropdownSource.Ldap src, Collection<String> values) {
+  public List<OptionItem> lookup(LdapDirectory directory, DropdownSource.Ldap src, Collection<String> values) {
     List<String> wanted = values.stream().filter(v -> v != null && !v.isBlank()).distinct().limit(MAX_LOOKUP).toList();
     if (wanted.isEmpty()) return List.of();
     Filter base = baseFilter(src);

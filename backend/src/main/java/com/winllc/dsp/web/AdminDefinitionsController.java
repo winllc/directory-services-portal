@@ -31,15 +31,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminDefinitionsController {
   private final ConfigStore store;
   private final AuditLog audit;
+  private final com.winllc.dsp.ldap.Directories directories;
 
-  public AdminDefinitionsController(ConfigStore store, AuditLog audit) {
+  public AdminDefinitionsController(ConfigStore store, AuditLog audit, com.winllc.dsp.ldap.Directories directories) {
     this.store = store;
     this.audit = audit;
+    this.directories = directories;
   }
 
   private AuditLog.Draft event(String action, DirectoryDefinition before, DirectoryDefinition after) {
     DirectoryDefinition def = after != null ? after : before;
-    return audit.event(action).target("definition", def.id(), def.name()).definition(def.id())
+    return audit.event(action).target("definition", def.id(), def.name()).definition(def.id()).directory(def.directory())
         .changes(audit.diff(before, after, Set.of("id", "createdAt", "updatedAt")));
   }
 
@@ -51,12 +53,17 @@ public class AdminDefinitionsController {
       throw ApiException.badRequest("Another directory already uses that slug", Map.of("slug", "Already in use"));
     }
     EntryService.assertDefinitionShape(in.baseDn(), in.scope(), in.createContainers());
+    if (directories.find(in.directory()).isEmpty()) {
+      throw ApiException.badRequest("Unknown LDAP directory", Map.of("directory", "No directory \"" + in.directory() + "\" is configured"));
+    }
+    // A directory the license doesn't enable can't be given new definitions (403, multi-directory).
+    directories.require(in.directory());
   }
 
-  private static DirectoryDefinition build(DefinitionInput in, String id, String createdAt, String updatedAt) {
+  private DirectoryDefinition build(DefinitionInput in, String id, String createdAt, String updatedAt) {
     return new DirectoryDefinition(id, in.name().trim(), in.slug(), blank(in.description()), in.formId(), in.baseDn().trim(), in.scope(),
         blank(in.filter()), in.mode(), in.everyoneCanRead(), in.listAttributes(), in.searchAttributes(), in.titleAttribute(),
-        in.createContainers(), in.selfMatch(), blank(in.icon()), createdAt, updatedAt);
+        in.createContainers(), in.selfMatch(), blank(in.icon()), createdAt, updatedAt, directories.canonicalId(in.directory()));
   }
 
   private static String blank(String s) {
