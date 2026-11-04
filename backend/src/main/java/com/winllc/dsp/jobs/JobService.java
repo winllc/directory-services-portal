@@ -237,7 +237,10 @@ public class JobService implements DisposableBean {
     if (mirror != null) return shared(user, null, null);
     List<Job.View> out = new ArrayList<>();
     for (Job j : jobs.values()) {
-      if (j.owner.equals(user.key()) && j.background()) out.add(j.view());
+      if (!j.owner.equals(user.key())) continue;
+      // One consistent read of the job (its own lock): whether it runs in the background and its view.
+      Job.Snapshot snapshot = j.snapshot();
+      if (snapshot.background()) out.add(snapshot.view());
     }
     out.sort(Comparator.comparing(Job.View::createdAt).reversed());
     return out;
