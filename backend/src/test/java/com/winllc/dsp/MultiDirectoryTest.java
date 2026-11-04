@@ -288,19 +288,55 @@ class MultiDirectoryTest extends ApiTestSupport {
   }
 
   @Autowired com.winllc.dsp.sso.SsoSignIn sso;
+  @Autowired com.winllc.dsp.config.PortalProperties props;
 
   @Test
-  void singleSignOnFindsTheOneDirectoryThatHoldsTheUser() throws Exception {
+  void singleSignOnUsesTheFirstDirectoryInOrderThatHoldsTheUser() throws Exception {
     com.winllc.dsp.sso.SsoProperties.Oidc provider = new com.winllc.dsp.sso.SsoProperties.Oidc();
-    // alice is in both demo directories: refused rather than guessed.
-    org.assertj.core.api.Assertions.assertThatThrownBy(() -> sso.map("oidc", provider, "alice", List.of()))
-        .isInstanceOf(com.winllc.dsp.sso.SsoSignIn.MappingException.class)
-        .hasMessageContaining("More than one directory entry");
-    // zoe only in the lab directory: signed in there.
+    // alice is in both demo directories: the first in configured order wins, the other is reported.
+    com.winllc.dsp.sso.SsoSignIn.Identity alice = sso.map("oidc", provider, "alice", List.of());
+    assertThat(alice.user().directory()).isEqualTo("default");
+    assertThat(alice.alsoMatched()).containsExactly(LAB);
+    // zoe only in the lab directory: signed in there, nothing else matched.
     Client admin = login("admin");
     admin.post("/api/directories/lab-staff/entries", Map.of("values", Map.of("uid", "zoe", "givenName", "Zoe", "sn", "Zed", "cn", "Zoe Zed", "mail", "zoe@example.com")));
     com.winllc.dsp.sso.SsoSignIn.Identity zoe = sso.map("oidc", provider, "zoe", List.of());
     assertThat(zoe.user().directory()).isEqualTo(LAB);
     assertThat(zoe.user().dn()).isEqualTo("uid=zoe,ou=people," + B);
+    assertThat(zoe.alsoMatched()).isEmpty();
+    // Two matches in the first directory that matches: still refused.
+    provider.setUserFilter("(&(objectClass=inetOrgPerson)(|(uid={{value}})(uid=bob)))");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> sso.map("oidc", provider, "alice", List.of()))
+        .isInstanceOf(com.winllc.dsp.sso.SsoSignIn.MappingException.class)
+        .hasMessageContaining("More than one directory entry");
+  }
+
+  @Test
+  void certificateSignInUsesTheFirstDirectoryAndAuditsTheOthers() throws Exception {
+    TestCertificates.Ca ca = TestCertificates.ca("CN=Multi Directory CA,O=Example Corp");
+    java.nio.file.Path caFile = java.nio.file.Files.createTempFile("multi-ca", ".pem");
+    java.nio.file.Files.writeString(caFile, TestCertificates.pem(ca.cert()));
+    com.winllc.dsp.config.PortalProperties.X509 x = props.getX509();
+    x.setEnabled(true);
+    x.setSource("servlet");
+    x.setTrustedCaFile(caFile.toString());
+    x.setMapping("filter");
+    x.setUserFilter("(&(objectClass=inetOrgPerson)(uid={{cn}}))");
+    try {
+      MvcResult r = mvc.perform(post("/api/auth/x509").header("X-DSP-Request", "1")
+          .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.x509(
+              TestCertificates.client("CN=alice,O=Example Corp").issuedBy(ca)))).andReturn();
+      assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+      assertThat(body(r).get("user").get("directory").asString()).isEqualTo("default");
+    } finally {
+      x.setEnabled(false);
+      x.setTrustedCaFile("");
+    }
+    List<JsonNode> events = new ArrayList<>();
+    body(login("admin").get("/api/admin/audit?pageSize=200&action=auth.login&from=" + enc(since))).get("events").forEach(events::add);
+    JsonNode signIn = events.stream().filter(e -> "x509".equals(e.get("details").path("method").asString())).findFirst().orElseThrow();
+    assertThat(signIn.get("outcome").asString()).isEqualTo("success");
+    assertThat(signIn.get("details").get("directory").asString()).isEqualTo("default");
+    assertThat(signIn.get("details").get("alsoMatched").asString()).isEqualTo(LAB);
   }
 }

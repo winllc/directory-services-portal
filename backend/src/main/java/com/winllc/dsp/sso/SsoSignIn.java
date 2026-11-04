@@ -45,7 +45,20 @@ public class SsoSignIn {
   private static final Logger log = LoggerFactory.getLogger(SsoSignIn.class);
 
   /** The portal user an assertion maps to, and whether a provider group made them administrator. */
-  public record Identity(String method, String asserted, SessionUser user, boolean idpAdmin) implements Serializable {}
+  /**
+   * {@code alsoMatched}: other directories (ids) that also hold an account matching the asserted
+   * identity; the user signed in to the first in configured order.
+   */
+  public record Identity(String method, String asserted, SessionUser user, boolean idpAdmin, List<String> alsoMatched) implements Serializable {
+
+    public Identity(String method, String asserted, SessionUser user, boolean idpAdmin) {
+      this(method, asserted, user, idpAdmin, List.of());
+    }
+
+    public List<String> alsoMatched() {
+      return alsoMatched == null ? List.of() : alsoMatched;
+    }
+  }
 
   /** Carries an {@link Identity} through Spring Security's login filters. */
   public interface HasIdentity {
@@ -103,28 +116,38 @@ public class SsoSignIn {
     String value = asserted.trim();
     if (value.length() > 256) throw new MappingException("no_account", value.substring(0, 256), "The asserted identity is too long");
     // Every enabled directory that takes single sign-on (its sso setting, default true) is searched,
-    // with its own sso-user-filter or the provider's; exactly one entry in all of them must match.
-    List<DirectoryEntry> found = new java.util.ArrayList<>();
+    // in configured order, with its own sso-user-filter or the provider's. The first directory with a
+    // match wins and must hold exactly one; later directories that also match are only reported.
+    List<DirectoryEntry> found = List.of();
     Directories.Directory home = null;
+    List<String> alsoMatched = new java.util.ArrayList<>();
     for (Directories.Directory dir : directories.enabled()) {
       if (!dir.config().isSso()) continue;
       String template = dir.config().getSsoUserFilter() == null || dir.config().getSsoUserFilter().isBlank()
           ? provider.getUserFilter() : dir.config().getSsoUserFilter();
       Filter filter = AuthService.template(template, Map.of("value", value));
       List<DirectoryEntry> hits = dir.ldap().search(dir.config().effectiveUserSearchBase(), SearchScope.SUB, filter, 2, List.of("1.1")).entries();
-      if (!hits.isEmpty() && home == null) home = dir;
-      found.addAll(hits);
-      if (found.size() > 1) break;
+      if (hits.isEmpty()) continue;
+      if (home == null) {
+        home = dir;
+        found = hits;
+      } else {
+        alsoMatched.add(dir.id());
+      }
     }
     if (found.isEmpty()) throw new MappingException("no_account", value, "No directory entry matches the asserted identity");
     if (found.size() > 1) throw new MappingException("no_account", value, "More than one directory entry matches the asserted identity");
+    if (!alsoMatched.isEmpty()) {
+      log.warn("Single sign-on ({}): the asserted identity matches accounts in several directories: signed in to {}, the first in"
+          + " configured order; also matched: {}", method, home.id(), String.join(", ", alsoMatched));
+    }
     SessionUser user = auth.buildUser(home, found.get(0).dn(), value, method, null);
     List<String> adminGroups = provider.adminGroupList();
     // idpAdmin: administrator only through the provider's groups (the directory doesn't say so).
     boolean idpAdmin = !user.isAdmin() && idpGroups != null
         && idpGroups.stream().anyMatch(g -> adminGroups.stream().anyMatch(a -> a.equalsIgnoreCase(g)));
     if (idpAdmin) user = user.asAdmin();
-    return new Identity(method, value, user, idpAdmin);
+    return new Identity(method, value, user, idpAdmin, List.copyOf(alsoMatched));
   }
 
   public final AuthenticationSuccessHandler success = this::succeeded;
@@ -150,6 +173,7 @@ public class SsoSignIn {
       // Recorded before the session exists: a sign-in that can't be audited doesn't happen.
       audit.event("auth.login").by(id.user()).target("user", id.user().dn(), id.user().displayName()).detail("method", id.method())
           .directory(id.user().directory())
+          .detail("alsoMatched", id.alsoMatched().isEmpty() ? null : String.join(",", id.alsoMatched()))
           .detail("idpAdmin", id.idpAdmin() ? Boolean.TRUE : null).success();
     } catch (AuditUnavailableException e) {
       redirect(request, response, "/login?sso_error=unavailable");

@@ -18,8 +18,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Which directory a certificate's user is in: every enabled directory that takes certificate
- * sign-in is searched, and exactly one account in all of them must match. A directory can be left
- * out (x509 false) or given its own filter (x509-user-filter).
+ * sign-in is searched in configured order, and the first that holds a matching account wins (it
+ * must hold exactly one); the others that also match are reported. A directory can be left out
+ * (x509 false) or given its own filter (x509-user-filter).
  */
 class X509MultiDirectoryTest {
   private final List<InMemoryDirectoryServer> servers = new ArrayList<>();
@@ -63,18 +64,37 @@ class X509MultiDirectoryTest {
   }
 
   @Test
-  void mapsToTheOneDirectoryThatHoldsTheUser() throws Exception {
-    Directories dirs = new Directories(List.of(directory(0, "corp", "o=corp", true, "", "alice", "bob"),
-        directory(1, "lab", "o=lab", true, "", "alice", "zoe")), null);
-    X509AuthService x509 = service(dirs, "filter");
+  void mapsToTheFirstDirectoryInOrderThatHoldsTheUser() throws Exception {
+    Directories.Directory corp = directory(0, "corp", "o=corp", true, "", "alice", "bob");
+    Directories.Directory lab = directory(1, "lab", "o=lab", true, "", "alice", "zoe");
+    X509AuthService x509 = service(new Directories(List.of(corp, lab), null), "filter");
     assertThat(x509.mapToUser(cert("CN=bob", "bob")).directory().id()).isEqualTo("corp");
     X509AuthService.Mapped zoe = x509.mapToUser(cert("CN=zoe", "zoe"));
     assertThat(zoe.directory().id()).isEqualTo("lab");
     assertThat(zoe.dn()).isEqualTo("uid=zoe,o=lab");
-    // In both: refused, not guessed.
-    assertThatThrownBy(() -> x509.mapToUser(cert("CN=alice", "alice"))).isInstanceOf(CertificateRejectedException.class)
-        .hasMessageContaining("More than one directory account");
+    assertThat(zoe.alsoMatched()).isEmpty();
+    // In both: the first in configured order, the other reported.
+    X509AuthService.Mapped alice = x509.mapToUser(cert("CN=alice", "alice"));
+    assertThat(alice.directory().id()).isEqualTo("corp");
+    assertThat(alice.dn()).isEqualTo("uid=alice,o=corp");
+    assertThat(alice.alsoMatched()).containsExactly("lab");
     assertThatThrownBy(() -> x509.mapToUser(cert("CN=nobody", "nobody"))).hasMessageContaining("No directory account matches");
+
+    // The order is the configuration's.
+    Directories.Directory labFirst = new Directories.Directory(0, lab.config(), lab.ldap(), null);
+    Directories.Directory corpSecond = new Directories.Directory(1, corp.config(), corp.ldap(), null);
+    X509AuthService.Mapped swapped = service(new Directories(List.of(labFirst, corpSecond), null), "filter").mapToUser(cert("CN=alice", "alice"));
+    assertThat(swapped.directory().id()).isEqualTo("lab");
+    assertThat(swapped.alsoMatched()).containsExactly("corp");
+  }
+
+  @Test
+  void twoAccountsInTheWinningDirectoryAreStillRefused() throws Exception {
+    // carol and carol2 both match the lab's filter; corp holds no carol.
+    Directories dirs = new Directories(List.of(directory(0, "corp", "o=corp", true, "", "alice"),
+        directory(1, "lab", "o=lab", true, "(&(objectClass=inetOrgPerson)(uid={{cn}}*))", "carol", "carol2")), null);
+    assertThatThrownBy(() -> service(dirs, "filter").mapToUser(cert("CN=carol", "carol"))).isInstanceOf(CertificateRejectedException.class)
+        .hasMessageContaining("More than one directory account");
   }
 
   @Test

@@ -495,9 +495,11 @@ password is never sent to a directory it isn't meant for, and the lockout counts
 With one directory nothing changes on the login page. **Certificate sign-in and single sign-on**
 search every enabled directory whose `x509` / `sso` setting is on (the default), each with its own
 `x509-user-filter` / `sso-user-filter` if set (else `X509_USER_FILTER` / the provider's filter);
-exactly one entry in all of them must match, so an account found in two directories is refused,
-not guessed. Turn a directory's `x509` or `sso` off, or give it a narrower filter, to resolve
-that. With `X509_MAPPING=subject-dn` only directories whose user search base holds the subject DN
+in configured order. The first directory that holds a matching account wins, and must hold exactly
+one (two there refuse the sign-in, as with one directory). When later directories also hold a
+match, the user signs in to the first, the API logs a WARN naming the others, and the sign-in's
+audit record lists them in `details.alsoMatched`. Order the directories, turn a directory's `x509`
+or `sso` off, or give it a narrower filter to change which one wins. With `X509_MAPPING=subject-dn` only directories whose user search base holds the subject DN
 are searched.
 
 **Configuration.** `PORTAL_DIRECTORIES_<n>_<SETTING>` (n from 0; the first is the primary
