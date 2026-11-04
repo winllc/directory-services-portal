@@ -172,7 +172,8 @@ class SharedStoreTest extends ApiTestSupport {
     }
     assertThat(status(mvc.perform(json(post("/api/auth/login"), Map.of("username", "grace", "password", "password"))).andReturn())).isEqualTo(429);
     LoginThrottle elsewhere = new LoginThrottle(otherReplica());
-    assertThat(elsewhere.locked("127.0.0.1|grace", max, props.getLogin().getLockoutWindow().toMillis())).isTrue();
+    // Counted per client, directory and username (AuthService): grace signed in to the default directory.
+    assertThat(elsewhere.locked("127.0.0.1|default|grace", max, props.getLogin().getLockoutWindow().toMillis())).isTrue();
     assertThat(jdbc.queryForObject("SELECT count(*) FROM dsp_login_failure WHERE throttle_key LIKE '%grace%'", Long.class))
         .as("only hashes are stored").isZero();
     jdbc.update("DELETE FROM dsp_login_failure");
