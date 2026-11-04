@@ -10,4 +10,11 @@ public record GrantInput(
     @NotNull @Pattern(regexp = "user|group") String subjectType,
     @NotBlank @Size(max = 1024) String subject,
     @Size(max = 256) String subjectLabel,
-    @NotNull @Pattern(regexp = "read|write") String access) {}
+    @NotNull @Pattern(regexp = "read|write") String access,
+    /** The LDAP directory the subject is in; none: the definition's. */
+    @Size(max = 64) String directory) {
+
+  public GrantInput(String definitionId, String subjectType, String subject, String subjectLabel, String access) {
+    this(definitionId, subjectType, subject, subjectLabel, access, null);
+  }
+}

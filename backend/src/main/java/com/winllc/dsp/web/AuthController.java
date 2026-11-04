@@ -68,7 +68,7 @@ public class AuthController {
     String attempted = body.username().trim();
     consent.requireAcknowledged(request, audit.event("auth.login").anonymous(attempted)
         .target("user", attempted.length() > 128 ? attempted.substring(0, 128) : attempted, null).detail("method", "password"));
-    SessionUser user = auth.login(attempted, body.password(), request.getRemoteAddr());
+    SessionUser user = auth.login(body.directory(), attempted, body.password(), request.getRemoteAddr());
     establishSession(user, request, response);
     return Map.of("user", user);
   }
@@ -93,7 +93,7 @@ public class AuthController {
     // Worked out while the session still holds what single logout needs.
     String redirect = sso.signOutUrl(user, request);
     if (user != null) {
-      audit.event("auth.logout").by(user).target("user", user.dn(), user.displayName())
+      audit.event("auth.logout").by(user).directory(user.directory()).target("user", user.dn(), user.displayName())
           .detail("providerLogout", redirect != null).success();
     }
     HttpSession session = request.getSession(false);

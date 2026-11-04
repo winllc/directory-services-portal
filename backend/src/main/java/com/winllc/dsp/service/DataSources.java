@@ -43,14 +43,12 @@ public class DataSources {
   /** Operational attributes any reader may aggregate on. */
   public static final List<String> TIMESTAMPS = List.of("createTimestamp", "modifyTimestamp");
 
-  private final LdapDirectory directory;
   private final EntryService entries;
   private final SchemaService schema;
   /** Entries found by the last complete scan of each source, to estimate progress next time. */
   private final Map<String, Integer> sizes = new ConcurrentHashMap<>();
 
-  public DataSources(LdapDirectory directory, EntryService entries, SchemaService schema) {
-    this.directory = directory;
+  public DataSources(EntryService entries, SchemaService schema) {
     this.entries = entries;
     this.schema = schema;
   }
@@ -103,7 +101,7 @@ public class DataSources {
     if (LdapDirectory.isBinary(attribute)) return "\"" + attribute + "\" holds binary data and can't be aggregated";
     if (user.isAdmin()) return null;
     if (TIMESTAMPS.stream().anyMatch(t -> t.equalsIgnoreCase(attribute))) return null;
-    SchemaIndex index = schema.mergedIndex();
+    SchemaIndex index = schema.mergedIndex(def.directory());
     String primary = index.primaryAttributeName(attribute);
     for (String a : EntryService.readableAttributes(def, form)) {
       if (a.equalsIgnoreCase(attribute) || index.primaryAttributeName(a).equalsIgnoreCase(primary)) return null;
@@ -151,7 +149,7 @@ public class DataSources {
     Integer expected = sizes.get(sizeKey);
     job.phase("Reading " + def.name(), expected == null ? null : expected.longValue());
     int[] skipped = {0};
-    LdapDirectory.ScanResult r = directory.scan(def.baseDn(), EntryService.searchScope(def), source.filter(), requested, max + 1, e -> {
+    LdapDirectory.ScanResult r = entries.directoryOf(def).ldap().scan(def.baseDn(), EntryService.searchScope(def), source.filter(), requested, max + 1, e -> {
       if (Dns.equal(e.dn(), def.baseDn())) {
         skipped[0]++;
         return;
@@ -165,10 +163,15 @@ public class DataSources {
     return new LdapDirectory.ScanResult(Math.min(delivered, max), r.truncated() || delivered > max);
   }
 
+  /** The LDAP directory a source reads (its definition's). */
+  public LdapDirectory ldap(Source source) {
+    return entries.directoryOf(source.definition()).ldap();
+  }
+
   /** Attributes the user can aggregate on in a definition, form fields first. */
   public List<AttributeChoice> attributeChoices(SessionUser user, DirectoryDefinition def) {
     FormDefinition form = entries.form(def);
-    SchemaIndex index = schema.mergedIndex();
+    SchemaIndex index = schema.mergedIndex(def.directory());
     Map<String, AttributeChoice> out = new LinkedHashMap<>();
     for (FormField f : form.fields()) {
       if (EntryService.isHidden(f.attribute()) || LdapDirectory.isBinary(f.attribute())) continue;

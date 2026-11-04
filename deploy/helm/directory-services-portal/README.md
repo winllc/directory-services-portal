@@ -518,7 +518,9 @@ Existing claims (`existingClaim`) are never touched.
 | Value | Env | Default |
 |---|---|---|
 | `directory.mode` | `DIRECTORY_MODE` | `ldap` (`memory`: built-in demo directory, evaluation only; the chart then sets `DEMO_MODE=true`, which the API requires for it) |
-| `ldap.url` | `LDAP_URL` | `ldaps://ldap.example.com:636` |
+| `ldap.url` | `LDAP_URL` | `ldaps://ldap.example.com:636`; several servers of the directory (a list, or a string separated by commas or spaces) are tried in order (failover) |
+| `ldap.serverSelection` | `LDAP_SERVER_SELECTION` | `failover` (or `round-robin`) |
+| `ldap.name` | `DIRECTORY_NAME` | `""` (the API's default, `Directory`) |
 | `ldap.startTls` | `LDAP_STARTTLS` | `false` |
 | `ldap.tlsRejectUnauthorized` | `LDAP_TLS_REJECT_UNAUTHORIZED` | `true` |
 | `ldap.timeoutMs` | `LDAP_TIMEOUT_MS` | `10000` |
@@ -535,6 +537,7 @@ Existing claims (`existingClaim`) are never touched.
 | `ldap.truststore.password.value` / `.existingSecret` / `.existingSecretKey` | trust store password | `""` / `""` / `truststore-password` |
 | `admin.users` | `ADMIN_USERS` | `[]` (list, or a `;`-separated string) |
 | `admin.groups` | `ADMIN_GROUPS` | `[cn=directory-admins,ou=groups,dc=example,dc=com]` |
+| `directories` | `PORTAL_DIRECTORIES_<n>_*` | `[]`. Several LDAP directories (license feature `multi-directory`; without it only the first is used); when set, `ldap.*` (except `truststore`) and `admin.*` are not used. Each: `id` (required, unique, `a-z 0-9 - _`), `name`, `urls` (required; failover in order), `serverSelection`, `bindDn`, `bindPassword` (`value`, or `existingSecret` + `existingSecretKey`; mounted at `/etc/dsp/directories/<id>/bind-password`), `startTls`, `tlsRejectUnauthorized`, `timeoutMs`, `poolSize`, `baseDn`, `userSearchBase`, `userFilter`, `usernameAttribute`, `groupSearchBase`, `groupFilter`, `admin.users` / `admin.groups`, `x509` / `sso` (certificate sign-in and single sign-on look for users there; default `true`), `x509UserFilter`, `ssoUserFilter`. See `ci/multi-directory-values.yaml` and the portal README, *Multiple directories* |
 
 ### Server, metrics and background tasks
 

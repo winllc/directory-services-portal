@@ -96,7 +96,7 @@ public class MetricEngine {
         continue;
       }
       String version = source.definition().updatedAt() + "/" + source.form().updatedAt();
-      EntryValues values = new EntryValues(schema.mergedIndex());
+      EntryValues values = new EntryValues(schema.mergedIndex(source.definition().directory()));
       Map<Integer, Aggregator> pending = new LinkedHashMap<>();
       Map<Integer, String> keys = new HashMap<>();
       for (int i : group) {
@@ -236,24 +236,24 @@ public class MetricEngine {
     List<MetricResult.Series> series = r.series();
     DropdownSource.Ldap rowSource = "none".equals(w.transformOrNone()) ? directorySource(source, w.attribute()) : null;
     if (rowSource != null) {
-      Map<String, String> labels = labelsFor(rowSource, rows.stream().filter(x -> x.other() == null && x.missing() == null).map(MetricResult.Row::label).toList());
+      Map<String, String> labels = labelsFor(source, rowSource, rows.stream().filter(x -> x.other() == null && x.missing() == null).map(MetricResult.Row::label).toList());
       rows = rows.stream().map(x -> labels.containsKey(x.label())
           ? new MetricResult.Row(x.key(), labels.get(x.label()), x.value(), x.share(), x.other(), x.missing()) : x).toList();
     }
     DropdownSource.Ldap splitSource = series != null && (w.splitTransform() == null || "none".equals(w.splitTransform()))
         ? directorySource(source, w.splitBy()) : null;
     if (splitSource != null) {
-      Map<String, String> labels = labelsFor(splitSource, series.stream().filter(x -> x.other() == null && x.missing() == null).map(MetricResult.Series::label).toList());
+      Map<String, String> labels = labelsFor(source, splitSource, series.stream().filter(x -> x.other() == null && x.missing() == null).map(MetricResult.Series::label).toList());
       series = series.stream().map(x -> labels.containsKey(x.label()) ? new MetricResult.Series(x.key(), labels.get(x.label()), x.other(), x.missing()) : x).toList();
     }
     if (rows == r.rows() && series == r.series()) return r;
     return new MetricResult(r.kind(), r.total(), r.truncated(), r.computedAt(), rows, series, r.matrix(), r.distinctValues(), r.stats(), r.warnings());
   }
 
-  private Map<String, String> labelsFor(DropdownSource.Ldap src, List<String> values) {
+  private Map<String, String> labelsFor(DataSources.Source source, DropdownSource.Ldap src, List<String> values) {
     try {
       Map<String, String> out = new HashMap<>();
-      for (OptionItem o : directoryOptions.lookup(src, values)) {
+      for (OptionItem o : directoryOptions.lookup(sources.ldap(source), src, values)) {
         if (o.label() != null && !o.label().isBlank()) out.put(o.value(), o.label());
       }
       return out;

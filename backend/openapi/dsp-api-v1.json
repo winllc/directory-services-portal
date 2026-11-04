@@ -891,6 +891,10 @@
           "description" : {
             "type" : "string"
           },
+          "directory" : {
+            "type" : "string",
+            "description" : "The LDAP directory (its id) the entries are in"
+          },
           "id" : {
             "type" : "string"
           },

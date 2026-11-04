@@ -65,7 +65,12 @@ public class IntegrationApi {
   }
 
   /** A directory as the token sees it: {@code access} is read or write. */
-  public record Directory(String id, String slug, String name, String description, String access, boolean readOnly) {}
+  /**
+   * A directory (definition) the token can reach; {@code directory} is the id of the LDAP directory
+   * it reads and writes (several can be configured; "default" with one).
+   */
+  public record Directory(String id, String slug, String name, String description, String access, boolean readOnly,
+      @io.swagger.v3.oas.annotations.media.Schema(description = "The LDAP directory (its id) the entries are in") String directory) {}
 
   /** A field of the directory's form: the attributes an entry may be given. */
   public record Field(String attribute, String label, boolean multiValued, boolean required, boolean readOnly, String format) {}
@@ -95,7 +100,7 @@ public class IntegrationApi {
     AccessLevel access = entries.access(owner, def);
     boolean canWrite = t.has(ApiScope.ENTRIES_WRITE) || t.has(ApiScope.ENTRIES_DELETE) || t.has(ApiScope.GROUPS_WRITE);
     if (!canWrite && access == AccessLevel.WRITE) access = AccessLevel.READ;
-    return new Directory(def.id(), def.slug(), def.name(), def.description(), access.json(), def.readOnly());
+    return new Directory(def.id(), def.slug(), def.name(), def.description(), access.json(), def.readOnly(), entries.directoryId(def));
   }
 
   private static String dn(String dn) {

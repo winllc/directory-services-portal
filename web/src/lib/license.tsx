@@ -17,6 +17,7 @@ export const FEATURE_LABELS: Record<LicensedFeatureId, string> = {
   metrics: 'Metrics and dashboards',
   'data-analysis': 'Data-quality analysis',
   'schema-transfer': 'Schema import and export',
+  'multi-directory': 'Multiple directories',
 };
 
 /** Where the license screen is (administrators), and the page everyone else gets when unlicensed. */

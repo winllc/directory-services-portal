@@ -67,7 +67,7 @@ public class AccessDenials {
    */
   public void denied(HttpServletRequest request, String reason, String message) {
     SessionUser user = currentUser();
-    String actorKey = user != null ? "user:" + user.username() : "anon:" + request.getRemoteAddr();
+    String actorKey = user != null ? "user:" + user.key() : "anon:" + request.getRemoteAddr();
     String path = request.getRequestURI();
     String key = actorKey + "|" + path + "|" + reason;
     Instant now = Instant.now();

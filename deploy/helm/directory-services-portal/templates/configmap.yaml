@@ -25,7 +25,11 @@ data:
   DIRECTORY_MODE: {{ include "dsp.str" $v.directory.mode | quote }}
   # The built-in demo directory's credentials are public: the API starts it only as a demo.
   DEMO_MODE: {{ eq $v.directory.mode "memory" | quote }}
-  LDAP_URL: {{ include "dsp.str" $v.ldap.url | quote }}
+  LDAP_URL: {{ include "dsp.joinComma" $v.ldap.url | quote }}
+  LDAP_SERVER_SELECTION: {{ $v.ldap.serverSelection | default "failover" | quote }}
+  {{- with $v.ldap.name }}
+  DIRECTORY_NAME: {{ . | quote }}
+  {{- end }}
   LDAP_STARTTLS: {{ include "dsp.str" $v.ldap.startTls | quote }}
   LDAP_TLS_REJECT_UNAUTHORIZED: {{ include "dsp.str" $v.ldap.tlsRejectUnauthorized | quote }}
   LDAP_TIMEOUT_MS: {{ include "dsp.str" $v.ldap.timeoutMs | quote }}
@@ -44,6 +48,27 @@ data:
   LDAP_GROUP_FILTER: {{ include "dsp.str" $v.ldap.groupFilter | quote }}
   ADMIN_USERS: {{ include "dsp.joinSemi" $v.admin.users | quote }}
   ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.admin.groups | quote }}
+  {{- range $i, $d := $v.directories }}
+  # Directory {{ $i }}: {{ $d.id }} (directories[{{ $i }}]; the license feature multi-directory enables all but the first)
+  PORTAL_DIRECTORIES_{{ $i }}_ID: {{ $d.id | quote }}
+  {{- with $d.name }}
+  PORTAL_DIRECTORIES_{{ $i }}_NAME: {{ . | quote }}
+  {{- end }}
+  PORTAL_DIRECTORIES_{{ $i }}_URLS: {{ include "dsp.joinComma" $d.urls | quote }}
+  {{- range $key, $env := dict "serverSelection" "SERVERSELECTION" "bindDn" "BINDDN" "startTls" "STARTTLS" "tlsRejectUnauthorized" "TLSREJECTUNAUTHORIZED" "timeoutMs" "TIMEOUTMS" "poolSize" "POOLSIZE" "baseDn" "BASEDN" "userSearchBase" "USERSEARCHBASE" "userFilter" "USERFILTER" "usernameAttribute" "USERNAMEATTRIBUTE" "groupSearchBase" "GROUPSEARCHBASE" "groupFilter" "GROUPFILTER" "x509" "X509" "x509UserFilter" "X509USERFILTER" "sso" "SSO" "ssoUserFilter" "SSOUSERFILTER" }}
+  {{- if hasKey $d $key }}
+  PORTAL_DIRECTORIES_{{ $i }}_{{ $env }}: {{ include "dsp.str" (get $d $key) | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with $d.admin }}
+  PORTAL_DIRECTORIES_{{ $i }}_ADMINUSERS: {{ include "dsp.joinSemi" .users | quote }}
+  PORTAL_DIRECTORIES_{{ $i }}_ADMINGROUPS: {{ include "dsp.joinSemi" .groups | quote }}
+  {{- end }}
+  {{- if include "dsp.directorySecretSet" $d }}
+  # Its bind password, mounted from its Secret (directories[{{ $i }}].bindPassword).
+  PORTAL_DIRECTORIES_{{ $i }}_BINDPASSWORDFILE: /etc/dsp/directories/{{ $d.id }}/bind-password
+  {{- end }}
+  {{- end }}
   # Server
   ENS_SESSION_IDLE_TIMEOUT: {{ include "dsp.idleTimeout" . | quote }}
   ENS_SESSION_ADMIN_IDLE_TIMEOUT: {{ include "dsp.str" $v.server.session.adminIdleTimeout | quote }}

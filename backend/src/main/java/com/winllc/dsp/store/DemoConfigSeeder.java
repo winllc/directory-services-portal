@@ -1,6 +1,7 @@
 package com.winllc.dsp.store;
 
 import com.winllc.dsp.analysis.AnalysisDefinition;
+import com.winllc.dsp.config.DirectoryProperties;
 import com.winllc.dsp.config.PortalProperties;
 import com.winllc.dsp.metrics.Dashboard;
 import com.winllc.dsp.model.DirectoryDefinition;
@@ -63,10 +64,12 @@ public class DemoConfigSeeder implements ApplicationRunner {
     d.definitions = new java.util.ArrayList<>(demo.definitions().stream()
         .map(x -> new DirectoryDefinition(x.id(), x.name(), x.slug(), x.description(), x.formId(), x.baseDn(), x.scope(), x.filter(),
             x.mode(), x.everyoneCanRead(), x.listAttributes(), x.searchAttributes(), x.titleAttribute(), x.createContainers(),
-            x.selfMatch(), x.icon(), now, now))
+            x.selfMatch(), x.icon(), now, now, x.directory() != null ? x.directory() : DirectoryProperties.DEFAULT_ID))
         .toList());
     d.grants = new java.util.ArrayList<>(demo.grants().stream()
-        .map(g -> new PermissionGrant(g.id(), g.definitionId(), g.subjectType(), g.subject(), g.subjectLabel(), g.access(), now))
+        .map(g -> new PermissionGrant(g.id(), g.definitionId(), g.subjectType(), g.subject(), g.subjectLabel(), g.access(), now,
+            g.directory() != null ? g.directory() : d.definitions.stream().filter(x -> x.id().equals(g.definitionId()))
+                .map(DirectoryDefinition::directory).findFirst().orElse(DirectoryProperties.DEFAULT_ID)))
         .toList());
     d.dashboards = new java.util.ArrayList<>((demo.dashboards() == null ? List.<Dashboard>of() : demo.dashboards()).stream()
         .map(x -> new Dashboard(x.id(), x.name(), x.description(), x.shared(), x.widgets(), now, now))

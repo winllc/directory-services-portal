@@ -2,7 +2,10 @@ package com.winllc.dsp.config;
 
 import com.enssolutions.license.LicenseState;
 import com.winllc.dsp.audit.AuditLog;
-import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.ldap.Directories;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import com.winllc.dsp.license.Licensing;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.binder.MeterBinder;
@@ -26,16 +29,47 @@ import org.springframework.core.env.Environment;
 @Configuration(proxyBeanMethods = false)
 public class Observability {
 
-  /** The directory answers (a root DSE read through the service account's pool). */
+  /**
+   * The directory answers (a root DSE read through the service account's pool). With several
+   * enabled directories: UP while at least one answers, with each one's status in
+   * {@code details.directories} and {@code details.degraded} true while some don't, so one directory
+   * being down doesn't take the portal out of service; DOWN when none answers. Directories the
+   * license leaves disabled are listed as DISABLED and not checked.
+   */
   @Bean
-  HealthIndicator ldapHealthIndicator(LdapDirectory directory) {
+  HealthIndicator ldapHealthIndicator(Directories directories) {
     return () -> {
-      try {
-        directory.ping();
-        return Health.up().build();
-      } catch (RuntimeException e) {
-        return Health.down().withDetail("error", e.getMessage()).build();
+      List<Directories.Directory> enabled = directories.enabled();
+      if (directories.all().size() == 1) {
+        try {
+          enabled.get(0).ldap().ping();
+          return Health.up().build();
+        } catch (RuntimeException e) {
+          return Health.down().withDetail("error", e.getMessage()).build();
+        }
       }
+      Map<String, Object> details = new LinkedHashMap<>();
+      int up = 0;
+      for (Directories.Directory d : directories.all()) {
+        Map<String, Object> one = new LinkedHashMap<>();
+        if (!directories.enabled(d)) {
+          one.put("status", "DISABLED");
+        } else {
+          try {
+            d.ldap().ping();
+            one.put("status", "UP");
+            up++;
+          } catch (RuntimeException e) {
+            one.put("status", "DOWN");
+            one.put("error", e.getMessage());
+          }
+          if (d.ldap().currentServer() != null) one.put("server", d.ldap().currentServer());
+        }
+        details.put(d.id(), one);
+      }
+      Health.Builder health = up == 0 ? Health.down() : Health.up();
+      if (up > 0 && up < enabled.size()) health.withDetail("degraded", true);
+      return health.withDetail("directories", details).build();
     };
   }
 

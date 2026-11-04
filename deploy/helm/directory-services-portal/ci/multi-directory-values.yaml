@@ -1,0 +1,29 @@
+# Two directories with failover (license feature multi-directory): one bind password inline (the
+# chart's Secret), one from an existing Secret; LDAP_URL-style failover for both.
+directories:
+  - id: default
+    name: Corporate
+    urls:
+      - ldaps://dc1.corp.example.com:636
+      - ldaps://dc2.corp.example.com:636
+    bindDn: CN=svc-portal,OU=Service,DC=corp,DC=example,DC=com
+    bindPassword:
+      value: ci-only-not-a-secret
+    baseDn: DC=corp,DC=example,DC=com
+    userFilter: (&(objectClass=user)(sAMAccountName={{username}}))
+    usernameAttribute: sAMAccountName
+    timeoutMs: 5000
+    admin:
+      groups:
+        - CN=Portal Admins,OU=Groups,DC=corp,DC=example,DC=com
+  - id: enclave-b
+    name: Enclave B
+    urls: ldap://ldap1.b.example.com ldap://ldap2.b.example.com
+    serverSelection: round-robin
+    startTls: true
+    bindDn: cn=portal,ou=system,o=enclave-b
+    bindPassword:
+      existingSecret: enclave-b-ldap
+      existingSecretKey: bind-password
+    baseDn: o=enclave-b
+    x509: false

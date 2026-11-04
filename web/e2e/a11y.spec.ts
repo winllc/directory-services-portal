@@ -78,6 +78,7 @@ const pages: [string, string][] = [
   ['admin-permissions', '/admin/permissions'],
   ['admin-audit', '/admin/audit'],
   ['admin-integrations', '/admin/integrations'],
+  ['admin-ldap-directories', '/admin/ldap-directories'],
   ['admin-analysis', '/admin/analysis'],
   ['admin-license', '/admin/license'],
 ];

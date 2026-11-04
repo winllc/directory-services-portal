@@ -42,7 +42,8 @@ public class ApiTokenOwners {
     long now = System.nanoTime();
     Cached c = cache.get(token.id());
     if (c != null && now - c.at() < TTL_NANOS) return new Owner(c.user(), null);
-    SessionUser stub = new SessionUser(token.createdBy(), token.createdByDn(), token.createdBy(), null, List.of(), false, AUTH_METHOD, null);
+    SessionUser stub = new SessionUser(token.createdBy(), token.createdByDn(), token.createdBy(), null, List.of(), false, AUTH_METHOD, null,
+        token.createdByDirectory());
     AuthService.Checked fresh = auth.refreshActive(stub);
     if (fresh == null || fresh.user() == null) {
       cache.remove(token.id());

@@ -12,6 +12,7 @@ import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.audit.AuditUnavailableException;
 import com.winllc.dsp.ldap.DirectoryException;
 import com.winllc.dsp.ldap.Dns;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.Licensing;
@@ -67,7 +68,7 @@ public class EntryService {
   public static final Set<String> MEMBER_ATTRIBUTES = Set.of("member", "uniquemember", "memberuid");
   private static final String REDACTED = AuditDetails.REDACTED;
 
-  private final LdapDirectory directory;
+  private final Directories directories;
   private final ConfigStore store;
   private final SchemaService schema;
   private final AuditLog audit;
@@ -78,9 +79,9 @@ public class EntryService {
 
   public record ListQuery(String q, Integer page, Integer pageSize, String sort, String order) {}
 
-  public EntryService(LdapDirectory directory, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options,
+  public EntryService(Directories directories, ConfigStore store, SchemaService schema, AuditLog audit, DirectoryOptions options,
       Licensing licensing, MeterRegistry meters, ApplicationEventPublisher events) {
-    this.directory = directory;
+    this.directories = directories;
     this.events = events;
     this.meters = meters;
     this.licensing = licensing;
@@ -130,7 +131,9 @@ public class EntryService {
    * "white pages" feature: without it they keep only the directories they may edit.
    */
   public AccessLevel access(SessionUser user, DirectoryDefinition def) {
-    AccessLevel access = PermissionService.effectiveAccess(user, def, store.snapshot().grants);
+    // A definition whose directory is not configured, or not enabled by the license, can't be used.
+    if (!directories.available(def.directory())) return AccessLevel.NONE;
+    AccessLevel access = PermissionService.effectiveAccess(user, def, store.snapshot().grants, directories::same);
     if (access == AccessLevel.READ && !user.isAdmin() && !licensing.allows(LicensedFeature.WHITE_PAGES)) return AccessLevel.NONE;
     return access;
   }
@@ -142,6 +145,8 @@ public class EntryService {
 
   public void require(SessionUser user, DirectoryDefinition def, AccessLevel level) {
     if (access(user, def).atLeast(level)) return;
+    // Says why when it's the directory, not the user's rights (unknown: 404; not licensed: 403).
+    directories.forDefinition(def);
     if (level == AccessLevel.WRITE && def.readOnly()) throw ApiException.forbidden("This directory is read only");
     throw ApiException.forbidden(level == AccessLevel.WRITE
         ? "You do not have write access to this directory"
@@ -152,6 +157,20 @@ public class EntryService {
     return "one".equals(s) ? SearchScope.ONE : SearchScope.SUB;
   }
 
+  /** The directory a definition works in (see {@link Directories#forDefinition}). */
+  public Directories.Directory directoryOf(DirectoryDefinition def) {
+    return directories.forDefinition(def);
+  }
+
+  private LdapDirectory ldap(DirectoryDefinition def) {
+    return directories.forDefinition(def).ldap();
+  }
+
+  /** The canonical id of the definition's directory (for audit records and webhook payloads). */
+  public String directoryId(DirectoryDefinition def) {
+    return directories.canonicalId(def.directory());
+  }
+
   /** The filter selecting entries that belong to a definition. */
   public Filter baseFilter(DirectoryDefinition def, FormDefinition form) {
     try {
@@ -159,7 +178,7 @@ public class EntryService {
     } catch (LDAPException e) {
       throw ApiException.badRequest("The directory definition has an invalid filter");
     }
-    SchemaIndex index = schema.mergedIndex();
+    SchemaIndex index = schema.mergedIndex(def.directory());
     // Auxiliary classes are optional on existing entries; select by structural/abstract classes.
     List<Filter> parts = form.objectClasses().stream()
         .filter(c -> !c.equalsIgnoreCase("top"))
@@ -215,7 +234,7 @@ public class EntryService {
   private DirectoryEntry findEntry(DirectoryDefinition def, FormDefinition form, String dn, List<String> attributes) {
     assertInNamespace(def, dn);
     try {
-      List<DirectoryEntry> found = directory.search(dn, SearchScope.BASE, baseFilter(def, form), 1, attributes).entries();
+      List<DirectoryEntry> found = ldap(def).search(dn, SearchScope.BASE, baseFilter(def, form), 1, attributes).entries();
       if (found.isEmpty()) throw ApiException.notFound("Entry not found in this directory");
       return found.get(0);
     } catch (DirectoryException e) {
@@ -253,7 +272,7 @@ public class EntryService {
     require(user, def, AccessLevel.READ);
     FormDefinition form = form(def);
     List<String> attrs = returnAttributes(def, form).stream().filter(a -> !isHidden(a)).toList();
-    return directory.scan(def.baseDn(), scope(def.scope()), searchFilter(def, form, q), attrs, max, e -> {
+    return ldap(def).scan(def.baseDn(), scope(def.scope()), searchFilter(def, form, q), attrs, max, e -> {
       if (!Dns.equal(e.dn(), def.baseDn())) consumer.accept(sanitize(e));
     }).truncated();
   }
@@ -264,7 +283,7 @@ public class EntryService {
     Filter filter = searchFilter(def, form, query.q());
     Set<String> attrs = new LinkedHashSet<>(List.of("objectClass", def.titleAttribute()));
     attrs.addAll(def.listAttributes());
-    LdapDirectory.Result result = directory.search(def.baseDn(), scope(def.scope()), filter, LIST_LIMIT, new ArrayList<>(attrs));
+    LdapDirectory.Result result = ldap(def).search(def.baseDn(), scope(def.scope()), filter, LIST_LIMIT, new ArrayList<>(attrs));
 
     String sortAttr = (query.sort() == null || query.sort().isBlank() ? def.titleAttribute() : query.sort()).toLowerCase();
     Function<DirectoryEntry, String> key = e -> ("dn".equals(sortAttr) ? e.dn() : e.values(sortAttr).stream().findFirst().orElse("")).toLowerCase();
@@ -292,20 +311,20 @@ public class EntryService {
   // Drop-down options
   // ---------------------------------------------------------------------------
 
-  /** All options of a drop down (directory searches: up to their limit, see {@link #optionPage}). */
-  public List<OptionItem> fieldOptions(FormField field) {
+  /** All options of a drop down (directory searches, in the definition's directory: up to their limit, see {@link #optionPage}). */
+  public List<OptionItem> fieldOptions(DirectoryDefinition def, FormField field) {
     if (field.dropdown() == null) return List.of();
     if (field.dropdown() instanceof DropdownSource.Static s) return s.options();
-    return options.list((DropdownSource.Ldap) field.dropdown()).options();
+    return options.list(ldap(def), (DropdownSource.Ldap) field.dropdown()).options();
   }
 
   /** The full option list, or null when a directory search has more options than its limit. */
-  public List<OptionItem> completeFieldOptions(FormField field) {
+  public List<OptionItem> completeFieldOptions(DirectoryDefinition def, FormField field) {
     if (field.dropdown() instanceof DropdownSource.Ldap src) {
-      DirectoryOptions.Page page = options.list(src);
+      DirectoryOptions.Page page = options.list(ldap(def), src);
       return page.truncated() ? null : page.options();
     }
-    return fieldOptions(field);
+    return fieldOptions(def, field);
   }
 
   /** Options for a user: typed text {@code q} searches, {@code values} resolves stored values. */
@@ -318,8 +337,10 @@ public class EntryService {
         .orElseThrow(() -> ApiException.notFound("Field not found"));
     if (field.dropdown() instanceof DropdownSource.Static s) return new DirectoryOptions.Page(s.options(), false, null);
     if (!(field.dropdown() instanceof DropdownSource.Ldap src)) return new DirectoryOptions.Page(List.of(), false, null);
-    if (values != null && !values.isEmpty()) return new DirectoryOptions.Page(options.lookup(src, values), false, null);
-    DirectoryOptions.Page page = q == null || q.isBlank() ? (src.searchMode() ? options.search(src, "") : options.list(src)) : options.search(src, q);
+    LdapDirectory dir = ldap(def);
+    if (values != null && !values.isEmpty()) return new DirectoryOptions.Page(options.lookup(dir, src, values), false, null);
+    DirectoryOptions.Page page = q == null || q.isBlank() ? (src.searchMode() ? options.search(dir, src, "") : options.list(dir, src))
+        : options.search(dir, src, q);
     // The effective filter is for administrators testing the settings, not for every user.
     return new DirectoryOptions.Page(page.options(), page.truncated(), null);
   }
@@ -328,20 +349,20 @@ public class EntryService {
    * For each directory-backed drop down among the submitted values: the options matching those
    * values (looked up directly, so validation works however many options there are).
    */
-  private Map<String, List<OptionItem>> resolveOptions(FormDefinition form, Map<String, Object> input) {
+  private Map<String, List<OptionItem>> resolveOptions(DirectoryDefinition def, FormDefinition form, Map<String, Object> input) {
     Map<String, List<OptionItem>> out = new HashMap<>();
     Map<String, Object> byAttr = new HashMap<>();
     if (input != null) input.forEach((k, v) -> byAttr.put(k.toLowerCase(), v));
     for (FormField f : form.fields()) {
       if (!f.dropdownWidget() || !(f.dropdown() instanceof DropdownSource.Ldap src) || f.allowsCustomValues()) continue;
       List<String> submitted = FormValidator.normalize(byAttr.get(f.attribute().toLowerCase()));
-      out.put(f.id(), submitted.isEmpty() ? List.of() : options.lookup(src, submitted));
+      out.put(f.id(), submitted.isEmpty() ? List.of() : options.lookup(ldap(def), src, submitted));
     }
     return out;
   }
 
-  private Map<String, List<String>> validate(FormDefinition form, Map<String, Object> values, FormValidator.Mode mode) {
-    FormValidator.Result result = FormValidator.validate(form, values, mode, resolveOptions(form, values));
+  private Map<String, List<String>> validate(DirectoryDefinition def, FormDefinition form, Map<String, Object> values, FormValidator.Mode mode) {
+    FormValidator.Result result = FormValidator.validate(form, values, mode, resolveOptions(def, form, values));
     if (!result.errors().isEmpty()) throw ApiException.badRequest("Some fields are invalid", result.errors());
     return result.values();
   }
@@ -359,7 +380,7 @@ public class EntryService {
   }
 
   public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
-    AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).target("entry", parentDn, null);
+    AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).directory(directoryId(def)).target("entry", parentDn, null);
     return audited("create", event, () -> doCreate(event, user, def, parentDn, input, null));
   }
 
@@ -400,7 +421,7 @@ public class EntryService {
       throw ApiException.badRequest("This directory only contains direct children of its base DN");
     }
 
-    Map<String, List<String>> values = validate(form, input, FormValidator.Mode.CREATE);
+    Map<String, List<String>> values = validate(def, form, input, FormValidator.Mode.CREATE);
     String rdnKey = form.rdnAttribute().toLowerCase();
     List<String> rdnValues = values.getOrDefault(rdnKey, List.of());
     if (rdnValues.isEmpty()) throw ApiException.badRequest("Missing naming attribute", Map.of(rdnKey, "Required"));
@@ -416,13 +437,13 @@ public class EntryService {
     event.target("entry", dn, titles.isEmpty() ? rdnValues.get(0) : titles.get(0));
     event.changes(attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList());
     if (preview != null) {
-      if (directory.get(dn, List.of("1.1")) != null) throw ApiException.conflict("An entry named " + dn + " already exists");
+      if (ldap(def).get(dn, List.of("1.1")) != null) throw ApiException.conflict("An entry named " + dn + " already exists");
       preview.result = new Preview(EntryChanged.CREATE, dn, attributes.keySet().stream().filter(a -> !a.equalsIgnoreCase("objectClass")).toList());
       return null;
     }
     // Never change the directory unaudited: a full or unwritable audit disk refuses the write (503).
     audit.requireWritable();
-    directory.add(dn, attributes);
+    ldap(def).add(dn, attributes);
     // Recorded as soon as the directory accepts it: reading the entry back can still fail.
     List<AuditEvent.Change> created = attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList();
     event.alongside(changed(user, EntryChanged.CREATE, def, form, dn, null, titles.isEmpty() ? rdnValues.get(0) : titles.get(0), created, false))
@@ -435,7 +456,7 @@ public class EntryService {
   }
 
   public DirectoryEntry update(SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
-    AuditLog.Draft event = audit.event(self ? "entry.self_update" : "entry.update").by(user).definition(def.id()).target("entry", dn, null);
+    AuditLog.Draft event = audit.event(self ? "entry.self_update" : "entry.update").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
     return audited("update", event, () -> doUpdate(event, user, def, dn, input, self, null));
   }
 
@@ -448,8 +469,8 @@ public class EntryService {
     event.target("entry", current.dn(), title(def, current));
     if (self) assertSelf(user, def, form, current.dn());
 
-    Map<String, List<String>> values = validate(form, input, self ? FormValidator.Mode.SELF : FormValidator.Mode.UPDATE);
-    SchemaIndex index = schema.mergedIndex();
+    Map<String, List<String>> values = validate(def, form, input, self ? FormValidator.Mode.SELF : FormValidator.Mode.UPDATE);
+    SchemaIndex index = schema.mergedIndex(def.directory());
 
     // Rename first if the naming attribute's value changed.
     String targetDn = current.dn();
@@ -470,7 +491,7 @@ public class EntryService {
           targetDn = Dns.build(rdnNames[0], newRdnValues.get(0), Dns.parse(current.dn()).getParentString());
         } else {
           audit.requireWritable();
-          targetDn = directory.rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
+          targetDn = ldap(def).rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
         }
         event.detail("previousDn", current.dn()).target("entry", targetDn, title(def, current));
       }
@@ -529,7 +550,7 @@ public class EntryService {
     }
     if (!changes.isEmpty()) audit.requireWritable();
     // Permissive: value-level member changes skip values another change already added or removed.
-    directory.modifyValues(targetDn, changes);
+    ldap(def).modifyValues(targetDn, changes);
     // A save that changed nothing is not worth a line in the audit log.
     if (!recorded.isEmpty()) {
       List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
@@ -541,7 +562,7 @@ public class EntryService {
       // A password set through a form: the user's own change, or an administrator's reset.
       List<String> secrets = recorded.stream().map(AuditEvent.Change::attribute).filter(a -> HIDDEN.contains(a.toLowerCase())).toList();
       if (!secrets.isEmpty()) {
-        audit.event(self ? "auth.password-changed" : "auth.password-reset").by(user).definition(def.id()).target("user", targetDn, name)
+        audit.event(self ? "auth.password-changed" : "auth.password-reset").by(user).definition(def.id()).directory(directoryId(def)).target("user", targetDn, name)
             .detail("attributes", String.join(",", secrets)).success();
       }
     }
@@ -562,7 +583,7 @@ public class EntryService {
    */
   public ValueChange changeValues(SessionUser user, DirectoryDefinition def, String dn, FormField field, List<String> add, List<String> remove,
       boolean dnValued) {
-    AuditLog.Draft event = audit.event("entry.update").by(user).definition(def.id()).target("entry", dn, null);
+    AuditLog.Draft event = audit.event("entry.update").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
     return audited("update", event, () -> {
       if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
       require(user, def, AccessLevel.WRITE);
@@ -581,7 +602,7 @@ public class EntryService {
       toRemove = toRemove.stream().filter(v -> toAdd.stream().noneMatch(a -> same.test(a, v))).toList();
       if (!toAdd.isEmpty()) {
         List<OptionItem> resolved = field.dropdownWidget() && field.dropdown() instanceof DropdownSource.Ldap src && !field.allowsCustomValues()
-            ? options.lookup(src, toAdd) : null;
+            ? options.lookup(ldap(def), src, toAdd) : null;
         String error = FormValidator.validateField(field, toAdd, resolved);
         if (error != null) throw ApiException.badRequest("Some fields are invalid", Map.of(key, error));
       }
@@ -595,14 +616,14 @@ public class EntryService {
       AuditEvent.Change recorded = change(attr, toRemove, toAdd);
       event.changes(List.of(recorded)).detail("change", "values");
       audit.requireWritable();
-      directory.modifyValues(current.dn(), changes);
+      ldap(def).modifyValues(current.dn(), changes);
       event.alongside(changed(user, EntryChanged.UPDATE, def, form, current.dn(), null, name, List.of(recorded), false)).success();
       return new ValueChange(current.dn(), attr, toAdd, toRemove, partial);
     });
   }
 
   public void remove(SessionUser user, DirectoryDefinition def, String dn) {
-    AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).target("entry", dn, null);
+    AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
     audited("delete", event, () -> {
       require(user, def, AccessLevel.WRITE);
       FormDefinition form = form(def);
@@ -613,7 +634,7 @@ public class EntryService {
       String name = title(def, current);
       event.target("entry", current.dn(), name).changes(held);
       audit.requireWritable();
-      directory.delete(current.dn());
+      ldap(def).delete(current.dn());
       event.alongside(changed(user, EntryChanged.DELETE, def, form, current.dn(), null, name, held, false)).success();
       return null;
     });
@@ -664,7 +685,7 @@ public class EntryService {
       apiClient = c.id();
     }
     EntryChanged change = new EntryChanged(operation, def.id(), form.id(), dn, previousDn, name, List.copyOf(changes), self,
-        EntryChanged.Actor.of(user, apiClient));
+        EntryChanged.Actor.of(user, apiClient), directoryId(def));
     return () -> {
       try {
         events.publishEvent(change);
@@ -699,7 +720,7 @@ public class EntryService {
 
   private List<String> userAttributeValues(SessionUser user, String attribute) {
     if ("dn".equalsIgnoreCase(attribute)) return List.of(user.dn());
-    DirectoryEntry entry = directory.get(user.dn(), List.of(attribute));
+    DirectoryEntry entry = directories.forUser(user).ldap().get(user.dn(), List.of(attribute));
     return entry == null ? List.of() : entry.values(attribute);
   }
 
@@ -712,6 +733,9 @@ public class EntryService {
   public List<DirectoryEntry> findSelf(SessionUser user, DirectoryDefinition def, FormDefinition form) {
     SelfMatch match = def.selfMatch();
     if (match == null || match instanceof SelfMatch.None) return List.of();
+    // A user's own entries are in the directory they signed in to: a definition of another directory
+    // never holds them, whatever its entries' DNs or attribute values.
+    if (!directories.same(def.directory(), user.directory())) return List.of();
     if (match instanceof SelfMatch.Dn) {
       if (Dns.depthBelow(user.dn(), def.baseDn()) < 1) return List.of();
       try {
@@ -723,7 +747,7 @@ public class EntryService {
     }
     SelfMatch.Attribute am = (SelfMatch.Attribute) match;
     com.winllc.dsp.store.StoreData config = store.snapshot();
-    String problem = SelfMatchCheck.problem(def, config.definitions, config.forms, schema.mergedIndex());
+    String problem = SelfMatchCheck.problem(def, config.definitions, config.forms, schema.mergedIndex(def.directory()));
     if (problem != null) {
       throw ApiException.forbidden("Self service is turned off for \"" + def.name() + "\": " + problem + ". Ask an administrator.");
     }
@@ -733,7 +757,7 @@ public class EntryService {
     Filter filter = Filter.createANDFilter(
         baseFilter(def, form),
         Filter.createORFilter(values.stream().limit(20).map(v -> Filter.createEqualityFilter(am.entryAttribute(), v)).toList()));
-    List<DirectoryEntry> found = directory.search(def.baseDn(), scope(def.scope()), filter, byDn ? 50 : 2, returnAttributes(def, form))
+    List<DirectoryEntry> found = ldap(def).search(def.baseDn(), scope(def.scope()), filter, byDn ? 50 : 2, returnAttributes(def, form))
         .entries().stream()
         .filter(e -> !Dns.equal(e.dn(), def.baseDn()))
         .map(EntryService::sanitize)
@@ -755,6 +779,8 @@ public class EntryService {
     List<SelfEntryResult> results = new ArrayList<>();
     for (DirectoryDefinition def : store.snapshot().definitions) {
       if (def.selfMatch() == null || def.selfMatch() instanceof SelfMatch.None) continue;
+      // Only the user's own directory holds their entries (and only while it is enabled).
+      if (!directories.same(def.directory(), user.directory()) || !directories.available(def.directory())) continue;
       FormDefinition form = store.snapshot().forms.stream().filter(f -> f.id().equals(def.formId())).findFirst().orElse(null);
       if (form == null) continue;
       List<String> editable = def.readOnly() ? List.of()

@@ -3,7 +3,16 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, FolderTree, Pencil, Play } from 'lucide-react';
 import type { DirectoryDefinition, DirectoryEntry, SelfMatch } from '@dsp/shared';
 import { escapeFilterValue, firstAttr, isDnUnder, isValidDn, rdnValue, SchemaIndex, slugify } from '@dsp/shared';
-import { previewSearch, useAdminDefinitions, useAdminSchema, useDefinitionMutations, useForms, useServerInfo, type DefinitionInput } from '../../api/hooks';
+import {
+  previewSearch,
+  useAdminDefinitions,
+  useAdminSchema,
+  useDefinitionMutations,
+  useForms,
+  useLdapDirectories,
+  useServerInfo,
+  type DefinitionInput,
+} from '../../api/hooks';
 import { DnBrowser } from '../../components/DnBrowser';
 import { DEFINITION_ICONS } from '../../components/Layout';
 import { TagSelect } from '../../components/TagSelect';
@@ -44,6 +53,7 @@ export function DefinitionEditorPage() {
 function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition; index?: SchemaIndex }) {
   const forms = useForms();
   const info = useServerInfo();
+  const ldapDirectories = useLdapDirectories();
   const navigate = useNavigate();
   const toast = useToast();
   const { create, update } = useDefinitionMutations();
@@ -68,6 +78,10 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
   });
 
   const form = forms.data?.find((f) => f.id === d.formId);
+  // Several LDAP directories: the definition names one ("default" stands for the first). One: nothing to choose.
+  const directoryList = ldapDirectories.data?.directories ?? [];
+  const chooseDirectory = directoryList.length > 1;
+  const ldapDirectory = directoryList.find((x) => x.id === d.directory) ?? directoryList[0];
   const formAttrs = form?.fields.map((f) => f.attribute) ?? [];
   const allAttrs = useMemo(() => index?.schema.attributeTypes.map((a) => a.names[0]).sort((a, b) => a.localeCompare(b)) ?? [], [index]);
   const set = <K extends keyof DefinitionInput>(k: K, v: DefinitionInput[K]) => setD((s) => ({ ...s, [k]: v }));
@@ -101,6 +115,7 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
           scope: d.scope,
           filter: d.filter?.trim() || defaultFilter,
           attributes: [d.titleAttribute, ...d.listAttributes],
+          directory: ldapDirectory?.id,
         }),
       );
     } catch (e) {
@@ -112,7 +127,12 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
   };
 
   const save = () => {
-    const payload: DefinitionInput = { ...d, filter: d.filter?.trim() || undefined, description: d.description || undefined };
+    const payload: DefinitionInput = {
+      ...d,
+      filter: d.filter?.trim() || undefined,
+      description: d.description || undefined,
+      directory: chooseDirectory ? ldapDirectory?.id : d.directory,
+    };
     const onSuccess = (r: DirectoryDefinition) => {
       toast.success(`“${r.name}” saved`);
       if (!existing) navigate(`/admin/definitions/${r.id}`, { replace: true });
@@ -217,6 +237,38 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
 
       <Card title="Namespace" subtitle="All reads and writes through this definition are confined to entries below the base DN that match the filter.">
         <div className="form-grid">
+          {chooseDirectory && (
+            <div className="span-2">
+              <FormRow
+                label="LDAP directory"
+                htmlFor="def-directory"
+                hint={ldapDirectory ? `Servers: ${ldapDirectory.servers.join(', ')} · base DN ${ldapDirectory.baseDn}` : undefined}
+              >
+                <select
+                  id="def-directory"
+                  className="input select"
+                  value={ldapDirectory?.id ?? ''}
+                  onChange={(e) => {
+                    const next = directoryList.find((x) => x.id === e.target.value);
+                    setD((s) => {
+                      // A base DN still at the old directory's default follows the change.
+                      const prev = directoryList.find((x) => x.id === s.directory) ?? directoryList[0];
+                      const atDefault = !s.baseDn || (prev && s.baseDn.toLowerCase() === prev.baseDn.toLowerCase());
+                      const baseDn = atDefault && next ? next.baseDn : s.baseDn;
+                      return { ...s, directory: e.target.value, baseDn, createContainers: atDefault ? [baseDn] : s.createContainers };
+                    });
+                  }}
+                >
+                  {directoryList.map((x) => (
+                    <option key={x.id} value={x.id} disabled={!x.enabled && x.id !== ldapDirectory?.id}>
+                      {x.name}
+                      {x.enabled ? '' : ' (not licensed)'}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
+            </div>
+          )}
           <div className="span-2">
             <FormRow label="Base DN" htmlFor="def-base" required>
               <div className="input-group">
@@ -389,6 +441,8 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
         key={browsing ?? 'closed'}
         open={!!browsing}
         initial={d.baseDn}
+        directory={chooseDirectory ? ldapDirectory?.id : undefined}
+        rootDn={chooseDirectory ? ldapDirectory?.baseDn : undefined}
         onClose={() => setBrowsing(null)}
         onSelect={(dn) => {
           if (browsing === 'base') setD((s) => ({ ...s, baseDn: dn, createContainers: s.createContainers.length ? s.createContainers : [dn] }));

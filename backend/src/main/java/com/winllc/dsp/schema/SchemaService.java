@@ -1,6 +1,6 @@
 package com.winllc.dsp.schema;
 
-import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.ldap.SchemaMapper;
 import com.winllc.dsp.model.AttributeTypeDef;
 import com.winllc.dsp.model.CustomSchema;
@@ -12,60 +12,90 @@ import com.winllc.dsp.web.ApiException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Pulls the directory's schema, keeps portal-side custom definitions and merges the two
- * (custom definitions override server ones with the same OID or name).
+ * Pulls each directory's schema, keeps portal-side custom definitions (shared by every directory)
+ * and merges the two (custom definitions override server ones with the same OID or name). Methods
+ * without a directory work on the primary one.
  */
 @Service
 public class SchemaService {
   private static final Logger log = LoggerFactory.getLogger(SchemaService.class);
 
-  private final LdapDirectory directory;
+  private final Directories directories;
   private final ConfigStore store;
-  private volatile Cached cached;
+  private final Map<String, Cached> cached = new ConcurrentHashMap<>();
 
   private record Cached(StoreData stamp, SchemaIndex index) {}
 
-  public SchemaService(LdapDirectory directory, ConfigStore store) {
-    this.directory = directory;
+  public SchemaService(Directories directories, ConfigStore store) {
+    this.directories = directories;
     this.store = store;
   }
 
-  /** Read the schema from the directory and cache it. */
+  /** Read the primary directory's schema from the server and cache it. */
   public SchemaSnapshot refresh() {
-    SchemaSnapshot schema = directory.readSchema();
+    return refresh(null);
+  }
+
+  /** Read a directory's schema from its server and cache it (the primary one's in {@code schemaCache}). */
+  public SchemaSnapshot refresh(String directoryId) {
+    Directories.Directory dir = directories.require(directoryId);
+    SchemaSnapshot schema = dir.ldap().readSchema();
     store.update(d -> {
-      d.schemaCache = schema;
+      if (dir.primary()) {
+        d.schemaCache = schema;
+      } else {
+        if (d.schemaCaches == null) d.schemaCaches = new java.util.LinkedHashMap<>();
+        d.schemaCaches.put(dir.id(), schema);
+      }
       return null;
     });
     return schema;
   }
 
-  public SchemaSnapshot serverSchema() {
-    if (store.snapshot().schemaCache == null) {
-      try {
-        refresh();
-      } catch (RuntimeException e) {
-        log.warn("Could not read the schema from the directory: {}", e.getMessage());
-      }
-    }
-    return store.snapshot().schemaCache;
+  private static SchemaSnapshot cachedSchema(StoreData d, Directories.Directory dir) {
+    if (dir.primary()) return d.schemaCache;
+    return d.schemaCaches == null ? null : d.schemaCaches.get(dir.id());
   }
 
-  /** Merged (server + custom) schema index; rebuilt only when the store changes. */
+  public SchemaSnapshot serverSchema() {
+    return serverSchema(null);
+  }
+
+  public SchemaSnapshot serverSchema(String directoryId) {
+    Directories.Directory dir = directories.find(directoryId).orElse(directories.primary());
+    if (cachedSchema(store.snapshot(), dir) == null && directories.enabled(dir)) {
+      try {
+        refresh(dir.id());
+      } catch (RuntimeException e) {
+        log.warn("Could not read the schema from directory {}: {}", dir.id(), e.getMessage());
+      }
+    }
+    return cachedSchema(store.snapshot(), dir);
+  }
+
+  /** The primary directory's merged (server + custom) schema index. */
   public SchemaIndex mergedIndex() {
-    serverSchema();
+    return mergedIndex(null);
+  }
+
+  /** A directory's merged (server + custom) schema index; rebuilt only when the store changes. */
+  public SchemaIndex mergedIndex(String directoryId) {
+    Directories.Directory dir = directories.find(directoryId).orElse(directories.primary());
+    serverSchema(dir.id());
     StoreData snap = store.snapshot();
-    Cached c = cached;
+    Cached c = cached.get(dir.id());
     if (c == null || c.stamp() != snap) {
-      c = new Cached(snap, new SchemaIndex(merge(snap.schemaCache, snap.customSchema)));
-      cached = c;
+      c = new Cached(snap, new SchemaIndex(merge(cachedSchema(snap, dir), snap.customSchema)));
+      cached.put(dir.id(), c);
     }
     return c.index();
   }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FilePlus2, KeyRound, LayoutList, Pencil, Trash2 } from 'lucide-react';
-import { useAdminDefinitions, useDefinitionMutations, useForms, useGrants } from '../../api/hooks';
+import { useAdminDefinitions, useDefinitionMutations, useForms, useGrants, useLdapDirectories } from '../../api/hooks';
 import { DefinitionIcon } from '../../components/Layout';
 import { Badge, Button, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, useToast } from '../../components/ui';
 
@@ -9,6 +9,11 @@ export function DefinitionsPage() {
   const defs = useAdminDefinitions();
   const forms = useForms();
   const grants = useGrants();
+  const ldap = useLdapDirectories();
+  // The LDAP directory column only when there are several to tell apart.
+  const directoryList = ldap.data?.directories ?? [];
+  const showDirectory = directoryList.length > 1;
+  const directoryOf = (id?: string) => directoryList.find((x) => x.id === id) ?? (!id || id === 'default' ? directoryList[0] : undefined);
   const { remove } = useDefinitionMutations();
   const navigate = useNavigate();
   const toast = useToast();
@@ -39,6 +44,7 @@ export function DefinitionsPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                {showDirectory && <th>LDAP directory</th>}
                 <th>Namespace</th>
                 <th>Form</th>
                 <th>Mode</th>
@@ -62,6 +68,24 @@ export function DefinitionsPage() {
                         </div>
                       </div>
                     </td>
+                    {showDirectory && (
+                      <td>
+                        {(() => {
+                          const x = directoryOf(d.directory);
+                          if (!x) return <Badge tone="danger">{d.directory} (not configured)</Badge>;
+                          return (
+                            <>
+                              {x.name}
+                              {!x.enabled && (
+                                <div>
+                                  <Badge tone="warning">Not licensed</Badge>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </td>
+                    )}
                     <td>
                       <code className="small">{d.baseDn}</code>
                       <div className="muted small">

@@ -162,6 +162,9 @@ export function Layout() {
               <NavItem to="/admin/integrations" icon={<Workflow size={18} />}>
                 Integrations
               </NavItem>
+              <NavItem to="/admin/ldap-directories" icon={<Server size={18} />}>
+                LDAP directories
+              </NavItem>
               {licenseMenuVisible(license.data) && (
                 <NavItem to={LICENSE_PATH} icon={<BadgeCheck size={18} />}>
                   License

@@ -239,6 +239,13 @@ spec:
               mountPath: /etc/dsp/ldap
               readOnly: true
             {{- end }}
+            {{- range $v.directories }}
+            {{- if include "dsp.directorySecretSet" . }}
+            - name: directory-{{ .id }}-bind-password
+              mountPath: /etc/dsp/directories/{{ .id }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
             {{- with $v.api.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -361,6 +368,17 @@ spec:
             items:
               - key: {{ ternary $v.ldap.bindPassword.existingSecretKey "ldap-bind-password" (not (empty $v.ldap.bindPassword.existingSecret)) }}
                 path: bind-password
+        {{- end }}
+        {{- range $v.directories }}
+        {{- if include "dsp.directorySecretSet" . }}
+        - name: directory-{{ .id }}-bind-password
+          secret:
+            secretName: {{ .bindPassword.existingSecret | default (include "dsp.fullname" $) }}
+            defaultMode: 0440
+            items:
+              - key: {{ ternary (.bindPassword.existingSecretKey | default "bind-password") (printf "directory-%s-bind-password" .id) (not (empty .bindPassword.existingSecret)) }}
+                path: bind-password
+        {{- end }}
         {{- end }}
         {{- if $truststore.existingSecret }}
         - name: truststore

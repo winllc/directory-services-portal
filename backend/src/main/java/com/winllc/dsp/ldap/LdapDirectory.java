@@ -6,6 +6,7 @@ import com.unboundid.ldap.sdk.BindRequest;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.Entry;
 import com.unboundid.ldap.sdk.ExtendedResult;
+import com.unboundid.ldap.sdk.FailoverServerSet;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPConnection;
 import com.unboundid.ldap.sdk.LDAPConnectionOptions;
@@ -17,6 +18,7 @@ import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.PostConnectProcessor;
 import com.unboundid.ldap.sdk.RDN;
 import com.unboundid.ldap.sdk.ResultCode;
+import com.unboundid.ldap.sdk.RoundRobinServerSet;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResult;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -68,8 +70,25 @@ public class LdapDirectory implements AutoCloseable {
   private static final Set<String> BINARY_ATTRIBUTES =
       Set.of("jpegphoto", "thumbnailphoto", "usercertificate", "usercertificate;binary", "objectguid", "objectsid", "photo");
 
-  public record Settings(
-      String url, String bindDn, String bindPassword, boolean startTls, boolean tlsRejectUnauthorized, int timeoutMs, int poolSize) {}
+  /**
+   * Connection settings. {@code urls}: one or more servers holding the same data, tried in order
+   * ({@link FailoverServerSet}) or in turn ({@code roundRobin}, {@link RoundRobinServerSet}); all
+   * use the same scheme's TLS settings. {@code id} names the directory in metrics and the pool.
+   */
+  public record Settings(String id, List<String> urls, boolean roundRobin, String bindDn, String bindPassword, boolean startTls,
+      boolean tlsRejectUnauthorized, int timeoutMs, int poolSize) {
+
+    /** One server (the settings of the first version). */
+    public Settings(String url, String bindDn, String bindPassword, boolean startTls, boolean tlsRejectUnauthorized, int timeoutMs, int poolSize) {
+      this("default", List.of(url), false, bindDn, bindPassword, startTls, tlsRejectUnauthorized, timeoutMs, poolSize);
+    }
+
+    @Override
+    public String toString() {
+      // Never the password.
+      return "Settings[" + id + ", " + urls + "]";
+    }
+  }
 
   public record Result(List<DirectoryEntry> entries, boolean truncated) {}
 
@@ -77,9 +96,12 @@ public class LdapDirectory implements AutoCloseable {
   public record ScanResult(int entries, boolean truncated) {}
 
   private static final int SCAN_PAGE_SIZE = 500;
+  private static final long FAILOVER_CONNECTION_AGE_MILLIS = 15 * 60_000L;
 
   private final Settings settings;
   private final ServerSet serverSet;
+  /** The server the last connection was made to ("host:port"), for the administrators' view. */
+  private volatile String lastServer;
   private final SSLContext startTlsContext;
   private final MeterRegistry meters;
   private volatile LDAPConnectionPool pool;
@@ -93,29 +115,68 @@ public class LdapDirectory implements AutoCloseable {
     this.meters = meters;
     if (meters != null) {
       Gauge.builder("ens.dsp.ldap.pool.available", this, d -> d.pool == null ? 0 : Math.max(0, d.pool.getCurrentAvailableConnections()))
-          .description("Idle connections in the LDAP connection pool").register(meters);
+          .description("Idle connections in the LDAP connection pool").tag("directory", settings.id()).register(meters);
     }
+    if (settings.urls() == null || settings.urls().isEmpty()) throw new IllegalArgumentException("No LDAP server URL for directory " + settings.id());
     try {
-      LDAPURL url = new LDAPURL(settings.url());
-      boolean ldaps = "ldaps".equalsIgnoreCase(url.getScheme());
+      List<LDAPURL> urls = new ArrayList<>();
+      for (String u : settings.urls()) urls.add(new LDAPURL(u.trim()));
       SSLUtil ssl = new SSLUtil(settings.tlsRejectUnauthorized() ? JVMDefaultTrustManager.getInstance() : new TrustAllTrustManager());
-
       LDAPConnectionOptions options = new LDAPConnectionOptions();
       options.setConnectTimeoutMillis(settings.timeoutMs());
       options.setResponseTimeoutMillis(settings.timeoutMs());
-      if ((ldaps || settings.startTls()) && settings.tlsRejectUnauthorized()) {
+      boolean anyLdaps = urls.stream().anyMatch(u -> "ldaps".equalsIgnoreCase(u.getScheme()));
+      if ((anyLdaps || settings.startTls()) && settings.tlsRejectUnauthorized()) {
         options.setSSLSocketVerifier(new HostNameSSLSocketVerifier(true));
       }
-      SocketFactory socketFactory = ldaps ? ssl.createSSLSocketFactory() : SocketFactory.getDefault();
-      this.serverSet = new SingleServerSet(url.getHost(), url.getPort(), socketFactory, options);
-      this.startTlsContext = settings.startTls() && !ldaps ? ssl.createSSLContext() : null;
+      List<ServerSet> servers = new ArrayList<>();
+      for (LDAPURL url : urls) {
+        boolean ldaps = "ldaps".equalsIgnoreCase(url.getScheme());
+        SocketFactory socketFactory = ldaps ? ssl.createSSLSocketFactory() : SocketFactory.getDefault();
+        servers.add(new SingleServerSet(url.getHost(), url.getPort(), socketFactory, options));
+      }
+      if (servers.size() == 1) {
+        this.serverSet = servers.get(0);
+      } else if (settings.roundRobin()) {
+        String[] hosts = urls.stream().map(LDAPURL::getHost).toArray(String[]::new);
+        int[] ports = urls.stream().mapToInt(LDAPURL::getPort).toArray();
+        // One socket factory for all: round robin needs a single scheme (checked at startup).
+        boolean ldaps = "ldaps".equalsIgnoreCase(urls.get(0).getScheme());
+        this.serverSet = new RoundRobinServerSet(hosts, ports, ldaps ? ssl.createSSLSocketFactory() : SocketFactory.getDefault(), options);
+      } else {
+        FailoverServerSet failover = new FailoverServerSet(servers.toArray(ServerSet[]::new));
+        // Tried in order for every new connection, so the first server is used again once it is back.
+        failover.setReOrderOnFailover(false);
+        // Pooled connections to a later server are closed after a while, so the pool goes back to
+        // the first one once it answers again.
+        failover.setMaxFailoverConnectionAgeMillis(FAILOVER_CONNECTION_AGE_MILLIS);
+        this.serverSet = failover;
+      }
+      boolean startTls = settings.startTls() && urls.stream().noneMatch(u -> "ldaps".equalsIgnoreCase(u.getScheme()));
+      this.startTlsContext = startTls ? ssl.createSSLContext() : null;
     } catch (LDAPException | GeneralSecurityException e) {
-      throw new IllegalArgumentException("Invalid LDAP connection settings for " + settings.url() + ": " + e.getMessage(), e);
+      throw new IllegalArgumentException("Invalid LDAP connection settings for directory " + settings.id() + " (" + settings.urls() + "): "
+          + e.getMessage(), e);
     }
   }
 
+  public String id() {
+    return settings.id();
+  }
+
+  /** The configured servers, in order. */
+  public List<String> urls() {
+    return settings.urls();
+  }
+
+  /** The server ("host:port") the most recent connection went to; null before the first one. */
+  public String currentServer() {
+    return lastServer;
+  }
+
+  /** The first configured server. */
   public String url() {
-    return settings.url();
+    return settings.urls().get(0);
   }
 
   // ---------------------------------------------------------------------------
@@ -132,9 +193,21 @@ public class LdapDirectory implements AutoCloseable {
               ? null
               : new SimpleBindRequest(settings.bindDn(), settings.bindPassword());
           PostConnectProcessor tls = startTlsContext == null ? null : new StartTLSPostConnectProcessor(startTlsContext);
-          LDAPConnectionPool created = new LDAPConnectionPool(serverSet, bind, 1, Math.max(1, settings.poolSize()), tls);
+          PostConnectProcessor track = new PostConnectProcessor() {
+            @Override
+            public void processPreAuthenticatedConnection(LDAPConnection connection) throws LDAPException {
+              noteServer(connection);
+              if (tls != null) tls.processPreAuthenticatedConnection(connection);
+            }
+
+            @Override
+            public void processPostAuthenticatedConnection(LDAPConnection connection) throws LDAPException {
+              if (tls != null) tls.processPostAuthenticatedConnection(connection);
+            }
+          };
+          LDAPConnectionPool created = new LDAPConnectionPool(serverSet, bind, 1, Math.max(1, settings.poolSize()), track);
           created.setRetryFailedOperationsDueToInvalidConnections(true);
-          created.setConnectionPoolName("portal");
+          created.setConnectionPoolName("portal-" + settings.id());
           pool = created;
         } catch (LDAPException e) {
           throw unavailable(e);
@@ -142,6 +215,10 @@ public class LdapDirectory implements AutoCloseable {
       }
       return pool;
     }
+  }
+
+  private void noteServer(LDAPConnection connection) {
+    if (connection.getConnectedAddress() != null) lastServer = connection.getConnectedAddress() + ":" + connection.getConnectedPort();
   }
 
   private <T> T timed(String operation, Supplier<T> call) {
@@ -154,6 +231,7 @@ public class LdapDirectory implements AutoCloseable {
       return result;
     } finally {
       Timer.builder("ens.dsp.ldap.operation").description("LDAP operations").tag("operation", operation).tag("outcome", outcome)
+          .tag("directory", settings.id())
           .register(meters).record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
     }
   }
@@ -373,6 +451,7 @@ public class LdapDirectory implements AutoCloseable {
       // Never allow empty passwords: servers treat them as unauthenticated (anonymous) binds.
       if (dn == null || dn.isBlank() || password == null || password.isEmpty()) return false;
       try (LDAPConnection connection = serverSet.getConnection()) {
+        noteServer(connection);
         if (startTlsContext != null) {
           ExtendedResult r = connection.processExtendedOperation(new StartTLSExtendedRequest(startTlsContext));
           if (r.getResultCode() != ResultCode.SUCCESS) throw new LDAPException(r);
@@ -436,7 +515,7 @@ public class LdapDirectory implements AutoCloseable {
   public void close() {
     if (pool != null) {
       pool.close();
-      log.debug("Closed LDAP connection pool");
+      log.debug("Closed the LDAP connection pool of directory {}", settings.id());
     }
   }
 }

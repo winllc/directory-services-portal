@@ -4,9 +4,9 @@ import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditLog;
-import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.config.DirectoryProperties;
 import com.winllc.dsp.ldap.Dns;
-import com.winllc.dsp.ldap.LdapDirectory;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.DirectoryEntry;
 import com.winllc.dsp.model.PermissionGrant;
@@ -39,15 +39,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminPermissionsController {
   private final ConfigStore store;
   private final EntryService entries;
-  private final LdapDirectory directory;
-  private final PortalProperties props;
+  private final Directories directories;
   private final AuditLog audit;
 
-  public AdminPermissionsController(ConfigStore store, EntryService entries, LdapDirectory directory, PortalProperties props, AuditLog audit) {
+  public AdminPermissionsController(ConfigStore store, EntryService entries, Directories directories, AuditLog audit) {
     this.store = store;
     this.entries = entries;
-    this.directory = directory;
-    this.props = props;
+    this.directories = directories;
     this.audit = audit;
   }
 
@@ -66,11 +64,18 @@ public class AdminPermissionsController {
     if (def.readOnly() && "write".equals(in.access())) {
       throw ApiException.badRequest("Read-only directories cannot grant write access", Map.of("access", "Read only directory"));
     }
+    // The subject's directory: as given, else the definition's.
+    String subjectDirectory = in.directory() == null || in.directory().isBlank() ? def.directory() : in.directory();
+    if (directories.find(subjectDirectory).isEmpty()) {
+      throw ApiException.badRequest("Unknown LDAP directory", Map.of("directory", "No directory \"" + subjectDirectory + "\" is configured"));
+    }
+    String dirId = directories.canonicalId(subjectDirectory);
     AtomicReference<PermissionGrant> previous = new AtomicReference<>();
     PermissionGrant saved = store.update(d -> {
       for (int i = 0; i < d.grants.size(); i++) {
         PermissionGrant g = d.grants.get(i);
-        if (g.definitionId().equals(in.definitionId()) && g.subjectType().equals(in.subjectType()) && g.subject().equalsIgnoreCase(in.subject())) {
+        if (g.definitionId().equals(in.definitionId()) && g.subjectType().equals(in.subjectType()) && g.subject().equalsIgnoreCase(in.subject())
+            && directories.same(g.directory() != null ? g.directory() : def.directory(), dirId)) {
           PermissionGrant next = g.withAccess(in.access(), in.subjectLabel() != null ? in.subjectLabel() : g.subjectLabel());
           previous.set(g);
           d.grants.set(i, next);
@@ -78,7 +83,7 @@ public class AdminPermissionsController {
         }
       }
       PermissionGrant g = new PermissionGrant("grant-" + UUID.randomUUID(), in.definitionId(), in.subjectType(), in.subject().trim(),
-          in.subjectLabel(), in.access(), Instant.now().toString());
+          in.subjectLabel(), in.access(), Instant.now().toString(), dirId);
       d.grants.add(g);
       return g;
     });
@@ -106,36 +111,43 @@ public class AdminPermissionsController {
         .definition(definitionId)
         .detail("subjectType", g.subjectType())
         .detail("subject", g.subject())
+        .directory(g.directory())
         .changes(audit.diff(before, after, Set.of("id", "createdAt", "definitionId")))
         .success();
   }
 
-  private Filter userFilter(String usernameValue) {
+  private static Filter userFilter(DirectoryProperties c, String usernameValue) {
     try {
-      return Filter.create(props.getUserFilter().replace("{{username}}", usernameValue));
+      return Filter.create(c.getUserFilter().replace("{{username}}", usernameValue));
     } catch (LDAPException e) {
       throw new IllegalStateException("Invalid user filter template", e);
     }
   }
 
-  /** Search users (by login name, name or e-mail) and groups (by cn). */
+  /**
+   * Search users (by login name, name or e-mail) and groups (by cn) in one LDAP directory
+   * ({@code directory}; none: the primary one).
+   */
   @GetMapping("/subjects")
-  public List<SubjectSearchResult> subjects(@RequestParam(required = false) String q, @RequestParam(required = false) String type) {
+  public List<SubjectSearchResult> subjects(@RequestParam(required = false) String q, @RequestParam(required = false) String type,
+      @RequestParam(required = false) String directory) {
+    Directories.Directory dir = directories.require(directory);
+    DirectoryProperties c = dir.config();
     String query = q == null ? "" : q.trim();
     if (query.length() > 100) query = query.substring(0, 100);
     String t = Filter.encodeValue(query);
     List<SubjectSearchResult> out = new ArrayList<>();
 
     if (!"group".equals(type)) {
-      String ua = props.getUsernameAttribute();
+      String ua = c.getUsernameAttribute();
       Filter filter = query.isEmpty()
-          ? userFilter("*")
+          ? userFilter(c, "*")
           : Filter.createORFilter(
-              userFilter("*" + t + "*"),
-              Filter.createANDFilter(userFilter("*"), Filter.createORFilter(
+              userFilter(c, "*" + t + "*"),
+              Filter.createANDFilter(userFilter(c, "*"), Filter.createORFilter(
                   Filter.createSubstringFilter("cn", null, new String[] {query}, null),
                   Filter.createSubstringFilter("mail", null, new String[] {query}, null))));
-      for (DirectoryEntry e : directory.search(props.effectiveUserSearchBase(), SearchScope.SUB, filter, 25, List.of(ua, "cn", "displayName")).entries()) {
+      for (DirectoryEntry e : dir.ldap().search(c.effectiveUserSearchBase(), SearchScope.SUB, filter, 25, List.of(ua, "cn", "displayName")).entries()) {
         String id = e.first(ua);
         if (id == null) continue;
         String name = e.first("displayName") != null ? e.first("displayName") : e.first("cn") != null ? e.first("cn") : id;
@@ -149,7 +161,7 @@ public class AdminPermissionsController {
           Filter.createEqualityFilter("objectClass", "group"),
           Filter.createEqualityFilter("objectClass", "posixGroup"))));
       if (!query.isEmpty()) parts.add(Filter.createSubstringFilter("cn", null, new String[] {query}, null));
-      for (DirectoryEntry e : directory.search(props.effectiveGroupSearchBase(), SearchScope.SUB, Filter.createANDFilter(parts), 25, List.of("cn")).entries()) {
+      for (DirectoryEntry e : dir.ldap().search(c.effectiveGroupSearchBase(), SearchScope.SUB, Filter.createANDFilter(parts), 25, List.of("cn")).entries()) {
         out.add(new SubjectSearchResult("group", e.dn(), e.first("cn") != null ? e.first("cn") : Dns.rdnValue(e.dn()), e.dn()));
       }
     }

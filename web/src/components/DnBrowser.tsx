@@ -4,13 +4,31 @@ import { parentDn } from '@dsp/shared';
 import { useBrowse, useServerInfo } from '../api/hooks';
 import { Button, ErrorAlert, Modal, Spinner } from './ui';
 
-/** Modal that lets administrators walk the directory tree and pick a DN. */
-export function DnBrowser({ open, initial, onSelect, onClose }: { open: boolean; initial?: string; onSelect: (dn: string) => void; onClose: () => void }) {
+/**
+ * Modal that lets administrators walk the directory tree and pick a DN. `directory`: the LDAP
+ * directory to browse (none: the first), whose base DN is `rootDn` (none: the signed-in user's).
+ */
+export function DnBrowser({
+  open,
+  initial,
+  onSelect,
+  onClose,
+  directory,
+  rootDn,
+}: {
+  open: boolean;
+  initial?: string;
+  onSelect: (dn: string) => void;
+  onClose: () => void;
+  directory?: string;
+  rootDn?: string;
+}) {
   const info = useServerInfo();
+  const root = rootDn ?? info.data?.baseDn;
   const [base, setBase] = useState(initial || '');
-  const current = base || info.data?.baseDn || '';
-  const q = useBrowse(current, open && !!current);
-  const atRoot = !!info.data?.baseDn && current.toLowerCase() === info.data.baseDn.toLowerCase();
+  const current = base || root || '';
+  const q = useBrowse(current, open && !!current, directory);
+  const atRoot = !!root && current.toLowerCase() === root.toLowerCase();
 
   return (
     <Modal

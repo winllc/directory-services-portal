@@ -10,6 +10,7 @@ import java.util.List;
  * (secrets redacted). Webhooks are sent from these. It is published with the change's audit event
  * as that is stored: with the shared database inside the event's transaction (listeners that write
  * to the database keep their writes in a savepoint), else just after the event is written.
+ * {@code directory} is the id of the LDAP directory the entry is in (the definition's).
  */
 public record EntryChanged(
     String operation,
@@ -20,7 +21,8 @@ public record EntryChanged(
     String name,
     List<AuditEvent.Change> changes,
     boolean self,
-    Actor actor) {
+    Actor actor,
+    String directory) {
 
   public static final String CREATE = "create";
   public static final String UPDATE = "update";
@@ -31,15 +33,20 @@ public record EntryChanged(
    * API client when the change came through the integration API. Without a user (an import run
    * by the system) username and auth method are null.
    */
-  public record Actor(String username, String authMethod, String apiClientId) {
+  public record Actor(String username, String authMethod, String apiClientId, String directory) {
+
+    /** Without a directory: the user of the primary one (or no user). */
+    public Actor(String username, String authMethod, String apiClientId) {
+      this(username, authMethod, apiClientId, null);
+    }
 
     /** The actor for a change made by {@code user} (may be null), through {@code apiClientId} (may be null). */
     public static Actor of(SessionUser user, String apiClientId) {
-      return user == null ? new Actor(null, null, apiClientId) : from(user, apiClientId);
+      return user == null ? new Actor(null, null, apiClientId, null) : from(user, apiClientId);
     }
 
     private static Actor from(SessionUser user, String apiClientId) {
-      return new Actor(user.username(), user.authMethod(), apiClientId);
+      return new Actor(user.username(), user.authMethod(), apiClientId, user.directory());
     }
   }
 }

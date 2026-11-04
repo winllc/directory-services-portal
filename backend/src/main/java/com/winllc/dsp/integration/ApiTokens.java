@@ -42,16 +42,23 @@ public class ApiTokens {
   /** As stored: {@code hash} is the SHA-256 (hex) of the whole token; the token itself is never kept. */
   public record Token(String id, String name, String hash, String prefix, List<String> scopes, List<String> definitionIds,
       String createdBy, String createdByDn, String createdAt, String expiresAt, Integer rateLimitPerMinute, String lastUsedAt,
-      String revokedAt, String revokedBy) {
+      String revokedAt, String revokedBy, String createdByDirectory) {
+
+    /** {@code createdByDirectory}: the creator's directory (null for tokens of earlier versions: the primary one). */
+    public Token(String id, String name, String hash, String prefix, List<String> scopes, List<String> definitionIds, String createdBy,
+        String createdByDn, String createdAt, String expiresAt, Integer rateLimitPerMinute, String lastUsedAt, String revokedAt, String revokedBy) {
+      this(id, name, hash, prefix, scopes, definitionIds, createdBy, createdByDn, createdAt, expiresAt, rateLimitPerMinute, lastUsedAt, revokedAt,
+          revokedBy, null);
+    }
 
     Token used(String at) {
       return new Token(id, name, hash, prefix, scopes, definitionIds, createdBy, createdByDn, createdAt, expiresAt, rateLimitPerMinute, at,
-          revokedAt, revokedBy);
+          revokedAt, revokedBy, createdByDirectory);
     }
 
     Token revoked(String at, String by) {
       return new Token(id, name, hash, prefix, scopes, definitionIds, createdBy, createdByDn, createdAt, expiresAt, rateLimitPerMinute,
-          lastUsedAt, at, by);
+          lastUsedAt, at, by, createdByDirectory);
     }
 
     boolean expired(Instant now) {
@@ -102,13 +109,19 @@ public class ApiTokens {
 
   public Created create(String name, List<String> scopes, List<String> definitionIds, Duration lifetime, Integer rateLimit, String createdBy,
       String createdByDn) throws IOException {
+    return create(name, scopes, definitionIds, lifetime, rateLimit, createdBy, createdByDn, null);
+  }
+
+  /** A token acting as its creator: {@code createdBy} / {@code createdByDn} in {@code createdByDirectory}. */
+  public Created create(String name, List<String> scopes, List<String> definitionIds, Duration lifetime, Integer rateLimit, String createdBy,
+      String createdByDn, String createdByDirectory) throws IOException {
     byte[] bytes = new byte[32];
     RANDOM.nextBytes(bytes);
     String secret = PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     Instant now = clock.instant().truncatedTo(ChronoUnit.MILLIS);
     Token t = new Token(UUID.randomUUID().toString(), name, AuditJson.sha256Hex(secret), secret.substring(0, PREFIX.length() + 6),
         List.copyOf(scopes), List.copyOf(definitionIds), createdBy, createdByDn, now.toString(), now.plus(lifetime).toString(), rateLimit,
-        null, null, null);
+        null, null, null, createdByDirectory);
     tokens.change(list -> list.add(t));
     return new Created(view(t, now), secret);
   }

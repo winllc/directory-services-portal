@@ -331,7 +331,13 @@ directory:
   mode: ldap
 
 ldap:
+  # One or more servers of the directory (replicas): a list, or a string separated by commas or
+  # spaces. They are tried in order (failover); serverSelection round-robin takes them in turn.
   url: ldaps://ldap.example.com:636
+  # failover or round-robin (every URL must then use the same scheme).
+  serverSelection: failover
+  # The directory's display name (DIRECTORY_NAME; its id is "default").
+  name: ""
   startTls: false
   # Verify the LDAP server's certificate (against the JVM trust store, or ldap.truststore).
   tlsRejectUnauthorized: true
@@ -368,6 +374,37 @@ admin:
   users: []
   groups:
     - cn=directory-admins,ou=groups,dc=example,dc=com
+
+# Several LDAP directories (license feature multi-directory; without it only the first is used),
+# rendered as PORTAL_DIRECTORIES_<n>_*. When set, ldap.* (except truststore) and admin.* are not
+# used. Each entry: id (required: 1-32 of a-z 0-9 - _, unique; "default" keeps definitions saved
+# with the ldap.* settings working), name, urls (a list or a string; failover in order),
+# serverSelection, bindDn, bindPassword {value | existingSecret + existingSecretKey} (mounted as a
+# file), startTls, tlsRejectUnauthorized, timeoutMs, poolSize, baseDn, userSearchBase, userFilter,
+# usernameAttribute, groupSearchBase, groupFilter, admin {users, groups}, x509 / sso (whether
+# certificate sign-in and single sign-on look for users there; default true), x509UserFilter,
+# ssoUserFilter. Unset settings take the API's defaults (as the ldap.* ones).
+directories: []
+# - id: default
+#   name: Corporate
+#   urls: [ldaps://dc1.corp.example.com:636, ldaps://dc2.corp.example.com:636]
+#   bindDn: CN=svc-portal,OU=Service,DC=corp,DC=example,DC=com
+#   bindPassword:
+#     existingSecret: corp-ldap
+#     existingSecretKey: bind-password
+#   baseDn: DC=corp,DC=example,DC=com
+#   userFilter: (&(objectClass=user)(sAMAccountName={{username}}))
+#   usernameAttribute: sAMAccountName
+#   admin:
+#     groups: [CN=Portal Admins,OU=Groups,DC=corp,DC=example,DC=com]
+# - id: enclave-b
+#   name: Enclave B
+#   urls: [ldaps://ldap1.b.example.com, ldaps://ldap2.b.example.com]
+#   bindDn: cn=portal,ou=system,o=enclave-b
+#   bindPassword:
+#     value: change-me
+#   baseDn: o=enclave-b
+#   x509: false
 
 # --- Server (env.template: Server) ------------------------------------------------------------
 server:

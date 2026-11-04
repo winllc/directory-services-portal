@@ -103,6 +103,31 @@ class SharedStoreTest extends ApiTestSupport {
         "%\"action\":\"" + action + "\"%", "%" + text + "%");
   }
 
+  /**
+   * A configuration document written before there were several directories (version 1): the next
+   * replica to start gives its definitions and grants the directory "default" and writes version 2
+   * back to the database, once.
+   */
+  @Test
+  void theSharedConfigurationOfAnEarlierVersionIsUpgradedOnce() throws Exception {
+    String v1 = "{\"version\":1,\"forms\":[],\"definitions\":[{\"id\":\"def-old\",\"name\":\"Old\",\"slug\":\"old\",\"formId\":\"f\","
+        + "\"baseDn\":\"dc=example,dc=com\",\"scope\":\"one\",\"mode\":\"readwrite\",\"everyoneCanRead\":false,\"listAttributes\":[\"cn\"],"
+        + "\"searchAttributes\":[],\"titleAttribute\":\"cn\",\"createContainers\":[],\"selfMatch\":{\"type\":\"none\"}}],"
+        + "\"grants\":[{\"id\":\"g-old\",\"definitionId\":\"def-old\",\"subjectType\":\"user\",\"subject\":\"alice\",\"access\":\"read\"}]}";
+    jdbc.update("UPDATE dsp_document SET content = ?, version = version + 1 WHERE name = 'portal-config'", v1);
+    com.winllc.dsp.store.ConfigStore started = new com.winllc.dsp.store.ConfigStore(mapper, props, otherReplica(), database);
+    assertThat(started.snapshot().definitions.get(0).directory()).isEqualTo("default");
+    assertThat(started.snapshot().grants.get(0).directory()).isEqualTo("default");
+    String stored = jdbc.queryForObject("SELECT content FROM dsp_document WHERE name = 'portal-config'", String.class);
+    JsonNode doc = mapper.readTree(stored);
+    assertThat(doc.get("version").asInt()).isEqualTo(2);
+    assertThat(doc.get("definitions").get(0).get("directory").asString()).isEqualTo("default");
+    assertThat(doc.get("grants").get(0).get("directory").asString()).isEqualTo("default");
+    long version = jdbc.queryForObject("SELECT version FROM dsp_document WHERE name = 'portal-config'", Long.class);
+    new com.winllc.dsp.store.ConfigStore(mapper, props, otherReplica(), database);
+    assertThat(jdbc.queryForObject("SELECT version FROM dsp_document WHERE name = 'portal-config'", Long.class)).isEqualTo(version);
+  }
+
   @Test
   void sessionsLiveInTheDatabase() throws Exception {
     Browser alice = signIn("alice");
@@ -147,7 +172,8 @@ class SharedStoreTest extends ApiTestSupport {
     }
     assertThat(status(mvc.perform(json(post("/api/auth/login"), Map.of("username", "grace", "password", "password"))).andReturn())).isEqualTo(429);
     LoginThrottle elsewhere = new LoginThrottle(otherReplica());
-    assertThat(elsewhere.locked("127.0.0.1|grace", max, props.getLogin().getLockoutWindow().toMillis())).isTrue();
+    // Counted per client, directory and username (AuthService): grace signed in to the default directory.
+    assertThat(elsewhere.locked("127.0.0.1|default|grace", max, props.getLogin().getLockoutWindow().toMillis())).isTrue();
     assertThat(jdbc.queryForObject("SELECT count(*) FROM dsp_login_failure WHERE throttle_key LIKE '%grace%'", Long.class))
         .as("only hashes are stored").isZero();
     jdbc.update("DELETE FROM dsp_login_failure");

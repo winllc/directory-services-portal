@@ -34,7 +34,9 @@ public class StartupChecks {
   void check() {
     checkMemoryMode();
     checkClientAddresses();
-    if (!props.isMemoryMode()) {
+    // The LDAP_* settings, when they describe the directory; portal.directories is checked as the
+    // directories are set up (DirectoryConfig).
+    if (!props.isMemoryMode() && !props.directoriesConfigured()) {
       try {
         props.getLdap().resolvedBindPassword();
       } catch (UncheckedIOException e) {

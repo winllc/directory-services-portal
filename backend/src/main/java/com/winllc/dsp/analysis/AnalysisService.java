@@ -56,15 +56,13 @@ public class AnalysisService {
   private final DataSources sources;
   private final EntryService entries;
   private final SchemaService schema;
-  private final LdapDirectory directory;
   private final int maxEntries;
   private final int maxIssues;
 
-  public AnalysisService(DataSources sources, EntryService entries, SchemaService schema, LdapDirectory directory, PortalProperties props) {
+  public AnalysisService(DataSources sources, EntryService entries, SchemaService schema, PortalProperties props) {
     this.sources = sources;
     this.entries = entries;
     this.schema = schema;
-    this.directory = directory;
     this.maxEntries = Math.max(1, props.getMetrics().getMaxEntries());
     this.maxIssues = Math.max(1, props.getMetrics().getMaxIssues());
   }
@@ -132,7 +130,8 @@ public class AnalysisService {
       resolved.add(sources.resolve(user, s.definitionId(), s.filter(), "sources[" + i + "].filter"));
     }
     List<String> labels = labels(a.sources(), resolved);
-    EntryValues values = new EntryValues(schema.mergedIndex());
+    // Values are compared by the first source's directory's schema (attribute names and aliases).
+    EntryValues values = new EntryValues(schema.mergedIndex(resolved.isEmpty() ? null : resolved.get(0).definition().directory()));
     if ("compare".equals(a.type())) {
       AnalysisResult.Compare c = compare(a, resolved, labels, values);
       return new AnalysisResult("compare", Instant.now().toString(), System.currentTimeMillis() - started, c, null, null);
@@ -365,7 +364,7 @@ public class AnalysisService {
           List<OptionItem> options = null;
           if (f.dropdownWidget() && f.dropdown() instanceof DropdownSource.Ldap && !f.allowsCustomValues()) {
             try {
-              options = entries.completeFieldOptions(f);
+              options = entries.completeFieldOptions(resolved.get(s).definition(), f);
               if (options == null) {
                 warnings.add("\"" + f.label() + "\" has more options than its limit; its values are not checked against them");
               }
@@ -461,25 +460,31 @@ public class AnalysisService {
     if (!references.isEmpty()) {
       JobContext job = JobContext.current();
       job.phase("Checking referenced entries", null);
+      // Looked up in the directory of the entry that refers to it (each source's definition's).
       Map<String, Boolean> exists = new HashMap<>();
       boolean capped = false;
       for (Map<String, List<Holder>> m : references.values()) {
-        for (String dn : m.keySet()) {
-          if (exists.containsKey(dn)) continue;
-          if (exists.size() >= MAX_DN_LOOKUPS) {
-            capped = true;
-            break;
+        for (Map.Entry<String, List<Holder>> ref : m.entrySet()) {
+          String dn = ref.getKey();
+          for (Holder h : ref.getValue()) {
+            LdapDirectory ldap = sources.ldap(resolved.get(h.source()));
+            String key = ldap.id() + "\u0000" + dn;
+            if (exists.containsKey(key)) continue;
+            if (exists.size() >= MAX_DN_LOOKUPS) {
+              capped = true;
+              break;
+            }
+            exists.put(key, ldap.get(dn, List.of("1.1")) != null);
+            job.checkCancelled();
           }
-          exists.put(dn, directory.get(dn, List.of("1.1")) != null);
-          job.checkCancelled();
         }
       }
       if (capped) warnings.add("Only the first " + MAX_DN_LOOKUPS + " referenced DNs were checked");
       for (Map.Entry<Integer, Map<String, List<Holder>>> r : references.entrySet()) {
         Check c = checks.get(r.getKey());
         for (Map.Entry<String, List<Holder>> e : r.getValue().entrySet()) {
-          if (!Boolean.FALSE.equals(exists.get(e.getKey()))) continue;
           for (Holder h : e.getValue()) {
+            if (!Boolean.FALSE.equals(exists.get(sources.ldap(resolved.get(h.source())).id() + "\u0000" + e.getKey()))) continue;
             sink.add(c, r.getKey(), h.source(), h.dn(), h.title(), c.attribute(), List.of(h.value()), "\"" + h.value() + "\" does not exist");
           }
         }

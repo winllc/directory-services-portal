@@ -3,7 +3,7 @@ package com.winllc.dsp.web;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
-import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.ldap.Directories;
 import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.license.LicensedFeature;
@@ -25,12 +25,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiresFeature(LicensedFeature.FORM_BUILDER)
 @RequestMapping("/api/admin")
 public class AdminDirectoryController {
-  private final LdapDirectory directory;
-  private final PortalProperties props;
+  private final Directories directories;
 
-  public AdminDirectoryController(LdapDirectory directory, PortalProperties props) {
-    this.directory = directory;
-    this.props = props;
+  public AdminDirectoryController(Directories directories) {
+    this.directories = directories;
   }
 
   @PostMapping("/preview")
@@ -46,18 +44,20 @@ public class AdminDirectoryController {
       case "one" -> SearchScope.ONE;
       default -> SearchScope.SUB;
     };
-    return directory.search(body.baseDn(), scope, filter, 25, body.attributes());
+    return directories.require(body.directory()).ldap().search(body.baseDn(), scope, filter, 25, body.attributes());
   }
 
   public record Child(String dn, String name, List<String> objectClasses) {}
 
   public record BrowseResult(String base, List<Child> children, boolean truncated) {}
 
+  /** The children of {@code base} (none: the directory's base DN) in {@code directory} (none: the primary one). */
   @GetMapping("/browse")
-  public BrowseResult browse(@RequestParam(required = false) String base) {
-    String b = base == null || base.isBlank() ? props.getBaseDn() : base.trim();
+  public BrowseResult browse(@RequestParam(required = false) String base, @RequestParam(required = false) String directory) {
+    Directories.Directory dir = directories.require(directory);
+    String b = base == null || base.isBlank() ? dir.config().getBaseDn() : base.trim();
     if (!Dns.isValid(b)) throw ApiException.badRequest("Invalid DN", Map.of("base", "Invalid DN"));
-    LdapDirectory.Result result = directory.search(b, SearchScope.ONE, Filter.createPresenceFilter("objectClass"), 500, List.of("objectClass"));
+    LdapDirectory.Result result = dir.ldap().search(b, SearchScope.ONE, Filter.createPresenceFilter("objectClass"), 500, List.of("objectClass"));
     List<Child> children = result.entries().stream()
         .map(e -> new Child(e.dn(), Dns.rdnValue(e.dn()), e.values("objectClass")))
         .sorted(Comparator.comparing(Child::name, String.CASE_INSENSITIVE_ORDER))
