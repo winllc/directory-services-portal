@@ -302,6 +302,41 @@ public class EntryService {
     return new EntryListResponse(sorted.subList(from, to), sorted.size(), page, pageSize, result.truncated());
   }
 
+  /**
+   * An entry of the definition with the given attributes (never secrets), without checking the
+   * user's access: for callers that apply rules of their own (group access). The namespace and
+   * the definition's filter still apply.
+   */
+  public DirectoryEntry readInNamespace(DirectoryDefinition def, String dn, List<String> attributes) {
+    return sanitize(findEntry(def, form(def), dn, attributes.stream().filter(a -> !isHidden(a)).toList()));
+  }
+
+  /**
+   * Whether the entry belongs to the definition and matches {@code extra} (e.g. "the user is a
+   * member"), without checking the user's access: for group access. Missing entries don't match.
+   */
+  public boolean matchesInNamespace(DirectoryDefinition def, String dn, Filter extra) {
+    assertInNamespace(def, dn);
+    try {
+      return !ldap(def).search(dn, SearchScope.BASE, Filter.createANDFilter(baseFilter(def, form(def)), extra), 1, List.of("1.1")).entries().isEmpty();
+    } catch (DirectoryException e) {
+      if (e.code() == DirectoryException.Code.NO_SUCH_OBJECT) return false;
+      throw e;
+    }
+  }
+
+  /**
+   * Entries of the definition matching {@code q} (as the directory's search box) and {@code extra},
+   * without checking the user's access: for callers that apply rules of their own (group access).
+   */
+  public LdapDirectory.Result searchInNamespace(DirectoryDefinition def, String q, Filter extra, int limit, List<String> attributes) {
+    Filter filter = searchFilter(def, form(def), q);
+    if (extra != null) filter = Filter.createANDFilter(filter, extra);
+    LdapDirectory.Result r = ldap(def).search(def.baseDn(), scope(def.scope()), filter, limit, attributes.stream().filter(a -> !isHidden(a)).toList());
+    return new LdapDirectory.Result(r.entries().stream().filter(e -> !Dns.equal(e.dn(), def.baseDn())).map(EntryService::sanitize).toList(),
+        r.truncated());
+  }
+
   public DirectoryEntry get(SessionUser user, DirectoryDefinition def, String dn) {
     require(user, def, AccessLevel.READ);
     return loadEntry(def, form(def), dn);
@@ -583,10 +618,22 @@ public class EntryService {
    */
   public ValueChange changeValues(SessionUser user, DirectoryDefinition def, String dn, FormField field, List<String> add, List<String> remove,
       boolean dnValued) {
+    return changeValues(user, def, dn, field, add, remove, dnValued, null);
+  }
+
+  /**
+   * As above, for a change the caller has already authorized ({@code reason} non-null: a group's
+   * owner approving an access request, a member leaving a group): the user's write access to the
+   * definition isn't required, the rest applies, and the audit event says why
+   * ({@code details.via}).
+   */
+  public ValueChange changeValues(SessionUser user, DirectoryDefinition def, String dn, FormField field, List<String> add, List<String> remove,
+      boolean dnValued, String reason) {
     AuditLog.Draft event = audit.event("entry.update").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
+    if (reason != null) event.detail("via", reason);
     return audited("update", event, () -> {
       if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
-      require(user, def, AccessLevel.WRITE);
+      if (reason == null) require(user, def, AccessLevel.WRITE);
       FormDefinition form = form(def);
       if (!FormValidator.isWritable(form, field, FormValidator.Mode.UPDATE)) throw ApiException.forbidden(field.label() + " can't be changed");
       DirectoryEntry current = loadEntry(def, form, dn);

@@ -384,6 +384,7 @@ the API with `@RequiresFeature` or in code, and the web client hides what isn't 
 | `directory-editor` | browsing, searching and editing entries: `/api/definitions/**`, `/api/directories/**`, the `/d/*` pages |
 | `form-builder` | forms and directory definitions: `/api/admin/forms/**`, `/api/admin/definitions/**`, and the definition editor's DN browser and search preview (`/api/admin/browse`, `/api/admin/preview`); their admin pages |
 | `self-service-profile` | *My profile*: `/api/me/**`, `/me` (and drop-down options for it) |
+| `directory-editor` or `self-service-profile` | *Group access*: `/api/groups/**`, `/groups` (either feature unlocks it) |
 | `white-pages` | read access for users who are not administrators: "everyone can read" directories, read grants and read-only (white pages) directories. Without it such users keep only directories they hold a write grant on; administrators keep everything |
 | `smart-card-sign-in` | X.509 client-certificate sign-in (`/api/auth/x509`, certificate auto-login). When off, the login page doesn't offer it and the API refuses it with a message; password sign-in stays. With no license in effect at all it stays available, so an administrator can still reach the license screen |
 | `metrics` | metrics, explorer and dashboards: `/api/metrics/**`, `/api/admin/dashboards/**`, `/metrics/*` |
@@ -614,6 +615,8 @@ doesn't take the portal out of service. It is DOWN when none answers.
   new entries go into. Use **Test namespace** to preview which entries match.
 - **Find the signed-in user** (for My profile) can match on the entry DN, or on an attribute
   such as `member = user DN`, `acmeAssignedTo = user DN` or `uid = uid`.
+- **Group access** (for definitions of groups) lets users look the groups up and ask to join.
+  See [Group access](#group-access).
 
 ### Permissions
 *Admin → Permissions*
@@ -637,6 +640,39 @@ doesn't take the portal out of service. It is DOWN when none answers.
 - **Export** a directory's entries, or the current search's, as CSV or LDIF; **import** CSV or LDIF
   (checked first) where the user may write; export and change a group's members in bulk. See
   [Import and export](#import-and-export).
+
+### Group access
+*Group access* in the menu, for every signed-in user, once a directory of groups has it turned on
+(*Admin → Directory definitions → Group access*).
+- **Find groups** by name or description, in the LDAP directory the user signed in to. Each group
+  shows whether the user is a member, owns it or has asked to join. Looking groups up needs no
+  grant on the definition: users see names, descriptions and owners, but only owners see members.
+- **Request access** with a reason (optional, or required per directory). **My requests** lists
+  the user's requests with their answers. An open request can be withdrawn.
+- **Owners approve.** A group's owner attribute (default `owner`) names its owners: people, or
+  groups whose members all approve. Anyone who may edit the definition, administrators included,
+  can approve too. *To review* lists the requests they can decide, and the menu shows how many
+  are waiting. Approving adds the requester to the group's member field (their DN, or their login
+  name for `memberUid`). Rejecting leaves the group as it is. Either way the requester sees the
+  decision and the owner's note. Nobody decides their own request.
+- **Owners manage members** on the group's page: find people by name, login or e-mail to add
+  them, and remove members. They don't need write access to the whole definition for this.
+- **My groups** lists the user's groups. Members can **leave** a group when its directory allows
+  it; otherwise they ask the owners.
+- **Settings** (per definition): the member field (automatic: member, uniqueMember or memberUid),
+  the owner attribute, an LDAP filter for the groups that take requests (for example
+  `(!(cn=domain admins))`; the others can be looked up but not requested), whether a reason is
+  required, and whether members may leave. The definition must be read/write.
+- **Audit and webhooks.** Requests and decisions are audited (`group.access-requested`,
+  `group.access-cancelled`, `group.access-approved`, `group.access-rejected`). Every membership
+  change is the usual `entry.update` event, and its `details.via` says why someone without write
+  access could make it: `group-access-request`, `group-owner` or `group-leave`. Membership
+  changes also send the `group.membership_changed` webhook.
+- Requests are kept in `group-access-requests.json` in the data directory, or in the shared
+  database when one is configured. Closed requests are kept for a year (at most 5,000); the
+  audit trail keeps them for good.
+- The demo turns it on for *Groups*. Carol Chen co-owns *engineering*, and *directory-admins*
+  doesn't take requests.
 
 ### Metrics
 *Metrics* (every signed-in user)

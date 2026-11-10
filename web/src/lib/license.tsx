@@ -54,6 +54,13 @@ export function RequireLicense({ feature, children }: { feature: LicensedFeature
   return enabled ? <>{children}</> : <LicenseRequired feature={feature} />;
 }
 
+/** Renders the page when the license enables any of the features (as the API's @RequiresFeature with several). */
+export function RequireAnyLicense({ features, children }: { features: LicensedFeatureId[]; children: ReactNode }) {
+  const license = useLicense();
+  if (license.isLoading) return <div className="page-loading"><span className="spinner" /></div>;
+  return features.some((f) => featureEnabled(license.data, f)) ? <>{children}</> : <LicenseRequired feature={features[0]} />;
+}
+
 /**
  * Whether the navigation menu lists the license page (ENS_LICENSE_MENU_VISIBLE on the server). Only
  * an explicit `false` hides it: unknown (loading, unreadable, an older server) keeps it. The page and

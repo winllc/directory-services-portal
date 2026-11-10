@@ -28,7 +28,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react';
-import { useDefinitions, useLicense, useServerInfo } from '../api/hooks';
+import { useDefinitions, useGroupDirectories, useGroupRequestSummary, useLicense, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
 import { AUDIT_PATH, featureEnabled, LICENSE_PATH, licenseMenuVisible, LicenseNotices, licenseSummary } from '../lib/license';
 import { Badge, Button, cx } from './ui';
@@ -54,11 +54,19 @@ export function DefinitionIcon({ icon, size = 18 }: { icon?: string; size?: numb
   return <Icon size={size} aria-hidden />;
 }
 
-function NavItem({ to, icon, children, end }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean }) {
+function NavItem({ to, icon, children, end, count, countLabel }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean; count?: number; countLabel?: string }) {
   return (
     <NavLink to={to} end={end} className={({ isActive }) => cx('nav-item', isActive && 'active')}>
       {icon}
       <span className="nav-text">{children}</span>
+      {!!count && (
+        <>
+          <span className="nav-count" aria-hidden="true">
+            {count}
+          </span>
+          {countLabel && <span className="sr-only">, {countLabel}</span>}
+        </>
+      )}
     </NavLink>
   );
 }
@@ -69,6 +77,12 @@ export function Layout() {
   const license = useLicense();
   const has = (feature: Parameters<typeof featureEnabled>[1]) => featureEnabled(license.data, feature);
   const defs = useDefinitions(has('directory-editor'));
+  // Group access is offered when a group directory takes requests (either feature, as the API).
+  const groupFeature = has('directory-editor') || has('self-service-profile');
+  const groupDirs = useGroupDirectories(groupFeature);
+  const showGroups = groupFeature && (groupDirs.data?.length ?? 0) > 0;
+  const groupSummary = useGroupRequestSummary(showGroups);
+  const toReview = groupSummary.data?.toReview ?? 0;
   const info = useServerInfo();
   const [open, setOpen] = useState(false);
   const location = useLocation();
@@ -111,6 +125,16 @@ export function Layout() {
           {has('self-service-profile') && (
             <NavItem to="/me" icon={<UserCircle2 size={18} />}>
               My profile
+            </NavItem>
+          )}
+          {showGroups && (
+            <NavItem
+              to={toReview > 0 ? '/groups?tab=review' : '/groups'}
+              icon={<UsersRound size={18} />}
+              count={toReview}
+              countLabel={`${toReview} ${toReview === 1 ? 'request' : 'requests'} to review`}
+            >
+              Group access
             </NavItem>
           )}
           {has('metrics') && (

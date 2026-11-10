@@ -26,6 +26,14 @@ import type {
   GroupMembers,
   ImportResult,
   MembershipChangeResult,
+  AccessRequest,
+  AccessRequestView,
+  GroupDetail,
+  GroupDirectory,
+  GroupList,
+  GroupMemberPage,
+  GroupPerson,
+  GroupRequestSummary,
   Webhook,
   WebhookDelivery,
   WebhookInput,
@@ -91,6 +99,7 @@ export const keys = {
   webhookSettings: ['admin', 'webhook-settings'] as const,
   webhookDeliveries: (id: string) => ['admin', 'webhook-deliveries', id] as const,
   members: (id: string, dn: string) => ['members', id, dn] as const,
+  groups: ['groups'] as const,
   jobs: ['jobs'] as const,
   job: (id: string) => ['jobs', id] as const,
   jobResult: (id: string) => ['jobs', id, 'result'] as const,
@@ -901,4 +910,102 @@ export function useChangeMembers(definitionId: string, dn: string) {
       qc.invalidateQueries({ queryKey: ['entry', definitionId] });
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Self-service group access
+// ---------------------------------------------------------------------------
+
+const groupUrl = (definitionId: string, path: string, dn: string) => `/api/groups/${encodeURIComponent(definitionId)}/${path}?${dnParam(dn)}`;
+
+/** The directories whose groups the user can look up (none: the Groups page isn't offered). */
+export const useGroupDirectories = (enabled = true) =>
+  useQuery({
+    queryKey: [...keys.groups, 'directories'],
+    queryFn: () => api.get<GroupDirectory[]>('/api/groups/directories', { background: true }),
+    enabled,
+    staleTime: 60_000,
+  });
+
+export const useGroupSearch = (q: string, definition: string) =>
+  useQuery({
+    queryKey: [...keys.groups, 'search', q, definition],
+    queryFn: () => api.get<GroupList>(`/api/groups${qs({ q, definition })}`),
+    placeholderData: (prev) => prev,
+  });
+
+export const useMyGroups = () => useQuery({ queryKey: [...keys.groups, 'mine'], queryFn: () => api.get<GroupList>('/api/groups/mine') });
+
+export const useGroup = (definitionId: string | undefined, dn: string | null) =>
+  useQuery({
+    queryKey: [...keys.groups, 'group', definitionId, dn],
+    queryFn: () => api.get<GroupDetail>(groupUrl(definitionId!, 'group', dn!)),
+    enabled: !!definitionId && !!dn,
+    retry: false,
+  });
+
+export const useGroupAccessMembers = (definitionId: string, dn: string, q: string, page: number, enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'members', definitionId, dn, q, page],
+    queryFn: () => api.get<GroupMemberPage>(`${groupUrl(definitionId, 'members', dn)}&${qs({ q, page }).slice(1)}`),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+
+export const useGroupPeople = (definitionId: string, dn: string, q: string, enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'people', definitionId, dn, q],
+    queryFn: () => api.get<GroupPerson[]>(`${groupUrl(definitionId, 'people', dn)}&${qs({ q }).slice(1)}`),
+    enabled,
+  });
+
+export const useGroupRequestsFor = (definitionId: string, dn: string, enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'group-requests', definitionId, dn],
+    queryFn: () => api.get<AccessRequestView[]>(groupUrl(definitionId, 'group/requests', dn)),
+    enabled,
+  });
+
+/** `mine`: the user's requests; `review`: open ones they may decide; `decided`: the ones they decided. */
+export const useAccessRequests = (scope: 'mine' | 'review' | 'decided') =>
+  useQuery({ queryKey: [...keys.groups, 'requests', scope], queryFn: () => api.get<AccessRequestView[]>(`/api/groups/requests?scope=${scope}`) });
+
+/** Counts for the navigation (re-checked every minute). */
+export const useGroupRequestSummary = (enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'summary'],
+    queryFn: () => api.get<GroupRequestSummary>('/api/groups/requests/summary', { background: true }),
+    enabled,
+    refetchInterval: 60_000,
+  });
+
+export function useGroupMutations() {
+  const qc = useQueryClient();
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: keys.groups });
+    // Entry pages of the group show its members too.
+    qc.invalidateQueries({ queryKey: ['entry'] });
+  };
+  return {
+    request: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; reason?: string }) =>
+        api.post<AccessRequest>(groupUrl(v.definitionId, 'requests', v.dn), { reason: v.reason || undefined }),
+      onSuccess: refresh,
+    }),
+    cancel: useMutation({ mutationFn: (id: string) => api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(id)}/cancel`), onSuccess: refresh }),
+    decide: useMutation({
+      mutationFn: (v: { id: string; approve: boolean; note?: string }) =>
+        api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(v.id)}/${v.approve ? 'approve' : 'reject'}`, { note: v.note || undefined }),
+      onSuccess: refresh,
+    }),
+    leave: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'leave', v.dn)),
+      onSuccess: refresh,
+    }),
+    members: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[] }) =>
+        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove }),
+      onSuccess: refresh,
+    }),
+  };
 }

@@ -282,6 +282,7 @@ member: uid=alice,ou=people,dc=example,dc=com
 member: uid=carol,ou=people,dc=example,dc=com
 member: uid=fatima,ou=people,dc=example,dc=com
 owner: uid=admin,ou=people,dc=example,dc=com
+owner: uid=carol,ou=people,dc=example,dc=com
 
 dn: cn=sales,ou=groups,dc=example,dc=com
 objectClass: top

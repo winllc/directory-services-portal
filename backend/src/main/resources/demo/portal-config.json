@@ -799,7 +799,15 @@
         "entryAttribute": "member",
         "userAttribute": "dn"
       },
-      "icon": "group"
+      "icon": "group",
+      "groups": {
+        "enabled": true,
+        "memberAttribute": "member",
+        "ownerAttribute": "owner",
+        "requestFilter": "(!(cn=directory-admins))",
+        "requireReason": true,
+        "allowLeave": true
+      }
     },
     {
       "id": "def-partners",

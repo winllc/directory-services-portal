@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, FolderTree, Pencil, Play } from 'lucide-react';
-import type { DirectoryDefinition, DirectoryEntry, SelfMatch } from '@dsp/shared';
+import type { DirectoryDefinition, DirectoryEntry, GroupAccess, SelfMatch } from '@dsp/shared';
 import { escapeFilterValue, firstAttr, isDnUnder, isValidDn, rdnValue, SchemaIndex, slugify } from '@dsp/shared';
 import {
   previewSearch,
@@ -104,6 +104,12 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
     if (!isValidDn(c) || !isDnUnder(c, d.baseDn)) problems.push(`Container ${c} must be within the base DN`);
   }
   if (d.selfMatch.type === 'attribute' && (!d.selfMatch.entryAttribute || !d.selfMatch.userAttribute)) problems.push('Self match needs both attributes');
+  // Group access: the form's multi-valued member (or DN) fields can hold members.
+  const memberFields = form?.fields.filter((f) => f.multiValued && (['member', 'uniquemember', 'memberuid'].includes(f.attribute.toLowerCase()) || f.format === 'dn')) ?? [];
+  const groups: GroupAccess = d.groups ?? { enabled: false, requireReason: false, allowLeave: true };
+  const setGroups = (patch: Partial<GroupAccess>) => set('groups', { ...groups, ...patch });
+  if (groups.enabled && d.mode === 'readonly') problems.push('Group access needs a read/write directory');
+  if (groups.enabled && form && !memberFields.length) problems.push('Group access needs a multi-valued member field in the form');
 
   const runPreview = async () => {
     setPreviewing(true);
@@ -129,6 +135,14 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
   const save = () => {
     const payload: DefinitionInput = {
       ...d,
+      groups: d.groups
+        ? {
+            ...d.groups,
+            memberAttribute: d.groups.memberAttribute || undefined,
+            ownerAttribute: d.groups.ownerAttribute?.trim() || undefined,
+            requestFilter: d.groups.requestFilter?.trim() || undefined,
+          }
+        : undefined,
       filter: d.filter?.trim() || undefined,
       description: d.description || undefined,
       directory: chooseDirectory ? ldapDirectory?.id : d.directory,
@@ -435,6 +449,73 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
             </FormRow>
           </div>
         )}
+      </Card>
+
+      <Card
+        title="Group access"
+        subtitle="For directories of groups: signed-in users of this LDAP directory can look the groups up and ask to join. The groups’ owners, and anyone who may edit this directory, approve."
+      >
+        <div className="stack">
+          <Toggle
+            checked={groups.enabled}
+            onChange={(v) => setGroups({ enabled: v })}
+            label="Let users find these groups and request access"
+            description="Adds a Group access page for users. Approved requests add the user to the group's member field."
+          />
+          {groups.enabled && (
+            <>
+              <div className="form-grid">
+                <FormRow label="Member field" htmlFor="ga-member" hint="Where approved requests add the user: their DN, or their login name for memberUid.">
+                  <select id="ga-member" className="input select" value={groups.memberAttribute ?? ''} onChange={(e) => setGroups({ memberAttribute: e.target.value || undefined })}>
+                    <option value="">Automatic (member, uniqueMember or memberUid)</option>
+                    {memberFields.map((f) => (
+                      <option key={f.attribute} value={f.attribute}>
+                        {f.label} ({f.attribute})
+                      </option>
+                    ))}
+                  </select>
+                </FormRow>
+                <FormRow label="Owner attribute" htmlFor="ga-owner" hint="Names who approves: people, or groups whose members all approve. Default: owner.">
+                  <TagSelect
+                    id="ga-owner"
+                    single
+                    options={allAttrs}
+                    values={groups.ownerAttribute ? [groups.ownerAttribute] : []}
+                    placeholder="owner"
+                    onChange={(v) => setGroups({ ownerAttribute: v[0] || undefined })}
+                  />
+                </FormRow>
+                <div className="span-2">
+                  <FormRow
+                    label="Groups that take requests"
+                    htmlFor="ga-filter"
+                    hint="An LDAP filter, e.g. (!(cn=domain admins)). Groups that don't match can be looked up but not requested. Empty: every group."
+                  >
+                    <input
+                      id="ga-filter"
+                      className="input mono"
+                      placeholder="(objectClass=*)"
+                      value={groups.requestFilter ?? ''}
+                      onChange={(e) => setGroups({ requestFilter: e.target.value })}
+                    />
+                  </FormRow>
+                </div>
+              </div>
+              <Toggle
+                checked={groups.requireReason}
+                onChange={(v) => setGroups({ requireReason: v })}
+                label="Require a reason"
+                description="Requesters must say why they need access."
+              />
+              <Toggle
+                checked={groups.allowLeave}
+                onChange={(v) => setGroups({ allowLeave: v })}
+                label="Members may leave on their own"
+                description="Otherwise they ask the owners to remove them."
+              />
+            </>
+          )}
+        </div>
       </Card>
 
       <DnBrowser
