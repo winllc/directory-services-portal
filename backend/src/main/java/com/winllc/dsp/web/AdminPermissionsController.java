@@ -1,7 +1,6 @@
 package com.winllc.dsp.web;
 
 import com.unboundid.ldap.sdk.Filter;
-import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.config.DirectoryProperties;
@@ -12,6 +11,7 @@ import com.winllc.dsp.model.DirectoryEntry;
 import com.winllc.dsp.model.PermissionGrant;
 import com.winllc.dsp.model.SubjectSearchResult;
 import com.winllc.dsp.service.EntryService;
+import com.winllc.dsp.service.People;
 import com.winllc.dsp.store.ConfigStore;
 import com.winllc.dsp.web.dto.GrantInput;
 import jakarta.validation.Valid;
@@ -116,14 +116,6 @@ public class AdminPermissionsController {
         .success();
   }
 
-  private static Filter userFilter(DirectoryProperties c, String usernameValue) {
-    try {
-      return Filter.create(c.getUserFilter().replace("{{username}}", usernameValue));
-    } catch (LDAPException e) {
-      throw new IllegalStateException("Invalid user filter template", e);
-    }
-  }
-
   /**
    * Search users (by login name, name or e-mail) and groups (by cn) in one LDAP directory
    * ({@code directory}; none: the primary one).
@@ -135,25 +127,9 @@ public class AdminPermissionsController {
     DirectoryProperties c = dir.config();
     String query = q == null ? "" : q.trim();
     if (query.length() > 100) query = query.substring(0, 100);
-    String t = Filter.encodeValue(query);
     List<SubjectSearchResult> out = new ArrayList<>();
 
-    if (!"group".equals(type)) {
-      String ua = c.getUsernameAttribute();
-      Filter filter = query.isEmpty()
-          ? userFilter(c, "*")
-          : Filter.createORFilter(
-              userFilter(c, "*" + t + "*"),
-              Filter.createANDFilter(userFilter(c, "*"), Filter.createORFilter(
-                  Filter.createSubstringFilter("cn", null, new String[] {query}, null),
-                  Filter.createSubstringFilter("mail", null, new String[] {query}, null))));
-      for (DirectoryEntry e : dir.ldap().search(c.effectiveUserSearchBase(), SearchScope.SUB, filter, 25, List.of(ua, "cn", "displayName")).entries()) {
-        String id = e.first(ua);
-        if (id == null) continue;
-        String name = e.first("displayName") != null ? e.first("displayName") : e.first("cn") != null ? e.first("cn") : id;
-        out.add(new SubjectSearchResult("user", id, name + " (" + id + ")", e.dn()));
-      }
-    }
+    if (!"group".equals(type)) out.addAll(People.search(dir, query, 25));
     if (!"user".equals(type)) {
       List<Filter> parts = new ArrayList<>(List.of(Filter.createORFilter(
           Filter.createEqualityFilter("objectClass", "groupOfNames"),

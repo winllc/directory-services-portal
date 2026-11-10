@@ -1,13 +1,15 @@
 import { Route, Routes } from 'react-router-dom';
 import { Layout, UnlicensedLayout } from './components/Layout';
 import { RequireAdmin, RequireAuth } from './lib/auth';
-import { AUDIT_PATH, LicenseGate, RequireLicense } from './lib/license';
+import { AUDIT_PATH, LicenseGate, RequireAnyLicense, RequireLicense } from './lib/license';
 import type { LicensedFeatureId } from '@dsp/shared';
 import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { DirectoryPage } from './pages/DirectoryPage';
 import { CreateEntryPage, EntryPage } from './pages/EntryPage';
 import { MyProfilePage } from './pages/MyProfilePage';
+import { GroupsPage } from './pages/GroupsPage';
+import { GroupPage } from './pages/GroupPage';
 import { SchemaPage } from './pages/admin/SchemaPage';
 import { FormsPage } from './pages/admin/FormsPage';
 import { FormEditorPage } from './pages/admin/FormEditorPage';
@@ -37,6 +39,8 @@ const profile = licensed('self-service-profile');
 const metrics = licensed('metrics');
 const forms = (el: React.ReactNode) => admin(licensed('form-builder')(el));
 const analysis = (el: React.ReactNode) => admin(licensed('data-analysis')(el));
+/** Group access is self-service as much as directory editing: either feature (as the API). */
+const groups = (el: React.ReactNode) => <RequireAnyLicense features={['directory-editor', 'self-service-profile']}>{el}</RequireAnyLicense>;
 
 /**
  * Signed in, before the license: the full app, or (no license in effect) only the license screen
@@ -63,6 +67,8 @@ export function App() {
         <Route element={shell}>
           <Route index element={<HomePage />} />
           <Route path="me" element={profile(<MyProfilePage />)} />
+          <Route path="groups" element={groups(<GroupsPage />)} />
+          <Route path="groups/:definitionId/group" element={groups(<GroupPage />)} />
           <Route path="d/:slug" element={directories(<DirectoryPage />)} />
           <Route path="d/:slug/new" element={directories(<CreateEntryPage />)} />
           <Route path="d/:slug/entry" element={directories(<EntryPage />)} />

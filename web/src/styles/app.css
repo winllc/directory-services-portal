@@ -1687,6 +1687,9 @@ textarea.input {
   padding: 20px;
   z-index: 100;
   animation: fade 0.12s ease;
+  /* Dialogs render where they're opened (e.g. a table's action cell): don't inherit its text layout. */
+  white-space: normal;
+  text-align: start;
 }
 .modal {
   background: var(--surface);
@@ -3387,4 +3390,108 @@ p a:not(.btn),
 }
 main.content:focus {
   outline: none;
+}
+
+/* --------------------------------------------------------------------------
+   Groups (self-service group access)
+   -------------------------------------------------------------------------- */
+.nav-count {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.tab-count-attention {
+  background: var(--accent);
+  color: #fff;
+}
+.group-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  vertical-align: middle;
+}
+.actions-col {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+.actions-col .toolbar-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+.request-quote {
+  color: var(--muted);
+  font-style: italic;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.request-reason-cell {
+  max-width: 360px;
+  overflow-wrap: anywhere;
+}
+.request-reason {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.request-reason p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.person-list > li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.person-list > li:last-child {
+  border-bottom: 0;
+}
+.person-list.is-refreshing {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.person-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.person-result > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.member-add .person-results {
+  margin-top: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.member-add .person-results > li {
+  padding: 4px 0;
 }

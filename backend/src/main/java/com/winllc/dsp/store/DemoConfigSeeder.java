@@ -64,7 +64,7 @@ public class DemoConfigSeeder implements ApplicationRunner {
     d.definitions = new java.util.ArrayList<>(demo.definitions().stream()
         .map(x -> new DirectoryDefinition(x.id(), x.name(), x.slug(), x.description(), x.formId(), x.baseDn(), x.scope(), x.filter(),
             x.mode(), x.everyoneCanRead(), x.listAttributes(), x.searchAttributes(), x.titleAttribute(), x.createContainers(),
-            x.selfMatch(), x.icon(), now, now, x.directory() != null ? x.directory() : DirectoryProperties.DEFAULT_ID))
+            x.selfMatch(), x.icon(), now, now, x.directory() != null ? x.directory() : DirectoryProperties.DEFAULT_ID, x.groups()))
         .toList());
     d.grants = new java.util.ArrayList<>(demo.grants().stream()
         .map(g -> new PermissionGrant(g.id(), g.definitionId(), g.subjectType(), g.subject(), g.subjectLabel(), g.access(), now,

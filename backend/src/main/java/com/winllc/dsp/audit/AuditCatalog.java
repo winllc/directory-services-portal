@@ -28,6 +28,10 @@ public final class AuditCatalog {
     // Integration API tokens (credentials for other systems).
     ACTIONS.put("api.token-created", "account");
     ACTIONS.put("api.token-revoked", "account");
+    // Self-service group access (the membership change itself is an entry.update).
+    for (String a : List.of("group.access-requested", "group.access-cancelled", "group.access-approved", "group.access-rejected")) {
+      ACTIONS.put(a, "account");
+    }
     for (String a : List.of("entry.create", "entry.update", "entry.self_update", "entry.delete",
         "form.create", "form.update", "form.delete", "definition.create", "definition.update", "definition.delete",
         "schema.import", "schema.attribute_type.save", "schema.attribute_type.delete", "schema.object_class.save",

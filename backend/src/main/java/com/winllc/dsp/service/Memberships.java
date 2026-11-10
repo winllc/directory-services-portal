@@ -74,18 +74,33 @@ public class Memberships {
 
   /** Adds and removes members in one change of the entry (nothing is written when nothing changes). */
   public Change change(SessionUser user, DirectoryDefinition def, String dn, String attribute, List<String> add, List<String> remove) {
+    return change(user, def, dn, attribute, add, remove, null);
+  }
+
+  /**
+   * As above, for a change the caller has authorized ({@code reason} non-null, e.g. a group owner
+   * approving an access request): see {@link EntryService#changeValues(SessionUser, DirectoryDefinition, String, FormField, List, List,
+   * boolean, String)}.
+   */
+  public Change change(SessionUser user, DirectoryDefinition def, String dn, String attribute, List<String> add, List<String> remove,
+      String reason) {
     List<String> toAdd = clean(add);
     List<String> toRemove = clean(remove);
     int max = props.getTransfer().getBulkMaxMembers();
     if (toAdd.size() + toRemove.size() > max) throw ApiException.badRequest("At most " + max + " members can be added or removed at once");
     if (toAdd.isEmpty() && toRemove.isEmpty()) throw ApiException.badRequest("Nothing to add or remove");
     FormField f = field(entries.form(def), attribute);
-    boolean dnValued = DN_VALUED.contains(f.attribute().toLowerCase(Locale.ROOT)) || "dn".equals(f.format());
+    boolean dnValued = dnValued(f);
     if (dnValued) {
       for (String v : toAdd) if (v.length() > 1024 || !Dns.isValid(v)) throw ApiException.badRequest("\"" + shorten(v) + "\" is not a valid DN");
     }
-    EntryService.ValueChange c = entries.changeValues(user, def, dn, f, toAdd, toRemove, dnValued);
+    EntryService.ValueChange c = entries.changeValues(user, def, dn, f, toAdd, toRemove, dnValued, reason);
     return new Change(c.dn(), c.attribute(), c.added(), c.removed(), c.partial());
+  }
+
+  /** Whether the field holds DNs (member, uniqueMember, or a DN-format field) rather than login names (memberUid). */
+  public static boolean dnValued(FormField f) {
+    return DN_VALUED.contains(f.attribute().toLowerCase(Locale.ROOT)) || "dn".equals(f.format());
   }
 
   private static List<String> clean(List<String> values) {

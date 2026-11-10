@@ -1,5 +1,6 @@
 package com.winllc.dsp.web.dto;
 
+import com.winllc.dsp.model.GroupAccess;
 import com.winllc.dsp.model.Patterns;
 import com.winllc.dsp.model.SelfMatch;
 import com.winllc.dsp.web.validation.LdapFilter;
@@ -29,4 +30,6 @@ public record DefinitionInput(
     @NotNull @Valid SelfMatch selfMatch,
     @Size(max = 32) String icon,
     /** The LDAP directory's id; none: the primary directory. */
-    @Size(max = 64) String directory) {}
+    @Size(max = 64) String directory,
+    /** Self-service group access; none: off. */
+    @Valid GroupAccess groups) {}

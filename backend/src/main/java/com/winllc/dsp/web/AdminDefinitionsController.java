@@ -32,11 +32,14 @@ public class AdminDefinitionsController {
   private final ConfigStore store;
   private final AuditLog audit;
   private final com.winllc.dsp.ldap.Directories directories;
+  private final com.winllc.dsp.service.Memberships memberships;
 
-  public AdminDefinitionsController(ConfigStore store, AuditLog audit, com.winllc.dsp.ldap.Directories directories) {
+  public AdminDefinitionsController(ConfigStore store, AuditLog audit, com.winllc.dsp.ldap.Directories directories,
+      com.winllc.dsp.service.Memberships memberships) {
     this.store = store;
     this.audit = audit;
     this.directories = directories;
+    this.memberships = memberships;
   }
 
   private AuditLog.Draft event(String action, DirectoryDefinition before, DirectoryDefinition after) {
@@ -58,12 +61,33 @@ public class AdminDefinitionsController {
     }
     // A directory the license doesn't enable can't be given new definitions (403, multi-directory).
     directories.require(in.directory());
+    checkGroups(in);
+  }
+
+  /** Group access needs a writable definition whose form has the member field, and an owner attribute other than it. */
+  private void checkGroups(DefinitionInput in) {
+    if (in.groups() == null || !in.groups().enabled()) return;
+    if ("readonly".equals(in.mode())) {
+      throw ApiException.badRequest("Group access needs a read/write directory", Map.of("groups.enabled", "Approved requests change the group, so the directory can't be read only"));
+    }
+    com.winllc.dsp.model.FormDefinition form = store.snapshot().forms.stream().filter(f -> f.id().equals(in.formId())).findFirst().orElseThrow();
+    com.winllc.dsp.model.FormField member;
+    try {
+      member = memberships.field(form, in.groups().memberAttribute());
+    } catch (ApiException e) {
+      throw ApiException.badRequest(e.getMessage(), Map.of("groups.memberAttribute", e.getMessage()));
+    }
+    String owner = in.groups().cleaned().ownerAttributeOrDefault();
+    if (owner.equalsIgnoreCase(member.attribute())) {
+      throw ApiException.badRequest("The owner attribute can't be the member attribute", Map.of("groups.ownerAttribute", "Must differ from the member attribute"));
+    }
   }
 
   private DirectoryDefinition build(DefinitionInput in, String id, String createdAt, String updatedAt) {
     return new DirectoryDefinition(id, in.name().trim(), in.slug(), blank(in.description()), in.formId(), in.baseDn().trim(), in.scope(),
         blank(in.filter()), in.mode(), in.everyoneCanRead(), in.listAttributes(), in.searchAttributes(), in.titleAttribute(),
-        in.createContainers(), in.selfMatch(), blank(in.icon()), createdAt, updatedAt, directories.canonicalId(in.directory()));
+        in.createContainers(), in.selfMatch(), blank(in.icon()), createdAt, updatedAt, directories.canonicalId(in.directory()),
+        in.groups() == null ? null : in.groups().cleaned());
   }
 
   private static String blank(String s) {

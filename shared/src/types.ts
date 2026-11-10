@@ -210,6 +210,110 @@ export interface DirectoryDefinition {
    * were several directories have `default`, which also stands for the first configured one.
    */
   directory?: string;
+  /** Self-service group access, for definitions of groups. */
+  groups?: GroupAccess;
+}
+
+/**
+ * Self-service group access for a definition of groups: people of its LDAP directory look the
+ * groups up and ask to join; owners (the owner attribute) and editors decide.
+ */
+export interface GroupAccess {
+  enabled: boolean;
+  /** The form's member field (none: the first of member, uniqueMember, memberUid). */
+  memberAttribute?: string;
+  /** DN-valued attribute naming who approves (none: owner). */
+  ownerAttribute?: string;
+  /** Only groups matching this LDAP filter take requests. */
+  requestFilter?: string;
+  requireReason: boolean;
+  allowLeave: boolean;
+}
+
+export interface GroupDirectory {
+  id: string;
+  name: string;
+  slug: string;
+  icon?: string;
+  requireReason: boolean;
+  allowLeave: boolean;
+}
+
+export interface GroupSummary {
+  definitionId: string;
+  definitionName: string;
+  dn: string;
+  name: string;
+  description?: string;
+  member: boolean;
+  owner: boolean;
+  canManage: boolean;
+  requestable: boolean;
+  pendingRequestId?: string;
+}
+
+export interface GroupList {
+  groups: GroupSummary[];
+  truncated: boolean;
+}
+
+/** A person or group named by a group: `value` is what the attribute holds. */
+export interface GroupPerson {
+  value: string;
+  dn?: string;
+  name: string;
+}
+
+export interface GroupDetail {
+  group: GroupSummary;
+  owners: GroupPerson[];
+  moreOwners: boolean;
+  /** Null when the directory returned the members in part (very large groups). */
+  memberCount: number | null;
+  memberAttribute: string;
+  requireReason: boolean;
+  allowLeave: boolean;
+  /** Open requests (for those who manage the group). */
+  pendingRequests: number;
+}
+
+export interface GroupMemberPage {
+  items: GroupPerson[];
+  total: number;
+  page: number;
+  pageSize: number;
+  partial: boolean;
+}
+
+export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface AccessRequest {
+  id: string;
+  definitionId: string;
+  groupDn: string;
+  groupName: string;
+  requester: string;
+  requesterDn?: string;
+  requesterName?: string;
+  member: string;
+  reason?: string;
+  status: AccessRequestStatus;
+  createdAt: string;
+  decidedAt?: string;
+  decidedBy?: string;
+  decidedByName?: string;
+  note?: string;
+}
+
+export interface AccessRequestView {
+  request: AccessRequest;
+  definitionName?: string;
+  canDecide: boolean;
+}
+
+export interface GroupRequestSummary {
+  toReview: number;
+  myPending: number;
 }
 
 // ---------------------------------------------------------------------------
