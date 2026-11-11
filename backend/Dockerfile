@@ -15,7 +15,7 @@ RUN mvn -q -B dependency:go-offline
 COPY src src
 RUN mvn -q -B package -DskipTests
 
-FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:1.24@sha256:856ee6542b8fdf09a065fd5439309fc3f3c821fb8efac48aa6191c93635dd907
+FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:1.24@sha256:b924b5d15de9585902c58eea76d0c1d6120921844cbc9e79683103e01b0200fd
 # Set by scripts/package.sh; they replace the base image's own OCI labels.
 ARG VERSION=0.1.0
 ARG REVISION=unknown
