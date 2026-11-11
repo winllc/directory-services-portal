@@ -19,7 +19,7 @@
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w web"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0",
+    "concurrently": "^10.0.6",
     "typescript": "^7.0.2"
   },
   "overrides": {
