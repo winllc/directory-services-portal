@@ -1,11 +1,13 @@
 name: CodeQL
 
-# Static analysis (SAST) of the API (Java) and the web client (TypeScript): on every push and pull
-# request, and weekly so new queries also look at code that hasn't changed. Findings appear under
+# Static analysis (SAST) of the API (Java) and the web client (TypeScript): on every pull request and
+# push to main, and weekly so new queries also look at code that hasn't changed. Findings appear under
 # Security > Code scanning.
 on:
+  # Pushes to main only: a pull request's own run covers its branch, so branch pushes ran
+  # the analysis twice.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   schedule:
     - cron: "17 4 * * 1"
@@ -21,6 +23,7 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       security-events: write

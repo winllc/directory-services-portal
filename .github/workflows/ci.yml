@@ -1,10 +1,14 @@
 name: CI
 
 on:
+  # Pushes to main and release tags, and pull requests. Branch pushes are left out: a pull
+  # request's run covers its branch, and running both doubled every pull request's minutes.
+  # A branch without a pull request can be run by hand (workflow_dispatch).
   push:
-    branches: ["**"]
+    branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,6 +20,7 @@ concurrency:
 jobs:
   api-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -39,9 +44,11 @@ jobs:
           name: openapi
           path: backend/target/openapi/dsp-api-v1.json
           if-no-files-found: error
+          retention-days: 7
 
   web-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -66,6 +73,7 @@ jobs:
     # browser ("Playwright does not support chromium on ubuntu26.04-x64"). Move this to ubuntu-latest again together
     # with a Playwright release that supports 26.04.
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -103,10 +111,12 @@ jobs:
             web/playwright-report
             web/test-results
           if-no-files-found: ignore
+          retention-days: 7
 
   helm:
     # The Helm chart: lint it and validate what it renders, for every example values file.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       CHART: deploy/helm/directory-services-portal
       KUBECONFORM_VERSION: v0.6.7
@@ -298,6 +308,7 @@ jobs:
     # way of installing it gives a valid compose configuration, publishing the expected ports,
     # with both Docker Compose and podman-compose; and that docker-compose.demo.yml publishes none.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       PODMAN_COMPOSE_VERSION: "1.6.0"
     steps:
@@ -425,6 +436,7 @@ jobs:
     # fork's token cannot write packages, and unreviewed code is not for the registry. On a
     # release tag it also builds the customer bundle, which the release job signs and uploads.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [api-test, web-test, accessibility, helm, bundle]
 
     permissions:
@@ -736,6 +748,7 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [image]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release
 
     permissions:
