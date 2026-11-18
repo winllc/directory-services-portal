@@ -261,7 +261,7 @@ kept as the workflow artifact `release-directory-services-portal-<version>` (30 
 signature as `...-signature`). Every
 pull request does a dry run (version `0.0.0-pr<number>`, artifact kept 3 days, never
 uploaded; the chart is packaged but not pushed). The `helm` job lints the chart and validates
-its output with kubeconform on every push, for each values file in its `ci/` directory. GPG signing is skipped, with a note in the job summary, until a key is configured;
+its output with kubeconform on every pull request and push to `main`, for each values file in its `ci/` directory. GPG signing is skipped, with a note in the job summary, until a key is configured;
 a release tag needs the bucket and its credentials (Settings > Secrets and variables > Actions, and
 Settings > Environments):
 
@@ -321,8 +321,8 @@ administrator sets up once:
 
 **Supply chain** (`.github/`): Dependabot proposes weekly updates (Maven, npm, the Dockerfiles'
 base images, GitHub Actions; minor and patch versions grouped). Actions are pinned to commit SHAs
-and base images to digests. Every push and pull request runs CodeQL (Java and TypeScript, also
-weekly), fails on `npm audit --omit=dev --audit-level=high`, and scans both images with Trivy
+and base images to digests. Every pull request and push to `main` runs CodeQL (Java and TypeScript,
+also weekly), fails on `npm audit --omit=dev --audit-level=high`, and scans both images with Trivy
 (`--severity HIGH,CRITICAL --ignore-unfixed`; accepted risks, with their reason and a review date,
 go in `.trivyignore`). On a release tag, both images (by digest) and the chart are signed with
 cosign (keyless, GitHub OIDC), and each image gets its SPDX SBOM as an attestation. Verify an image

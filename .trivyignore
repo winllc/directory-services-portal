@@ -3,4 +3,23 @@
 #   # Reason: only reachable through X, which the portal never uses. Review by 2027-01-31.
 #   CVE-2026-00000
 # Keep this list short: fix by updating the base image or the dependency whenever possible.
-# None at present.
+
+# krb5-libs 1.21.1-10.el9_8.1 in the API's runtime base image (ubi9/openjdk-21-runtime); fixed in
+# 1.21.1-10.el9_9.2, which is not in the public UBI 9 BaseOS repository yet, so a rebuild cannot take
+# it. Reason: every one is in the KDC (krb5kdc) or the admin server (kadmind); neither image has
+# krb5-server or any Kerberos daemon, only the client library the operating system's tools link, and
+# the JVM does its own Kerberos. Remove these once UBI publishes el9_9.2. Review by 2026-12-15.
+CVE-2026-107364
+CVE-2026-112315
+CVE-2026-112316
+CVE-2026-112317
+CVE-2026-112318
+CVE-2026-112319
+CVE-2026-112320
+CVE-2026-112321
+CVE-2026-112322
+CVE-2026-112323
+CVE-2026-118380
+CVE-2026-119079
+CVE-2026-71199
+CVE-2026-71200
