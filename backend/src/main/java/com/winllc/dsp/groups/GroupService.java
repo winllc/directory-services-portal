@@ -495,10 +495,17 @@ public class GroupService {
     AuditLog.Draft event = audit.event(approve ? "group.access-approved" : "group.access-rejected").by(user).definition(def.id())
         .directory(entries.directoryId(def)).target("group", r.groupDn(), r.groupName()).detail("request", r.id())
         .detail("requester", r.requesterDn() != null ? r.requesterDn() : r.requester()).detail("note", why);
-    if (approve) {
-      memberships.change(user, def, r.groupDn(), memberField(def).attribute(), List.of(r.member()), List.of(), VIA_REQUEST);
-    }
+    // Closed first (409 when it was cancelled or decided meanwhile), so the group is changed only for
+    // a request this decision closed; reopened when the directory refuses the change.
     AccessRequests.Request closed = requests.close(id, approve ? AccessRequests.APPROVED : AccessRequests.REJECTED, user.key(), displayName(user), why);
+    if (approve) {
+      try {
+        memberships.change(user, def, r.groupDn(), memberField(def).attribute(), List.of(r.member()), List.of(), VIA_REQUEST);
+      } catch (RuntimeException e) {
+        requests.reopen(closed);
+        throw e;
+      }
+    }
     event.success();
     return closed;
   }

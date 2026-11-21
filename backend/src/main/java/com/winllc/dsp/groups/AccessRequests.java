@@ -53,6 +53,11 @@ public class AccessRequests {
       return PENDING.equals(status);
     }
 
+    Request reopened() {
+      return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, PENDING, createdAt, null,
+          null, null, null);
+    }
+
     Request closed(String newStatus, String at, String by, String byName, String withNote) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, newStatus, createdAt, at,
           by, byName, withNote);
@@ -123,6 +128,21 @@ public class AccessRequests {
       throw ApiException.notFound("Request not found");
     });
     return out[0];
+  }
+
+  /**
+   * Puts a request {@link #close} just closed back to pending (the decision could not be carried
+   * out), unless it changed since.
+   */
+  public void reopen(Request closed) {
+    store(list -> {
+      for (int i = 0; i < list.size(); i++) {
+        if (list.get(i).equals(closed)) {
+          list.set(i, closed.reopened());
+          return;
+        }
+      }
+    });
   }
 
   /**
