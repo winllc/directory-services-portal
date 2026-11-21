@@ -70,6 +70,16 @@ setenv() { # setenv KEY VALUE: replace (or add) the KEY= line in .env
 
 # --- Back up the data with the running version ------------------------------------
 project="$(env_value COMPOSE_PROJECT_NAME)"; project="${project:-directory-services-portal}"
+if [ -n "$(env_value DSP_DATABASE_URL)" ]; then
+  # The volume backup below has none of it, and the new version may migrate it as it starts.
+  printf '\033[33mWarning:\033[0m %s\n%s\n%s\n' "DSP_DATABASE_URL is set: the configuration, license state and sessions are in that" \
+    "         database, which this upgrade does not back up, and the new version may update its tables as it" \
+    "         starts. Back it up first (pg_dump); to go back, restore it together with the data backup." >&2
+  if [ -t 0 ]; then
+    read -r -p "Is the database backed up? Continue the upgrade? [y/N] " answer
+    [ "$answer" = y ] || [ "$answer" = Y ] || die "Stopped before the images were switched. Back up the database and run ./upgrade.sh again."
+  fi
+fi
 if [ -n "$backup" ] && "$ENGINE" volume inspect "${project}_portal-data" >/dev/null 2>&1; then
   mkdir -p backups
   ./portal.sh backup "backups/pre-upgrade-$VERSION-$(date +%Y%m%d-%H%M%S).tar.gz"

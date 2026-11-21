@@ -617,6 +617,15 @@ jobs:
               sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 127.0.0.1:18080'
               as_root ./portal.sh backup "$RUNNER_TEMP/podman-backup-$pc.tar.gz"
               tar -tzf "$RUNNER_TEMP/podman-backup-$pc.tar.gz" > /dev/null
+              [ ! -e "$RUNNER_TEMP/podman-backup-$pc.tar.gz.part" ]
+              # A truncated backup is refused before anything is stopped; a complete one restores.
+              head -c 100 "$RUNNER_TEMP/podman-backup-$pc.tar.gz" > "$RUNNER_TEMP/podman-truncated-$pc.tar.gz"
+              if echo y | as_root ./portal.sh restore "$RUNNER_TEMP/podman-truncated-$pc.tar.gz"; then
+                echo "restored a truncated backup"; exit 1
+              fi
+              curl -fsS http://127.0.0.1:18080/api/health
+              echo y | as_root ./portal.sh restore "$RUNNER_TEMP/podman-backup-$pc.tar.gz"
+              curl -fsS --retry 10 --retry-delay 2 --retry-all-errors http://127.0.0.1:18080/api/health
               as_root ./portal.sh down
               sudo podman volume rm directory-services-portal_portal-data directory-services-portal_ens-license directory-services-portal_ens-audit
             )

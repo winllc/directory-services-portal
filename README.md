@@ -77,6 +77,12 @@ installers verify. Building from source, the demo compose stack in this reposito
   address no longer turns users away at a morning peak; a release-package `.env` or `portal.env`
   that sets `SSO_START_LIMIT_PER_MINUTE=30` keeps it: raise it, or set `WEB_TRUSTED_PROXIES`
   ([Security headers and cookies](#security-headers-and-cookies)).
+- **Release package backups**: `./portal.sh backup` writes `<file>.part` and renames it when
+  complete, so a failed backup leaves no truncated archive. `./portal.sh restore` checks the
+  archive before stopping the API and extracts it next to the data before replacing it; on a
+  failure the data is left as it was and the API started again. With `DSP_DATABASE_URL`,
+  `upgrade.sh` warns that the database is not in its backup (and asks before going on when run
+  from a terminal).
 
 ### Upgrade notes: multiple directories and failover
 
