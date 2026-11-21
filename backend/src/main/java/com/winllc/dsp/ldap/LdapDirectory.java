@@ -106,6 +106,23 @@ public class LdapDirectory implements AutoCloseable {
   private final SSLContext startTlsContext;
   private final MeterRegistry meters;
   private volatile LDAPConnectionPool pool;
+  /** Held while the pool is being created. */
+  private final java.util.concurrent.locks.ReentrantLock creating = new java.util.concurrent.locks.ReentrantLock();
+  /** The last failed attempt to create the pool (null after one succeeded). */
+  private volatile Failure lastFailure;
+
+  /** After a failed attempt to connect, calls fail at once for this long instead of each trying again. */
+  static final java.time.Duration RETRY_AFTER = java.time.Duration.ofSeconds(5);
+
+  private record Failure(long at, DirectoryException error) {
+    boolean recent() {
+      return System.nanoTime() - at < RETRY_AFTER.toNanos();
+    }
+
+    DirectoryException rethrown() {
+      return new DirectoryException(error.code(), error.getMessage());
+    }
+  }
 
   public LdapDirectory(Settings settings) {
     this(settings, null);
@@ -184,37 +201,57 @@ public class LdapDirectory implements AutoCloseable {
   // Connections
   // ---------------------------------------------------------------------------
 
+  /**
+   * The connection pool, created on first use. While the directory can't be reached, a failed
+   * attempt is remembered: for {@link #RETRY_AFTER} every call fails at once, and afterwards one
+   * caller tries again while the others still fail at once, instead of each waiting a connect
+   * timeout in turn.
+   */
   private LDAPConnectionPool pool() {
     LDAPConnectionPool p = pool;
     if (p != null) return p;
-    synchronized (this) {
-      if (pool == null) {
-        try {
-          BindRequest bind = settings.bindDn() == null || settings.bindDn().isBlank()
-              ? null
-              : new SimpleBindRequest(settings.bindDn(), settings.bindPassword());
-          PostConnectProcessor tls = startTlsContext == null ? null : new StartTLSPostConnectProcessor(startTlsContext);
-          PostConnectProcessor track = new PostConnectProcessor() {
-            @Override
-            public void processPreAuthenticatedConnection(LDAPConnection connection) throws LDAPException {
-              noteServer(connection);
-              if (tls != null) tls.processPreAuthenticatedConnection(connection);
-            }
+    Failure failed = lastFailure;
+    if (failed != null && failed.recent()) throw failed.rethrown();
+    if (failed == null) {
+      creating.lock();
+    } else if (!creating.tryLock()) {
+      // Another caller is trying to connect right now.
+      throw failed.rethrown();
+    }
+    try {
+      if (pool != null) return pool;
+      Failure meanwhile = lastFailure;
+      if (meanwhile != null && meanwhile.recent()) throw meanwhile.rethrown();
+      try {
+        BindRequest bind = settings.bindDn() == null || settings.bindDn().isBlank()
+            ? null
+            : new SimpleBindRequest(settings.bindDn(), settings.bindPassword());
+        PostConnectProcessor tls = startTlsContext == null ? null : new StartTLSPostConnectProcessor(startTlsContext);
+        PostConnectProcessor track = new PostConnectProcessor() {
+          @Override
+          public void processPreAuthenticatedConnection(LDAPConnection connection) throws LDAPException {
+            noteServer(connection);
+            if (tls != null) tls.processPreAuthenticatedConnection(connection);
+          }
 
-            @Override
-            public void processPostAuthenticatedConnection(LDAPConnection connection) throws LDAPException {
-              if (tls != null) tls.processPostAuthenticatedConnection(connection);
-            }
-          };
-          LDAPConnectionPool created = new LDAPConnectionPool(serverSet, bind, 1, Math.max(1, settings.poolSize()), track);
-          created.setRetryFailedOperationsDueToInvalidConnections(true);
-          created.setConnectionPoolName("portal-" + settings.id());
-          pool = created;
-        } catch (LDAPException e) {
-          throw unavailable(e);
-        }
+          @Override
+          public void processPostAuthenticatedConnection(LDAPConnection connection) throws LDAPException {
+            if (tls != null) tls.processPostAuthenticatedConnection(connection);
+          }
+        };
+        LDAPConnectionPool created = new LDAPConnectionPool(serverSet, bind, 1, Math.max(1, settings.poolSize()), track);
+        created.setRetryFailedOperationsDueToInvalidConnections(true);
+        created.setConnectionPoolName("portal-" + settings.id());
+        pool = created;
+        lastFailure = null;
+        return created;
+      } catch (LDAPException e) {
+        DirectoryException error = unavailable(e);
+        lastFailure = new Failure(System.nanoTime(), error);
+        throw error;
       }
-      return pool;
+    } finally {
+      creating.unlock();
     }
   }
 
