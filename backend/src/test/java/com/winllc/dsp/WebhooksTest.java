@@ -324,6 +324,67 @@ class WebhooksTest extends ApiTestSupport {
   }
 
   @Test
+  void whileSendingIsOffNothingIsQueuedAndFinishedDeliveriesAreStillPurged() throws Exception {
+    Client admin = login("admin");
+    hook(admin, url("/off"), List.of("entry.changed"));
+    service.pauseBackground(true);
+    List<String> calls = new CopyOnWriteArrayList<>();
+    Deliveries real = service.deliveries();
+    Deliveries recording = new Deliveries() {
+      @Override
+      public int enqueue(List<Delivery> deliveries) {
+        calls.add("enqueue");
+        return real.enqueue(deliveries);
+      }
+
+      @Override
+      public List<Delivery> claim(Instant now, int limit, Duration lease, java.util.Set<String> skip) {
+        return real.claim(now, limit, lease, skip);
+      }
+
+      @Override
+      public int postpone(String webhookId, Instant until) {
+        return real.postpone(webhookId, until);
+      }
+
+      @Override
+      public void record(Delivery delivery) {
+        real.record(delivery);
+      }
+
+      @Override
+      public List<Delivery> recent(String webhookId, int limit) {
+        return real.recent(webhookId, limit);
+      }
+
+      @Override
+      public void cancel(String webhookId, String reason) {
+        real.cancel(webhookId, reason);
+      }
+
+      @Override
+      public void purge(Instant before) {
+        calls.add("purge");
+        real.purge(before);
+      }
+    };
+    service.use(recording);
+    props.getWebhooks().setEnabled(false);
+    try {
+      MvcResult r = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("mobile", List.of("+1 555 0400"))));
+      assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+      assertThat(service.dispatch()).isZero();
+      assertThat(calls).containsExactly("purge");
+      assertThat(service.spooled()).isZero();
+      assertThat(received).isEmpty();
+    } finally {
+      props.getWebhooks().setEnabled(true);
+      service.use(real);
+      service.pauseBackground(false);
+    }
+  }
+
+  @Test
   void retriesFailuresAndGivesUpAfterTheLastAttempt() throws Exception {
     Client admin = login("admin");
     answer.set(500);

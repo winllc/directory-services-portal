@@ -935,7 +935,9 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   New release-package `.env` files and new Helm installations get a random key (see Upgrade notes).
   Secrets are never returned by the API again, logged or audited. Changes to webhooks are audited
   (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.
-- `WEBHOOKS_ENABLED=false` stops sending (deliveries stay queued) and creating webhooks.
+- `WEBHOOKS_ENABLED=false` stops sending and creating webhooks. Deliveries already queued stay
+  queued; changes made while it is off are not queued (so the outbox can't grow unattended), and
+  finished deliveries are still forgotten after the retention.
 
 ### Import and export
 - **Export**: on a directory page, *Export CSV* or *Export LDIF* downloads the entries matching the
