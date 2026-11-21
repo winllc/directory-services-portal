@@ -870,21 +870,41 @@ export const downloadMembers = (definitionId: string, dn: string, format: 'csv' 
   download(`/api/directories/${encodeURIComponent(definitionId)}/members/export?${dnParam(dn)}${attribute ? `&attribute=${encodeURIComponent(attribute)}` : ''}&format=${format}`,
     `members.${format}`);
 
-/** Waits for a background job's result (polling once a second). */
-async function jobResult<T>(response: T | PendingResponse): Promise<T> {
+/** Failed polls in a row (a replica restarting, a proxy's 502) jobResult rides out before giving up. */
+const JOB_POLL_FAILURES = 10;
+
+/**
+ * Waits for a background job's result (polling every `pause` ms, once a second). A failed poll is
+ * tried again; after JOB_POLL_FAILURES in a row it gives up saying the import may still be running,
+ * never that it failed. Marking the job seen is bookkeeping and never fails the import.
+ */
+export async function jobResult<T>(response: T | PendingResponse, pause = 1000): Promise<T> {
   if (!isPending(response)) return response;
   const id = response.job.id;
   const stop = watchJob(id);
+  const wait = () => new Promise((r) => setTimeout(r, pause));
   try {
+    let failures = 0;
     for (;;) {
-      const job = await api.get<Job>(`/api/jobs/${encodeURIComponent(id)}`, { background: true });
-      if (job.status === 'succeeded') {
-        const r = await api.get<{ result: T }>(`/api/jobs/${encodeURIComponent(id)}/result`, { background: true });
-        await api.post('/api/jobs/seen', { ids: [id] }, { background: true });
-        return r.result;
+      let job: Job;
+      let done: { result: T } | undefined;
+      try {
+        job = await api.get<Job>(`/api/jobs/${encodeURIComponent(id)}`, { background: true });
+        if (job.status === 'succeeded') done = await api.get<{ result: T }>(`/api/jobs/${encodeURIComponent(id)}/result`, { background: true });
+        failures = 0;
+      } catch {
+        if (++failures >= JOB_POLL_FAILURES) {
+          throw new Error('Lost contact with the server while the import ran: it may still be running, or have finished. Check Jobs for its result before importing again.');
+        }
+        await wait();
+        continue;
+      }
+      if (done) {
+        api.post('/api/jobs/seen', { ids: [id] }, { background: true }).catch(() => undefined);
+        return done.result;
       }
       if (!jobActive(job)) throw new Error(job.status === 'cancelled' ? 'The import was cancelled.' : `The import failed: ${job.error ?? 'unknown error'}`);
-      await new Promise((r) => setTimeout(r, 1000));
+      await wait();
     }
   } finally {
     stop();
