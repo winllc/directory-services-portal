@@ -252,8 +252,8 @@ class EntryChangesTest extends ApiTestSupport {
     Client admin = login("admin");
     MvcResult r = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("uid", "bob.baker", "title", "Head of Sales")));
     assertThat(status(r)).isEqualTo(400);
-    assertThat(body(r).get("details").get("dn").asString()).isEqualTo(BOB);
-    assertThat(body(r).get("error").asString()).contains("not renamed");
+    assertThat(body(r).get("code").asString()).isEqualTo("partially_saved");
+    assertThat(body(r).get("error").asString()).contains("not renamed").endsWith("The entry is now " + BOB + ".");
     // The title was changed, and the trail says so (and that the rename was not done).
     assertThat(read(BOB).values("title")).containsExactly("Head of Sales");
     JsonNode event = trail(BOB).get(0);

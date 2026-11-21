@@ -769,7 +769,7 @@ public class EntryService {
         event.detail("partial", (renamed ? "renamed, but its other values were not set: " : "not renamed: ") + e.getMessage());
         recordUpdate(event, user, def, form, current, values, nowAt, applied, self);
         throw new ApiException(e.status(), "The other changes were saved, but " + (renamed ? "not all values of " + form.rdnAttribute()
-            : "the entry was not renamed") + ": " + e.getMessage() + ". The entry is now " + nowAt + ".", Map.of("dn", nowAt));
+            : "the entry was not renamed") + ": " + e.getMessage() + ". The entry is now " + nowAt + ".", "partially_saved");
       }
     }
     recordUpdate(event, user, def, form, current, values, targetDn, all, self);
