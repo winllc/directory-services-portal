@@ -150,10 +150,18 @@ class MetricsTest extends ApiTestSupport {
         widget("any", "def-staff", "distribution", "attribute", "employeeType"),
         widget("secret", "def-staff", "distribution", "attribute", "userPassword"),
         widget("secretFilter", "def-staff", "count", "filter", "(|(cn=*)(userPassword=p*))"),
-        widget("anyAttr", "def-staff", "count", "filter", "(:caseIgnoreMatch:=x)"));
+        widget("anyAttr", "def-staff", "count", "filter", "(:caseIgnoreMatch:=x)"),
+        // The same attribute by OID or with an option: a row label would be alice's password.
+        widget("secretOid", "def-staff", "distribution", "attribute", "2.5.4.35", "filter", "(uid=alice)", "limit", 100),
+        widget("secretOption", "def-staff", "distribution", "attribute", "userPassword;binary"),
+        widget("secretOidFilter", "def-staff", "count", "filter", "(2.5.4.35=p*)"));
     assertThat(rows(a.get("any").get("result"))).containsEntry("Full time", 8.0);
     assertThat(a.get("secret").get("error").asString()).contains("can't be used");
     assertThat(a.get("secretFilter").get("details").get("filter").asString()).contains("can't be used");
+    assertThat(a.get("secretOid").get("error").asString()).contains("can't be used");
+    assertThat(a.get("secretOid").has("result")).isFalse();
+    assertThat(a.get("secretOption").get("error").asString()).contains("can't be used");
+    assertThat(a.get("secretOidFilter").get("details").get("filter").asString()).contains("can't be used");
     assertThat(a.get("anyAttr").has("error")).isTrue();
   }
 

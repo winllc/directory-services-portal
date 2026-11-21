@@ -512,5 +512,26 @@ class ApiIntegrationTest extends ApiTestSupport {
       JsonNode preview = body(admin.post("/api/admin/preview", Map.of("baseDn", "ou=devices," + B, "scope", "one", "filter", "(acmeDeviceType=Laptop)")));
       assertThat(preview.get("entries").size()).isEqualTo(3);
     }
+
+    @Test
+    void previewNeverReturnsOrSearchesPasswords() throws Exception {
+      Client admin = login("admin");
+      // Named, by OID, with an option, and when no attributes are named (all user attributes).
+      for (Object attributes : List.of(List.of("uid", "userPassword"), List.of("uid", "2.5.4.35", "userPassword;binary"), List.of())) {
+        JsonNode preview = body(admin.post("/api/admin/preview",
+            Map.of("baseDn", "ou=people," + B, "scope", "one", "filter", "(uid=alice)", "attributes", attributes)));
+        assertThat(preview.get("entries").size()).isEqualTo(1);
+        JsonNode attrs = preview.get("entries").get(0).get("attributes");
+        assertThat(attrs.has("uid")).isTrue();
+        assertThat(attrs.propertyNames()).noneMatch(n -> n.toLowerCase().startsWith("userpassword") || n.startsWith("2.5.4.35"));
+      }
+      // Only hidden attributes asked for: none are returned, not all of them.
+      JsonNode only = body(admin.post("/api/admin/preview",
+          Map.of("baseDn", "ou=people," + B, "scope", "one", "filter", "(uid=alice)", "attributes", List.of("userPassword"))));
+      assertThat(only.get("entries").get(0).get("attributes").size()).isZero();
+      for (String filter : List.of("(userPassword=*)", "(&(uid=alice)(2.5.4.35=p*))")) {
+        assertThat(status(admin.post("/api/admin/preview", Map.of("baseDn", "ou=people," + B, "scope", "one", "filter", filter)))).isEqualTo(400);
+      }
+    }
   }
 }

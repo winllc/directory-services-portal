@@ -61,8 +61,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  */
 @Service
 public class EntryService {
-  /** Attributes that are never returned to clients. */
-  private static final Set<String> HIDDEN = Set.of("userpassword", "unicodepwd", "sambantpassword", "sambalmpassword", "krbprincipalkey");
+  /** Attributes that are never returned to clients, by name and by their standard OIDs. */
+  private static final Set<String> HIDDEN = Set.of("userpassword", "unicodepwd", "sambantpassword", "sambalmpassword", "krbprincipalkey",
+      "2.5.4.35", "1.2.840.113556.1.4.90", "1.3.6.1.4.1.7165.2.1.25", "1.3.6.1.4.1.7165.2.1.24", "2.16.840.1.113719.1.301.4.9.1");
   private static final int LIST_LIMIT = 1000;
   /** Group member attributes: changed value by value, never replaced as a whole (see {@link #changeValues}). */
   public static final Set<String> MEMBER_ATTRIBUTES = Set.of("member", "uniquemember", "memberuid");
@@ -100,6 +101,26 @@ public class EntryService {
     String a = attribute.toLowerCase();
     int semi = a.indexOf(';');
     return HIDDEN.contains(a) || (semi > 0 && HIDDEN.contains(a.substring(0, semi)));
+  }
+
+  /**
+   * {@link #isHidden(String)}, also for any other name or OID the schema gives a hidden attribute
+   * (an alias or an OID a request may use instead of the name).
+   */
+  public static boolean isHidden(String attribute, SchemaIndex index) {
+    if (isHidden(attribute)) return true;
+    int semi = attribute.indexOf(';');
+    return isHidden(index.primaryAttributeName(semi > 0 ? attribute.substring(0, semi) : attribute));
+  }
+
+  /** The entry without its hidden attributes (see {@link #isHidden(String, SchemaIndex)}). */
+  public static DirectoryEntry withoutHidden(DirectoryEntry e, SchemaIndex index) {
+    if (e.attributes().keySet().stream().noneMatch(k -> isHidden(k, index))) return e;
+    Map<String, List<String>> attrs = new LinkedHashMap<>();
+    e.attributes().forEach((k, v) -> {
+      if (!isHidden(k, index)) attrs.put(k, v);
+    });
+    return new DirectoryEntry(e.dn(), attrs);
   }
 
   public static SearchScope searchScope(DirectoryDefinition def) {
