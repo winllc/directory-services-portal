@@ -387,12 +387,23 @@ public class EntryService {
 
   /** Options for a user: typed text {@code q} searches, {@code values} resolves stored values. */
   public DirectoryOptions.Page optionPage(SessionUser user, DirectoryDefinition def, String fieldId, String q, List<String> values) {
-    boolean canRead = access(user, def).atLeast(AccessLevel.READ) || !(def.selfMatch() instanceof SelfMatch.None);
-    if (!canRead) throw ApiException.forbidden("You do not have access to this directory");
-    FormField field = form(def).fields().stream()
+    FormDefinition form = form(def);
+    boolean canRead = access(user, def).atLeast(AccessLevel.READ);
+    // Self service: users without read access see their own entry (My profile) and nothing else.
+    List<DirectoryEntry> own = canRead || def.selfMatch() == null || def.selfMatch() instanceof SelfMatch.None ? List.of() : findSelf(user, def, form);
+    if (!canRead && own.isEmpty()) throw ApiException.forbidden("You do not have access to this directory");
+    FormField field = form.fields().stream()
         .filter(f -> f.id().equals(fieldId))
         .findFirst()
         .orElseThrow(() -> ApiException.notFound("Field not found"));
+    if (!canRead && (def.readOnly() || !FormValidator.isWritable(form, field, FormValidator.Mode.SELF))) {
+      // A field they can't edit: only labels for the values their own entry holds.
+      if (values == null || values.isEmpty()) throw ApiException.forbidden("You can't change this field");
+      Set<String> held = new java.util.HashSet<>();
+      own.forEach(e -> held.addAll(e.values(field.attribute())));
+      values = values.stream().filter(held::contains).toList();
+      if (values.isEmpty()) return new DirectoryOptions.Page(List.of(), false, null);
+    }
     if (field.dropdown() instanceof DropdownSource.Static s) return new DirectoryOptions.Page(s.options(), false, null);
     if (!(field.dropdown() instanceof DropdownSource.Ldap src)) return new DirectoryOptions.Page(List.of(), false, null);
     LdapDirectory dir = ldap(def);

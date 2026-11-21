@@ -326,6 +326,25 @@ class ApiIntegrationTest extends ApiTestSupport {
     }
 
     @Test
+    void selfServiceUsersSeeOnlyTheOptionsOfTheirOwnEntry() throws Exception {
+      // frank (a partner) has his own entry in partners, read access to no directory.
+      Client frank = login("frank");
+      String carol = "uid=carol,ou=people," + B;
+      // No searching people pickers: not of a directory he has no entry in, not of a field he can't edit.
+      assertThat(status(frank.get("/api/directories/staff/options/f-manager?q=an"))).isEqualTo(403);
+      assertThat(status(frank.get("/api/directories/partners/options/f-acmesponsor?q=an"))).isEqualTo(403);
+      assertThat(status(frank.get("/api/directories/partners/options/f-acmesponsor"))).isEqualTo(403);
+      // Labels for the values his own entry holds (My profile), and nothing for other values.
+      JsonNode own = body(frank.get("/api/directories/partners/options/f-acmesponsor" + q(carol).replace("?dn=", "?value=")));
+      assertThat(own.get("options").size()).isEqualTo(1);
+      assertThat(own.get("options").get(0).get("value").asString()).isEqualTo(carol);
+      JsonNode other = body(frank.get("/api/directories/partners/options/f-acmesponsor" + q(ALICE).replace("?dn=", "?value=")));
+      assertThat(other.get("options").size()).isZero();
+      // Readers are not affected.
+      assertThat(status(login("bob").get("/api/directories/partners/options/f-acmesponsor?q=an"))).isEqualTo(200);
+    }
+
+    @Test
     void letsUsersEditSelfEditableFieldsOnTheirOwnEntryOnly() throws Exception {
       Client alice = login("alice");
       MvcResult ok = alice.put("/api/me/def-staff/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("+1 555 9999"), "title", "CTO")));
