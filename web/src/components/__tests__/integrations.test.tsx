@@ -168,6 +168,36 @@ describe('integrations page', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     expect(await screen.findByTestId('integration-secret')).toHaveTextContent('whsec_SECRET');
   });
+
+  it('asks before replacing a signing secret, and keeps the new one up until Done', async () => {
+    const rotations: string[] = [];
+    mockApi({
+      '/api/admin/webhooks': [hook],
+      '/api/admin/webhooks/w1/deliveries': [],
+      '/api/admin/webhooks/w1/rotate-secret': (_u: URL, init?: RequestInit) => {
+        rotations.push(init?.method ?? 'GET');
+        return new Response(JSON.stringify({ webhook: hook, secret: 'whsec_NEW' }), { status: 200 });
+      },
+    });
+    renderAt('/admin/integrations');
+    await userEvent.click(await screen.findByRole('tab', { name: 'Webhooks' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'New secret for Ticketing' }));
+    const confirm = await screen.findByRole('dialog', { name: 'New signing secret' });
+    expect(confirm).toHaveTextContent('Replace the signing secret of "Ticketing"?');
+    await userEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(rotations).toEqual([]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'New secret for Ticketing' }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'New signing secret' })).getByRole('button', { name: 'Replace secret' }));
+    expect(await screen.findByTestId('integration-secret')).toHaveTextContent('whsec_NEW');
+    expect(rotations).toEqual(['POST']);
+    // Shown once: Escape doesn't close it, Done does.
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByTestId('integration-secret')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog', { name: 'Signing secret' })).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByTestId('integration-secret')).not.toBeInTheDocument());
+  });
 });
 
 describe('directory import', () => {
