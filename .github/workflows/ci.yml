@@ -558,6 +558,12 @@ jobs:
               echo "answered after ${i}s"
               curl -fsS http://localhost:8080/api/health
               curl -fsS -o /dev/null http://localhost:8080/
+              # The app shell is never cached, whichever path loads it, and keeps the security headers.
+              for path in / /d/staff /index.html; do
+                headers="$(curl -fsS -o /dev/null -D - "http://localhost:8080$path")"
+                grep -qi '^cache-control: no-cache' <<<"$headers" || { echo "$path: no Cache-Control: no-cache"; exit 1; }
+                grep -qi '^x-frame-options: deny' <<<"$headers" || { echo "$path: no X-Frame-Options"; exit 1; }
+              done
               # Unlicensed (the image only trusts the production key and has no license): sign-in
               # works, everything else answers license_required.
               curl -fsS -c /tmp/jar -H 'X-DSP-Request: 1' -H 'Content-Type: application/json' \

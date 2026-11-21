@@ -100,6 +100,13 @@ server {
         try_files $uri =404;
     }
 
+    # The app shell, also where the routes below land: never cached, so a browser picks up the
+    # hashed assets of a new version. Exact, so it wins over the regex location above. No
+    # add_header here: one would drop the server's security headers in this location.
+    location = /index.html {
+        expires -1;
+    }
+
     # Client-side routes (/d/staff, /admin/forms, ...) all load the app shell, which is never cached.
     location / {
         expires -1;
