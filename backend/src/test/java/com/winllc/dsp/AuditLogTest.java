@@ -430,6 +430,10 @@ class AuditLogTest extends ApiTestSupport {
 
     assertThat(status(anonymous(get("/api/audit/events")))).isEqualTo(401);
     assertThat(status(anonymous(get("/api/audit/events").header("Authorization", "Bearer ensat_wrong")))).isEqualTo(401);
+    JsonNode refused = events(admin, "&action=auth.login&q=api-token").get(0);
+    assertThat(refused.get("outcome").asString()).isEqualTo("failure");
+    assertThat(detail(refused, "method")).isEqualTo("api-token");
+    assertThat(refused.toString()).doesNotContain("ensat_wrong");
     assertThat(status(admin.get("/api/audit/events"))).as("a session is not a token").isEqualTo(401);
     assertThat(status(anonymous(get("/api/audit/events?limit=5000").header("Authorization", "Bearer " + token)))).isEqualTo(400);
 
