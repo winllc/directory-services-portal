@@ -1042,7 +1042,9 @@ nor is a save that changes nothing.
   filtered to that entry, including events from before a rename. **Export** writes the current
   filter (up to 100,000 events) as CSV or NDJSON (`audit.exported`). **Verify integrity**
   recomputes the chain: intact, or the first broken seq; after pruning, the first retained
-  event is the anchor and its `prevHash` is accepted as given. **Delivery** shows each output's
+  event is the anchor, and it must be the event right after the last one retention deleted
+  (recorded in `audit-pruned` next to the files, or in the shared database), chained to its
+  hash, so events deleted by other means are reported. **Delivery** shows each output's
   state, and **API tokens** manages the pull API's tokens. The page and its API work whatever
   the license says.
 
@@ -1072,6 +1074,12 @@ backoff up to 5 minutes, never slowing requests. An output failing for over 15 m
 output at startup. The rename of the log category from `audit` to `ens.audit` keeps routing
 working: the lines go to stdout (and the file) as before, now without the log prefix; set
 `LOGGING_LEVEL_ENS_AUDIT=OFF` (instead of `LOGGING_LEVEL_AUDIT`) to silence them.
+
+Syslog over `tcp` and `tls` has no delivery acknowledgement, so it is best effort. Before each
+batch the forwarder checks that the collector has not closed the connection, and it opens a new
+one after 30 seconds unused; when a connection turns out broken, the batch last written on it is
+sent again (a collector restart can repeat up to one batch). A batch the collector does not take
+within 10 seconds fails and is retried. Where no event may be missing, use HEC or the pull API.
 
 **Getting it into Splunk** (any one of):
 

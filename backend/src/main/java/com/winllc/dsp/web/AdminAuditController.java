@@ -188,7 +188,7 @@ public class AdminAuditController {
   static String message(AuditStore.Verification v) {
     if (v.anchorSeq() == null) return "The audit log is empty.";
     String anchor = v.anchorIsGenesis() ? "from seq 1"
-        : "from seq " + v.anchorSeq() + " (anchor: older events were pruned, so its prevHash is accepted as given)";
+        : "from seq " + v.anchorSeq() + " (anchor: retention pruned the events before it)";
     if (!v.intact()) return "Broken at seq " + v.brokenSeq() + ": " + v.problem() + ". Checked " + anchor + ".";
     return "Intact: " + v.checked() + " event(s) " + anchor + " to seq " + v.lastSeq() + ".";
   }

@@ -1,5 +1,6 @@
 package com.winllc.dsp.web;
 
+import com.winllc.dsp.audit.AccessDenials;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.audit.AuditStore;
 import com.winllc.dsp.audit.AuditTokens;
@@ -20,16 +21,19 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>No session, no CSRF header and no license needed (its own security filter chain, outside the
  * license interceptor): the audit trail stays readable while the portal is unlicensed or read-only.
- * Pulls are not audited (that would loop); the token's last use is recorded instead.
+ * Pulls are not audited (that would loop); the token's last use is recorded instead. A wrong or
+ * revoked token is recorded as a failed {@code auth.login}, collapsed per source address.
  */
 @RestController
 public class AuditEventsController {
   private final AuditLog audit;
   private final AuditTokens tokens;
+  private final AccessDenials denials;
 
-  public AuditEventsController(AuditLog audit, AuditTokens tokens) {
+  public AuditEventsController(AuditLog audit, AuditTokens tokens, AccessDenials denials) {
     this.audit = audit;
     this.tokens = tokens;
+    this.denials = denials;
   }
 
   @GetMapping("/api/audit/events")
@@ -38,6 +42,7 @@ public class AuditEventsController {
     String auth = request.getHeader("Authorization");
     String presented = auth != null && auth.regionMatches(true, 0, "Bearer ", 0, 7) ? auth.substring(7).trim() : null;
     if (tokens.authenticate(presented) == null) {
+      if (presented != null) denials.tokenRefused(request);
       response.setHeader("WWW-Authenticate", "Bearer realm=\"ens-audit\"");
       throw new ApiException(org.springframework.http.HttpStatus.UNAUTHORIZED, "A valid audit API token is required");
     }

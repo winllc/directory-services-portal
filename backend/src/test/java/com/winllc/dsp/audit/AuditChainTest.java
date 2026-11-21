@@ -100,6 +100,33 @@ class AuditChainTest {
   }
 
   @Test
+  void aPartialAppendIsRemovedSoTheChainStaysIntact() throws Exception {
+    boolean[] fail = {false};
+    FileAuditStore store = new FileAuditStore(dir) {
+      @Override
+      void writeLine(Path file, String line) throws java.io.IOException {
+        if (!fail[0]) {
+          super.writeLine(file, line);
+          return;
+        }
+        fail[0] = false;
+        Files.writeString(file, line.substring(0, 40), java.nio.file.StandardOpenOption.APPEND); // the disk filled up
+        throw new java.io.IOException("No space left on device");
+      }
+    };
+    store.append(event("system.started", "2026-01-01T00:00:00.000Z"), null);
+    fail[0] = true;
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+        () -> store.append(event("system.started", "2026-01-02T00:00:00.000Z"), null)).isInstanceOf(java.io.IOException.class);
+    store.append(event("system.started", "2026-01-03T00:00:00.000Z"), null);
+
+    AuditStore.Verification v = store.verify();
+    assertThat(v.intact()).as(v.problem()).isTrue();
+    assertThat(v.checked()).isEqualTo(2);
+    assertThat(v.unreadableLines()).isZero();
+  }
+
+  @Test
   void countsAStoreWithoutRoomAsNotWritable() throws Exception {
     assertThat(new FileAuditStore(dir.resolve("audit")).writable()).isTrue();
     assertThat(AuditStore.enoughSpace(AuditStore.MIN_FREE_BYTES)).isTrue();
@@ -136,6 +163,48 @@ class AuditChainTest {
     store.prune(s -> true);
     assertThat(store.readAfter(0, 10)).extracting(AuditStore.Stored::seq).containsExactly(5L);
     assertThat(store.verify().anchorSeq()).isEqualTo(5);
+  }
+
+  @Test
+  void eventsDeletedFromTheStartWithoutRetentionAreDetected() throws Exception {
+    AuditStore store = new FileAuditStore(dir);
+    for (int i = 0; i < 4; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
+    Path file = dir.resolve("audit-2026-01.jsonl");
+    List<String> lines = new ArrayList<>(Files.readAllLines(file));
+    Files.write(file, lines.subList(2, lines.size()));
+
+    AuditStore.Verification v = new FileAuditStore(dir).verify();
+    assertThat(v.intact()).isFalse();
+    assertThat(v.brokenSeq()).isEqualTo(1);
+    assertThat(v.problem()).contains("retention has pruned nothing");
+  }
+
+  @Test
+  void afterPruningTheAnchorMustBeTheEventAfterTheLastPruned() throws Exception {
+    AuditStore store = new FileAuditStore(dir);
+    for (int i = 0; i < 5; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
+    store.prune(s -> s.seq() <= 2);
+    assertThat(store.prunedThrough().seq()).isEqualTo(2);
+    assertThat(store.verify().intact()).isTrue();
+
+    Path file = dir.resolve("audit-2026-01.jsonl");
+    List<String> lines = new ArrayList<>(Files.readAllLines(file));
+    Files.write(file, lines.subList(1, lines.size()));
+    AuditStore.Verification v = new FileAuditStore(dir).verify();
+    assertThat(v.intact()).isFalse();
+    assertThat(v.brokenSeq()).isEqualTo(3);
+    assertThat(v.problem()).contains("pruned only up to seq 2");
+  }
+
+  @Test
+  void aStoreThatPrunedBeforeItRecordedHowFarKeepsItsAnchor() throws Exception {
+    AuditStore store = new FileAuditStore(dir);
+    for (int i = 0; i < 3; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
+    store.append(event("audit.pruned", "2026-01-04T00:00:00.000Z"), null);
+    store.prune(s -> s.seq() <= 2);
+    Files.delete(dir.resolve(FileAuditStore.PRUNED_FILE)); // as an earlier release left it
+
+    assertThat(new FileAuditStore(dir).verify().intact()).isTrue();
   }
 
   @Test

@@ -2,8 +2,12 @@ package com.winllc.dsp.audit;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
+import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,6 +21,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -45,13 +50,19 @@ import org.slf4j.LoggerFactory;
 public class FileAuditStore extends AuditStore {
   private static final Logger log = LoggerFactory.getLogger(FileAuditStore.class);
   static final Pattern FILE = Pattern.compile("audit-(\\d{4})-(\\d{2})\\.jsonl");
+  /** Where retention records how far it pruned ({@link #prunedThrough}): {@code seq:hash}. */
+  static final String PRUNED_FILE = "audit-pruned";
   /** Recent lines kept in memory so forwarders and the pull API rarely read files. */
   static final int TAIL_CAPACITY = 20_000;
+  /** Every event whose seq is a multiple of this has its byte offset remembered, so older reads seek. */
+  static final int INDEX_EVERY = 1_000;
 
   private final Path dir;
   /** Shared by appends and reads; exclusive for pruning, which rewrites files. */
   private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final Deque<Stored> tail = new ArrayDeque<>();
+  /** Per file, seq to the byte offset of its line, filled in as files are read; cleared when files are rewritten. */
+  private final Map<Path, TreeMap<Long, Long>> offsets = new HashMap<>();
   private long headSeq;
   private String headHash = AuditJson.GENESIS;
   private YearMonth headMonth;
@@ -112,23 +123,28 @@ public class FileAuditStore extends AuditStore {
     headHash = AuditJson.GENESIS;
     headMonth = null;
     tail.clear();
+    synchronized (offsets) {
+      offsets.clear();
+    }
     List<Path> files = storeFiles();
     for (int i = files.size() - 1; i >= 0; i--) {
       Path f = files.get(i);
-      List<String> lines = readLines(f);
-      repairTrailingNewline(f);
-      List<Stored> stored = new ArrayList<>();
-      for (String l : lines) {
+      Deque<Stored> stored = new ArrayDeque<>();
+      forEachLine(f, 0, (l, offset) -> {
         Stored s = parse(l);
-        if (s != null) stored.add(s);
-      }
+        if (s != null) {
+          stored.addLast(s);
+          if (stored.size() > TAIL_CAPACITY) stored.removeFirst();
+        }
+        return true;
+      });
+      repairTrailingNewline(f);
       if (stored.isEmpty()) continue;
-      Stored last = stored.get(stored.size() - 1);
+      Stored last = stored.peekLast();
       headSeq = last.seq();
       headHash = AuditJson.hashOf(last.line());
       headMonth = monthOf(f);
-      int from = Math.max(0, stored.size() - TAIL_CAPACITY);
-      tail.addAll(stored.subList(from, stored.size()));
+      tail.addAll(stored);
       break;
     }
   }
@@ -178,12 +194,16 @@ public class FileAuditStore extends AuditStore {
         String line = AuditJson.line(body, hash);
         YearMonth month = monthFor(event.time());
         Path file = fileFor(month);
+        long before = -1;
         try {
           Files.createDirectories(dir);
-          Files.writeString(file, line + "\n", StandardCharsets.UTF_8,
-              StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
+          // A failed append may have left part of its line in a file: end it before writing on.
+          if (lastWriteFailure != null && Files.exists(file)) repairTrailingNewline(file);
+          before = Files.exists(file) ? Files.size(file) : 0;
+          writeLine(file, line + "\n");
         } catch (IOException | RuntimeException e) {
           lastWriteFailure = Instant.now();
+          if (before >= 0) truncate(file, before);
           throw e instanceof IOException io ? io : new IOException(e.getMessage(), e);
         }
         lastWriteFailure = null;
@@ -199,6 +219,27 @@ public class FileAuditStore extends AuditStore {
       }
     } finally {
       lock.readLock().unlock();
+    }
+  }
+
+  /** Appends one line, synced to disk. */
+  void writeLine(Path file, String line) throws IOException {
+    Files.writeString(file, line, StandardCharsets.UTF_8,
+        StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
+  }
+
+  /**
+   * Cuts what a failed append left (part of a line, the disk being full) so the next event does not
+   * share its line; when that fails too, the next append ends the partial line first.
+   */
+  private static void truncate(Path file, long size) {
+    try (FileChannel ch = FileChannel.open(file, StandardOpenOption.WRITE)) {
+      if (ch.size() > size) {
+        ch.truncate(size);
+        ch.force(true);
+      }
+    } catch (IOException | RuntimeException e) {
+      log.warn("Could not remove the partial line a failed append left in {}: {}", file, e.getMessage());
     }
   }
 
@@ -306,12 +347,15 @@ public class FileAuditStore extends AuditStore {
         }
       }
       for (int i = start; i < files.size() && out.size() < limit; i++) {
-        for (String l : readLines(files.get(i))) {
+        Path f = files.get(i);
+        forEachLine(f, offsetBefore(f, afterSeq + 1), (l, offset) -> {
           Stored s = parse(l);
-          if (s == null || s.seq() <= afterSeq) continue;
+          if (s == null) return true;
+          if (s.seq() % INDEX_EVERY == 0) remember(f, s.seq(), offset);
+          if (s.seq() <= afterSeq) return true;
           out.add(s);
-          if (out.size() >= limit) break;
-        }
+          return out.size() < limit;
+        });
       }
       return out;
     } finally {
@@ -331,10 +375,14 @@ public class FileAuditStore extends AuditStore {
       for (int i = files.size() - 1; i >= 0; i--) {
         Path f = files.get(i);
         if (monthFilter != null && !monthFilter.test(monthOf(f))) continue;
-        List<String> lines = readLines(f);
-        for (int j = lines.size() - 1; j >= 0; j--) {
-          Stored s = parse(lines.get(j));
-          if (s != null && !visitor.visit(s)) return;
+        try (ReverseLines lines = new ReverseLines(f)) {
+          String l;
+          while ((l = lines.previous()) != null) {
+            Stored s = parse(l);
+            if (s != null && !visitor.visit(s)) return;
+          }
+        } catch (IOException e) {
+          log.warn("Could not read audit file {}: {}", f, e.getMessage());
         }
       }
     } finally {
@@ -348,11 +396,14 @@ public class FileAuditStore extends AuditStore {
     lock.readLock().lock();
     try {
       for (Path f : storeFiles()) {
-        for (String l : readLines(f)) {
-          if (l.isBlank()) continue;
+        boolean[] more = {true};
+        forEachLine(f, 0, (l, offset) -> {
+          if (l.isBlank()) return true;
           Stored s = parse(l);
-          if (!visitor.visit(s != null ? s : new Stored(-1, l))) return;
-        }
+          more[0] = visitor.visit(s != null ? s : new Stored(-1, l));
+          return more[0];
+        });
+        if (!more[0]) return;
       }
     } finally {
       lock.readLock().unlock();
@@ -407,6 +458,121 @@ public class FileAuditStore extends AuditStore {
     }
   }
 
+  /** Called for each line read and the byte offset it starts at; return false to stop. */
+  @FunctionalInterface
+  interface LineVisitor {
+    boolean visit(String line, long offset);
+  }
+
+  /** Streams a file's lines from a byte offset (a line start), logging a file it cannot read. */
+  static void forEachLine(Path f, long from, LineVisitor visitor) {
+    try {
+      readLines(f, from, visitor);
+    } catch (IOException e) {
+      log.warn("Could not read audit file {}: {}", f, e.getMessage());
+    }
+  }
+
+  /** Streams a file's lines from a byte offset (a line start), never holding more than one. */
+  static void readLines(Path f, long from, LineVisitor visitor) throws IOException {
+    try (FileChannel ch = FileChannel.open(f, StandardOpenOption.READ)) {
+      ch.position(from);
+      InputStream in = Channels.newInputStream(ch);
+      byte[] buf = new byte[64 * 1024];
+      ByteArrayOutputStream line = new ByteArrayOutputStream();
+      long offset = from;
+      long start = from;
+      int n;
+      while ((n = in.read(buf)) > 0) {
+        int s = 0;
+        for (int i = 0; i < n; i++) {
+          if (buf[i] != '\n') continue;
+          line.write(buf, s, i - s);
+          if (!visitor.visit(text(line), start)) return;
+          line.reset();
+          s = i + 1;
+          start = offset + s;
+        }
+        line.write(buf, s, n - s);
+        offset += n;
+      }
+      if (line.size() > 0) visitor.visit(text(line), start);
+    }
+  }
+
+  private static String text(ByteArrayOutputStream line) {
+    String s = line.toString(StandardCharsets.UTF_8);
+    return s.endsWith("\r") ? s.substring(0, s.length() - 1) : s;
+  }
+
+  /** Where in {@code f} to start reading for {@code seq}: the remembered line at or before it, else the start. */
+  long offsetBefore(Path f, long seq) {
+    synchronized (offsets) {
+      TreeMap<Long, Long> known = offsets.get(f);
+      Map.Entry<Long, Long> at = known == null ? null : known.floorEntry(seq);
+      return at == null ? 0 : at.getValue();
+    }
+  }
+
+  private void remember(Path f, long seq, long offset) {
+    synchronized (offsets) {
+      offsets.computeIfAbsent(f, k -> new TreeMap<>()).put(seq, offset);
+    }
+  }
+
+  /** A file's lines from the last to the first, read backwards in blocks. */
+  static final class ReverseLines implements Closeable {
+    private final RandomAccessFile file;
+    private final byte[] block = new byte[64 * 1024];
+    private final ByteArrayOutputStream reversed = new ByteArrayOutputStream();
+    private long position;
+    private int index;
+
+    ReverseLines(Path f) throws IOException {
+      file = new RandomAccessFile(f.toFile(), "r");
+      position = file.length();
+    }
+
+    /** The line before the last one returned, or null at the start of the file. */
+    String previous() throws IOException {
+      reversed.reset();
+      boolean any = false;
+      while (true) {
+        if (index == 0) {
+          if (position == 0) return any ? line() : null;
+          int n = (int) Math.min(block.length, position);
+          position -= n;
+          file.seek(position);
+          file.readFully(block, 0, n);
+          index = n;
+        }
+        byte b = block[--index];
+        if (b == '\n') {
+          if (any || position + index + 1 < file.length()) return line();
+          continue; // the file's final newline
+        }
+        reversed.write(b);
+        any = true;
+      }
+    }
+
+    private String line() {
+      byte[] bytes = reversed.toByteArray();
+      for (int i = 0, j = bytes.length - 1; i < j; i++, j--) {
+        byte t = bytes[i];
+        bytes[i] = bytes[j];
+        bytes[j] = t;
+      }
+      String s = new String(bytes, StandardCharsets.UTF_8);
+      return s.endsWith("\r") ? s.substring(0, s.length() - 1) : s;
+    }
+
+    @Override
+    public void close() throws IOException {
+      file.close();
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Retention
   // ---------------------------------------------------------------------------
@@ -420,33 +586,58 @@ public class FileAuditStore extends AuditStore {
     lock.writeLock().lock();
     try {
       long head = headSeq();
-      List<Stored> doomed = new ArrayList<>();
+      // Only the first and last prunable events and how many: never the whole range in memory.
+      Stored[] first = {null};
+      Stored[] last = {null};
+      long[] count = {0};
       scanOldestFirst(s -> {
         if (s.seq() < 0) return true;
         if (s.seq() >= head || !prunable.test(s)) return false;
-        doomed.add(s);
+        if (first[0] == null) first[0] = s;
+        last[0] = s;
+        count[0]++;
         return true;
       });
-      if (doomed.isEmpty()) return new Pruned(0, null, null, null, null);
-      long upTo = doomed.get(doomed.size() - 1).seq();
+      if (count[0] == 0) return new Pruned(0, null, null, null, null);
+      long upTo = last[0].seq();
+      // Recorded first: an interrupted prune leaves events retention chose to delete, never a gap
+      // verification cannot account for.
+      recordPrunedThrough(new PrunedThrough(upTo, AuditJson.hashOf(last[0].line())));
+      synchronized (offsets) {
+        offsets.clear();
+      }
       for (Path f : storeFiles()) {
-        List<String> lines = readLines(f);
-        List<String> keep = new ArrayList<>();
-        boolean changed = false;
-        for (String l : lines) {
-          Stored s = parse(l);
-          if (s != null && s.seq() <= upTo) {
-            changed = true;
-          } else if (!l.isBlank()) {
-            keep.add(l);
-          }
+        Stored firstInFile = firstOf(f);
+        if (firstInFile == null || firstInFile.seq() > upTo) continue; // nothing to remove here
+        Path tmp = f.resolveSibling(f.getFileName() + ".prune.tmp");
+        boolean[] changed = {false};
+        long[] kept = {0};
+        try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+          readLines(f, 0, (l, offset) -> {
+            Stored s = parse(l);
+            if (s != null && s.seq() <= upTo) {
+              changed[0] = true;
+            } else if (!l.isBlank()) {
+              try {
+                w.write(l);
+                w.write('\n');
+              } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+              }
+              kept[0]++;
+            }
+            return true;
+          });
+        } catch (IOException | java.io.UncheckedIOException e) {
+          Files.deleteIfExists(tmp);
+          throw e instanceof java.io.UncheckedIOException u ? u.getCause() : (IOException) e;
         }
-        if (!changed) continue;
-        if (keep.isEmpty()) {
+        if (!changed[0]) {
+          Files.delete(tmp);
+        } else if (kept[0] == 0) {
+          Files.delete(tmp);
           Files.delete(f);
         } else {
-          Path tmp = f.resolveSibling(f.getFileName() + ".prune.tmp");
-          Files.write(tmp, keep, StandardCharsets.UTF_8);
           try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.WRITE)) {
             ch.force(true);
           }
@@ -456,23 +647,45 @@ public class FileAuditStore extends AuditStore {
       synchronized (this) {
         tail.removeIf(s -> s.seq() <= upTo);
       }
-      Stored a = doomed.get(0);
-      Stored b = doomed.get(doomed.size() - 1);
-      return new Pruned(doomed.size(), a.seq(), b.seq(), a.time(), b.time());
+      return new Pruned(count[0], first[0].seq(), last[0].seq(), first[0].time(), last[0].time());
     } finally {
       lock.writeLock().unlock();
     }
+  }
+
+  @Override
+  public PrunedThrough prunedThrough() {
+    Path f = dir.resolve(PRUNED_FILE);
+    if (!Files.exists(f)) return null;
+    try {
+      return PrunedThrough.parse(Files.readString(f, StandardCharsets.UTF_8));
+    } catch (IOException e) {
+      log.warn("Could not read {}: {}", f, e.getMessage());
+      return null;
+    }
+  }
+
+  private void recordPrunedThrough(PrunedThrough pruned) throws IOException {
+    PrunedThrough before = prunedThrough();
+    if (before != null && before.seq() >= pruned.seq()) return;
+    Path f = dir.resolve(PRUNED_FILE);
+    Path tmp = f.resolveSibling(PRUNED_FILE + ".tmp");
+    Files.writeString(tmp, pruned.text() + "\n", StandardCharsets.UTF_8);
+    try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.WRITE)) {
+      ch.force(true);
+    }
+    Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
   }
 
   /** Every legacy (pre ens-audit/1) file in the store directory. */
   List<Path> legacyFiles() {
     List<Path> out = new ArrayList<>();
     for (Path f : storeFiles()) {
-      for (String l : readLines(f)) {
-        if (l.isBlank()) continue;
+      forEachLine(f, 0, (l, offset) -> {
+        if (l.isBlank()) return true;
         if (!l.startsWith(ENS_PREFIX)) out.add(f);
-        break;
-      }
+        return false;
+      });
     }
     return Collections.unmodifiableList(out);
   }
