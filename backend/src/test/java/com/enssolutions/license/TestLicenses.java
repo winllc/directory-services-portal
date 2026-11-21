@@ -33,6 +33,21 @@ final class TestLicenses {
         }
     }
 
+    /** A certalert subscription license with this id and revision, valid from {@code notBefore} until {@code expiresAt}. */
+    static String license(String id, int revision, String notBefore, String expiresAt) throws Exception {
+        verifier();
+        String saved = LicenseManagerEnvironmentTest.payload;
+        String dated = saved.replaceFirst("\"notBefore\":\"[^\"]*\"", "\"notBefore\":\"" + notBefore + "\"")
+                .replaceFirst("\"expiresAt\":\"[^\"]*\"", "\"expiresAt\":\"" + expiresAt + "\"");
+        if (!dated.contains(notBefore) || !dated.contains(expiresAt)) throw new IllegalStateException("dates not replaced");
+        try {
+            LicenseManagerEnvironmentTest.payload = dated;
+            return LicenseManagerEnvironmentTest.license(id, revision, "certalert");
+        } finally {
+            LicenseManagerEnvironmentTest.payload = saved;
+        }
+    }
+
     /** Runs a schema script from the jar: statements separated by semicolons, "--" comment lines. */
     static void runDdl(DataSource ds, String ddl) throws SQLException {
         StringBuilder sql = new StringBuilder();

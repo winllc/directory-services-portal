@@ -59,9 +59,12 @@ class FileLicenseStoreTest {
         assertEquals("#Highest ENS license revision accepted per license id. Do not edit.", lines.get(0));
         assertTrue(lines.get(1).startsWith("#"));
         assertEquals("lic_00000000000000000001=4", lines.get(2));
+        // 1.1.0's two files, and the latest time seen, which earlier releases ignore.
         try (var files = Files.list(dir.resolve("state"))) {
-            assertEquals(List.of("installation-id", "revisions.properties"), files.map(p -> p.getFileName().toString()).sorted().toList());
+            assertEquals(List.of("installation-id", "latest-time-seen", "revisions.properties"),
+                    files.map(p -> p.getFileName().toString()).sorted().toList());
         }
+        assertEquals("2026-11-01T00:00:00Z\n", Files.readString(dir.resolve("state/latest-time-seen")));
     }
 
     @Test
@@ -74,6 +77,15 @@ class FileLicenseStoreTest {
         assertEquals("CA-AAAA-AAAA", store.installationId("CA-AAAA-AAAA"));
         assertEquals("CA-AAAA-AAAA", store.installationId("CA-BBBB-BBBB"));
         assertEquals("CA-AAAA-AAAA", InstallationId.loadOrCreate(dir.resolve("state"), "certalert"));
+    }
+
+    @Test
+    void theLatestTimeSeenIsRaisedAndNeverLowered() throws Exception {
+        FileLicenseStore store = new FileLicenseStore(dir.resolve("x.lic"), dir.resolve("state"));
+        Instant t = Instant.parse("2027-01-01T00:00:00Z");
+        assertEquals(Optional.of(t), store.raiseLatestTimeSeen(t));
+        assertEquals(Optional.of(t), store.raiseLatestTimeSeen(t.minusSeconds(3600)));
+        assertEquals(Optional.of(t.plusSeconds(1)), store.raiseLatestTimeSeen(t.plusSeconds(1)));
     }
 
     @Test

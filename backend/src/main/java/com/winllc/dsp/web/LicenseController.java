@@ -96,7 +96,7 @@ public class LicenseController {
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", why));
     }
     switch (check.state()) {
-      case WRONG_PRODUCT, WRONG_INSTALLATION, SUPERSEDED -> {
+      case WRONG_PRODUCT, WRONG_INSTALLATION, SUPERSEDED, NOT_IN_EFFECT -> {
         // Not installed: the library refuses these and keeps the current file.
         AuditLog.Draft event = audit.event("license.rejected").target("license", Licensing.PRODUCT, "License")
             .detail("reasonCode", check.state().name());
