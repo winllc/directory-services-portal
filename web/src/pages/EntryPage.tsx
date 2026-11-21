@@ -29,7 +29,8 @@ export function EntryPage() {
 
   if (def.isLoading || entry.isLoading) return <Spinner label="Loading…" />;
   if (!definition || !form) return <DirectoryNotFound slug={slug} error={def.error} />;
-  if (entry.error || !entry.data) {
+  // A failed refetch keeps the entry already shown (and an open form with its edits).
+  if (!entry.data) {
     return (
       <div className="page">
         <Link to={`/d/${definition.slug}`} className="back-link">

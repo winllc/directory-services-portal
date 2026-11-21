@@ -111,8 +111,12 @@ export interface EntryFormProps {
  * same rules as the server and submits only changed attributes on update.
  */
 export function EntryForm({ definitionId, form, mode, entry, submitLabel, submitting, error, onSubmit, onCancel, header, hideReadOnly }: EntryFormProps) {
-  const initial = useMemo(() => initialValues(form, entry), [form, entry]);
+  // The values the form was opened with: what is sent is what differs from them. Fixed for the
+  // form's life, so a refetch of the entry (someone else's change) is never sent back as an edit.
+  const [initial, setInitial] = useState<Values>(() => initialValues(form, entry));
   const [values, setValues] = useState<Values>(initial);
+  const latest = useMemo(() => initialValues(form, entry), [form, entry]);
+  const changedElsewhere = mode !== 'create' && form.fields.some((f) => !sameValues(latest[f.attribute.toLowerCase()] ?? [], initial[f.attribute.toLowerCase()] ?? []));
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState(false);
 
@@ -150,6 +154,21 @@ export function EntryForm({ definitionId, form, mode, entry, submitLabel, submit
   return (
     <form className="entry-form" onSubmit={submit} noValidate>
       {header}
+      {changedElsewhere && (
+        <Alert tone="warning" title="This entry changed since you opened it">
+          Saving sends only the fields you changed.{' '}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => {
+              setInitial(latest);
+              setValues(latest);
+            }}
+          >
+            Discard my changes and load the current entry
+          </button>
+        </Alert>
+      )}
       {topError ? (
         <Alert tone="danger">{(error as Error).message}</Alert>
       ) : touched && Object.keys(errors).length > 0 ? (
