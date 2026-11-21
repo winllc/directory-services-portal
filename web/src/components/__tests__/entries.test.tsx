@@ -96,8 +96,8 @@ function server(opts: { who: ReturnType<typeof user>; staffAccess: 'read' | 'wri
   const staff = definition('def-staff', 'staff', 'Staff', 'form-person', opts.staffAccess);
   const groups = definition('def-groups', 'groups', 'Groups', 'form-group', 'write');
   const sent: Sent[] = [];
-  /** failEntryReads: reading an entry answers 502 (a replica restarting). */
-  const state = { failEntryReads: false };
+  /** failEntryReads: reading an entry answers 502 (a replica restarting). partialSave: an update answers partially_saved. */
+  const state = { failEntryReads: false, partialSave: '' };
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
   vi.stubGlobal(
@@ -129,6 +129,7 @@ function server(opts: { who: ReturnType<typeof user>; staffAccess: 'read' | 'wri
           entries.delete(dn);
           return new Response(null, { status: 204 });
         }
+        if (method === 'PUT' && state.partialSave) return json({ error: state.partialSave, code: 'partially_saved' }, 400);
         if (method === 'PUT') {
           const values = (body as { values: Record<string, string[]> }).values;
           const attributes = { ...current.attributes };
@@ -254,6 +255,21 @@ describe('editing a directory entry', () => {
     expect(await screen.findByText('Changes saved')).toBeInTheDocument();
     expect(api.sent.map((s) => s.body)).toEqual([{ values: { title: ['Head of Partners'] } }]);
     expect(api.entries.get(BOB)?.attributes.cn).toEqual(['Robert Brown']);
+  });
+
+  it('shows why an update was only partly saved', async () => {
+    const u = userEvent.setup();
+    const api = server({ who: user('erin', `uid=erin,ou=people,${B}`, 'Erin Evans'), staffAccess: 'write' });
+    api.state.partialSave = `The other changes were saved, but the entry was not renamed: Entry already exists. The entry is now ${BOB}.`;
+    renderAt(entryUrl('staff', BOB) + '&edit=1');
+
+    await u.clear(await screen.findByLabelText(/^Username/));
+    await u.type(screen.getByLabelText(/^Username/), 'bob.brown');
+    await u.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByText(api.state.partialSave)).toBeInTheDocument();
+    expect(screen.queryByText('Please correct the highlighted fields.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Changes saved')).not.toBeInTheDocument();
   });
 
   it('offers no edit or delete to someone who may only read, even with ?edit=1', async () => {
