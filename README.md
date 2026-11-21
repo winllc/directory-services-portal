@@ -976,7 +976,7 @@ Splunk or any SIEM.
 
 | Category | Actions |
 |---|---|
-| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent` or `account-removed`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
+| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent`, `account-removed` or `account-disabled`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
 | authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
 | account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
 | data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps every attribute the entry held, on its form or not, with secrets as `[redacted]` and binary values such as `jpegPhoto` in base64; a rename records `previousDn`; like every detail, each attribute's values are cut at 1,000 characters), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
@@ -1442,7 +1442,7 @@ Session controls (DISA STIG; the ENS platform baseline):
 | `ENS_SESSION_ADMIN_IDLE_TIMEOUT` | the idle timeout | a shorter idle timeout for administrators (STIG suggests `15m`) |
 | `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` | a session ends this long after sign-in, whatever its activity |
 | `ENS_SESSION_MAX_PER_USER` | `0` (no limit) | concurrent sessions per user; signing in once more ends the **oldest** (STIG suggests `3`) |
-| `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists ends its sessions |
+| `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists, or that the directory marks disabled or locked (as for API tokens), ends its sessions |
 | `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`). Each attempt is counted, atomically, before its password is tried (a success clears the count), so parallel requests can't try more |
 | `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory (a restart clears them), or in the shared database (see [High availability](#high-availability-several-api-instances)) |
 
@@ -1450,7 +1450,7 @@ Idle time counts what the user does: the web client marks its background polling
 license and audit status) with `X-DSP-Background: 1`, which keeps nothing alive, so an open but
 unattended tab still times out. An expired session answers `401` with `"code": "session_expired"`
 and the browser shows the sign-in page with the reason; each expiry is audited as
-`auth.session-expired` with the reason `idle`, `absolute`, `concurrent` or `account-removed`.
+`auth.session-expired` with the reason `idle`, `absolute`, `concurrent`, `account-removed` or `account-disabled`.
 
 ### Health and metrics
 The API uses Spring Boot's probes, which need no sign-in or license:
