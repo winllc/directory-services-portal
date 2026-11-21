@@ -472,6 +472,7 @@ Existing claims (`existingClaim`) are never touched.
 | `web.podSecurityContext` | non-root 1001/1001, fsGroup 1001, RuntimeDefault seccomp | |
 | `web.securityContext` | no privilege escalation, drop ALL, read-only root filesystem | rendered config, `/tmp` and `/var/log/nginx` are emptyDirs |
 | `web.livenessProbe`, `web.readinessProbe` | `GET /` on 8080 (HTTPS 8443 with `tls.enabled`) | |
+| `web.trustedProxies` | `[]` | addresses or CIDRs of the proxies in front of the web pods (the ingress controller's pod CIDR, a load balancer) whose `X-Forwarded-For` names the client (`WEB_TRUSTED_PROXIES`, for the web tier and the API); see [Notes](#notes) |
 | `api.*` / `web.*`: `podAnnotations`, `podLabels`, `nodeSelector`, `tolerations`, `affinity`, `topologySpreadConstraints`, `priorityClassName` | empty | scheduling and metadata |
 | `api.*` / `web.*`: `extraEnv`, `extraEnvFrom`, `extraVolumes`, `extraVolumeMounts` | `[]` | anything else |
 
@@ -656,7 +657,13 @@ proxy secret.
 
 ## Notes
 
-- The web tier forwards `X-Forwarded-For` as the address it sees (the ingress controller's);
-  login throttling and the audit log record that address.
+- The web tier forwards `X-Forwarded-For` as the address it sees: by default the ingress
+  controller's, so login throttling, the per-address limits (single sign-on starts, failed API
+  tokens) and the audit log see one address for everyone. Set `web.trustedProxies` to the
+  addresses the ingress controller (or a load balancer) connects from, for example the pod CIDR:
+  the web tier then takes the client's address from their `X-Forwarded-For`. List only proxies,
+  since anything connecting from a listed address can name any client (`0.0.0.0/0` is refused);
+  `networkPolicy.webIngressFrom` keeps others away from the web pods. Until it is set, the API
+  warns at startup while single sign-on is on.
 - Example values files for each setup are in `ci/` in the source repository; CI lints and
   validates the chart with each of them.

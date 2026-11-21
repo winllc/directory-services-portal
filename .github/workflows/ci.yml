@@ -303,6 +303,22 @@ jobs:
           if cm --set-string license.menuVisible=hidden > /dev/null 2>&1; then echo "accepted a non-boolean license.menuVisible"; exit 1; fi
           echo "license settings OK"
 
+      - name: Check the trusted proxies
+        run: |
+          # web.trustedProxies reaches the web tier (which takes the client's address from their
+          # X-Forwarded-For) and the API; none by default; a catch-all is refused.
+          d="$CHART/ci/default-values.yaml"
+          set_proxies=(--set 'web.trustedProxies={10.244.0.0/16,192.0.2.10}')
+          helm template dsp "$CHART" -f "$d" "${set_proxies[@]}" --show-only templates/web-deployment.yaml \
+            | grep -A1 'name: WEB_TRUSTED_PROXIES' | grep -q '"10.244.0.0/16,192.0.2.10"'
+          grep -qx '  WEB_TRUSTED_PROXIES: "10.244.0.0/16,192.0.2.10"' \
+            <<<"$(helm template dsp "$CHART" -f "$d" "${set_proxies[@]}" --show-only templates/configmap.yaml)"
+          if helm template dsp "$CHART" -f "$d" | grep -q WEB_TRUSTED_PROXIES; then echo "trusted proxies rendered by default"; exit 1; fi
+          if helm template dsp "$CHART" -f "$d" --set 'web.trustedProxies={0.0.0.0/0}' > /dev/null 2>&1; then
+            echo "accepted 0.0.0.0/0 as a trusted proxy"; exit 1
+          fi
+          echo "trusted proxies OK"
+
   bundle:
     # The Docker/Podman deployment package: lint its scripts, and check that every documented
     # way of installing it gives a valid compose configuration, publishing the expected ports,
@@ -552,6 +568,11 @@ jobs:
               docker exec api curl -fsS http://localhost:3001/livez
               # The web tier publishes no actuator endpoint (the path is just the client's page).
               ! curl -s http://localhost:8080/actuator/health | grep -q '"status"'
+              # Trusted proxies render into a configuration nginx accepts; a catch-all is refused.
+              docker run --rm -e NGINX_LOCAL_RESOLVERS=127.0.0.11 -e 'WEB_TRUSTED_PROXIES=10.0.0.0/8, 192.0.2.1' dsp-web:ci nginx -t
+              if docker run --rm -e NGINX_LOCAL_RESOLVERS=127.0.0.11 -e WEB_TRUSTED_PROXIES=0.0.0.0/0 dsp-web:ci nginx -t; then
+                echo "WEB_TRUSTED_PROXIES=0.0.0.0/0 accepted"; exit 1
+              fi
               exit 0
             fi
             sleep 1

@@ -1,4 +1,5 @@
-# Ingress with TLS at the ingress controller, a license from --set-file, network policies.
+# Ingress with TLS at the ingress controller, a license from --set-file, network policies, the
+# client's address taken from the ingress controller's X-Forwarded-For.
 ldap:
   url: ldaps://ldap.corp.example:636
   bindDn: cn=portal,ou=system,dc=corp,dc=example
@@ -26,6 +27,8 @@ ingress:
   tls:
     - secretName: portal-tls
       hosts: [portal.corp.example]
+web:
+  trustedProxies: [10.244.0.0/16]
 networkPolicy:
   enabled: true
   webIngressFrom:

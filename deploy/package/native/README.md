@@ -74,6 +74,11 @@ no `NGINX_LISTEN` and keeps listening on every interface, as before (the install
   nginx site as `X-Forwarded-Host`, so a client's `Host` header can't change the redirect URI or
   SAML entity id. Behind your own web server, send that fixed host as `X-Forwarded-Host` and drop
   client `Forwarded`, `X-Forwarded-Prefix` and `X-Forwarded-Port` headers.
+- Behind a proxy (a TLS proxy on this host, a load balancer), set `WEB_TRUSTED_PROXIES` in
+  `portal.env` to the address(es) it connects to nginx from (`127.0.0.1` for one on this host) and
+  run `install.sh` again: nginx then takes the client's address from its `X-Forwarded-For`.
+  Otherwise every user has the proxy's address, and sign-in throttling, the single sign-on start
+  limit and the audit trail count them as one.
 - With SELinux enforcing, nginx needs `setsebool -P httpd_can_network_connect 1` to reach the API.
 - Upgrade: run the new package's `install.sh`; settings and data are kept. It generates the X.509
   proxy secret if there is none yet; restart the API afterwards

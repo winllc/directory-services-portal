@@ -287,6 +287,25 @@ class StartupChecksTest {
     assertThat(output).contains("SSO_SAML_SINGLE_LOGOUT is true but SSO_SAML_SIGNING_KEY_FILE");
   }
 
+  @Test
+  void warnsThatSsoStartsShareOneAddressWithoutTrustedProxies(CapturedOutput output) {
+    String[] oidc = {"SSO_OIDC_ISSUER_URI=https://idp.example", "SSO_OIDC_CLIENT_ID=portal", "SSO_OIDC_USERNAME_CLAIM=sub"};
+    String warning = "WEB_TRUSTED_PROXIES is not set";
+    // Without single sign-on there is nothing to warn about.
+    runner.withUserConfiguration(Sso.class).run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output).doesNotContain(warning);
+    // The default limit is high enough for everyone behind one proxy, and said with the warning.
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).run(ctx -> {
+      assertThat(ctx).hasNotFailed();
+      assertThat(ctx.getBean(com.winllc.dsp.sso.SsoProperties.class).getStartLimitPerMinute()).isEqualTo(600);
+    });
+    assertThat(output).contains("limited to 600 a minute per client address", warning);
+    int seen = output.toString().split(warning, -1).length;
+    runner.withUserConfiguration(Sso.class).withPropertyValues(oidc).withPropertyValues("WEB_TRUSTED_PROXIES=10.0.0.0/8")
+        .run(ctx -> assertThat(ctx).hasNotFailed());
+    assertThat(output.toString().split(warning, -1).length).isEqualTo(seen);
+  }
+
   @Configuration(proxyBeanMethods = false)
   @EnableConfigurationProperties(com.winllc.dsp.sso.SsoProperties.class)
   static class Sso {}

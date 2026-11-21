@@ -30,6 +30,10 @@ server {
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
+    # The client's address behind trusted proxies in front of this server (WEB_TRUSTED_PROXIES):
+    # taken from their X-Forwarded-For, for the access log and the API's per-address limits.
+    ${DSP_REAL_IP}
+
     # ENS baseline security headers, on the client's pages and (replacing the API's) on /api. The
     # CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh). The client has no
     # inline scripts.

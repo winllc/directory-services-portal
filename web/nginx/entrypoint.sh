@@ -2,7 +2,7 @@
 # Renders ${NGINX_ENVSUBST_TEMPLATE_DIR}/*.template into /opt/app-root/etc/dsp.d/*.conf, then runs
 # the command (nginx). Only the variables below are substituted, so nginx's own $variables are
 # left alone. Settings: API_URL, HTTPS_PORT_SUFFIX, NGINX_LOCAL_RESOLVERS, ENS_CSP_REPORT_ONLY,
-# PUBLIC_HOST and,
+# PUBLIC_HOST, WEB_TRUSTED_PROXIES and,
 # for X.509 sign-in, X509_PROXY_SECRET_FILE / X509_PROXY_SECRET, X509_HEADER and X509_EDGE_TERMINATION.
 set -eu
 
@@ -54,6 +54,34 @@ case "${PUBLIC_HOST:-}" in
     *) DSP_FORWARDED_HOST="$PUBLIC_HOST" ;;
 esac
 export DSP_FORWARDED_HOST
+
+# Proxies in front of this one (an ingress controller, a load balancer, a TLS proxy on the host)
+# whose X-Forwarded-For names the real client: WEB_TRUSTED_PROXIES, addresses or CIDRs separated
+# by commas or spaces. Without it every client behind such a proxy has the proxy's address, and the
+# API's per-address limits count them together. Only the listed proxies are believed, so list
+# nothing a client can reach this server from.
+nl4='
+    '
+DSP_REAL_IP="# WEB_TRUSTED_PROXIES is empty: the client address is the connecting peer's"
+case "${WEB_TRUSTED_PROXIES:-}" in
+    *[!0-9A-Fa-f.:/,\ ]*)
+        echo "dsp-entrypoint: WEB_TRUSTED_PROXIES must be IP addresses or CIDRs separated by commas or spaces" >&2
+        exit 1 ;;
+esac
+trusted=$(printf '%s' "${WEB_TRUSTED_PROXIES:-}" | tr ',' ' ')
+if [ -n "$(echo "$trusted" | tr -d ' ')" ]; then
+    DSP_REAL_IP=""
+    for proxy in $trusted; do
+        case "$proxy" in
+            */0|*/*/*|/*|*/)
+                echo "dsp-entrypoint: WEB_TRUSTED_PROXIES: $proxy is not an address or CIDR of a proxy" >&2
+                exit 1 ;;
+        esac
+        DSP_REAL_IP="${DSP_REAL_IP}set_real_ip_from $proxy;${nl4}"
+    done
+    DSP_REAL_IP="${DSP_REAL_IP}real_ip_header X-Forwarded-For;${nl4}real_ip_recursive on;"
+fi
+export DSP_REAL_IP
 
 # The proxy secret, sent to the API in X-DSP-Proxy-Secret with every request in place of any
 # value a client sent: from X509_PROXY_SECRET_FILE (preferred) or X509_PROXY_SECRET. The API
@@ -118,7 +146,7 @@ for template in "$template_dir"/*.template; do
     name=$(basename "$template" .template)
     # Owner-only: the rendered config holds the proxy secret.
     # shellcheck disable=SC2016 # the variables envsubst may replace
-    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS} ${DSP_FORWARDED_HOST} ${DSP_MAX_BODY_SIZE}' \
+    (umask 077 && envsubst '${API_URL} ${HTTPS_PORT_SUFFIX} ${NGINX_LOCAL_RESOLVERS} ${DSP_CSP_HEADER} ${DSP_PROXY_SECRET} ${DSP_CERT_HEADERS_HTTP} ${DSP_CERT_HEADERS_HTTPS} ${DSP_FORWARDED_HOST} ${DSP_MAX_BODY_SIZE} ${DSP_REAL_IP}' \
         < "$template" > "$output_dir/$name")
     echo "dsp-entrypoint: rendered $template -> $output_dir/$name" >&2
     found=1

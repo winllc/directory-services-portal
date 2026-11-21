@@ -44,6 +44,12 @@ proxy on this host in front of it (and set `ENS_COOKIE_SECURE=true` in `.env`), 
 (published on every interface, `ENS_COOKIE_SECURE=true`). `--bind 0.0.0.0` publishes plain HTTP on
 every interface, for a TLS proxy on another host; the installer warns about it.
 
+Behind a proxy, every user has the proxy's address unless the web tier may believe its
+`X-Forwarded-For`: set `WEB_TRUSTED_PROXIES` in `.env` to the address it connects from as the web
+container sees it (the first field of `./portal.sh logs web`; for a proxy on this host usually the
+container network's gateway, e.g. `172.18.0.1`), then `./portal.sh up`. Otherwise sign-in
+throttling, the single sign-on start limit and the audit trail count all users as one address.
+
 Other ways to publish it:
 
 ```bash

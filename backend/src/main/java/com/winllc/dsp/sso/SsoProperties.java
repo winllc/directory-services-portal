@@ -37,9 +37,11 @@ public class SsoProperties {
   /**
    * Sign-ons a client address may start per minute (across replicas with the shared database);
    * more are sent back to the login page. Each start keeps a sign-in request for 10 minutes, so
-   * this bounds what one client can make the portal hold.
+   * this bounds what one client can make the portal hold (600 a minute: 6,000, under the default
+   * SSO_MAX_PENDING_REQUESTS). High enough for everyone behind one proxy whose address the web tier
+   * cannot see past (WEB_TRUSTED_PROXIES unset) to sign in at a morning peak.
    */
-  private int startLimitPerMinute = 30;
+  private int startLimitPerMinute = 600;
   /** Sign-in requests in flight kept in memory at most (without the shared database); more are refused. */
   private int maxPendingRequests = 10_000;
 

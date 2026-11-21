@@ -121,6 +121,22 @@ if command -v nginx >/dev/null; then
     *) sed -i "s|proxy_set_header X-Forwarded-Host \"\$http_host\";|proxy_set_header X-Forwarded-Host \"$public_host\";|" "$conf"
        say "nginx sends X-Forwarded-Host $public_host (PUBLIC_HOST)" ;;
   esac
+  # WEB_TRUSTED_PROXIES in portal.env: proxies in front of nginx (a TLS proxy on this host:
+  # 127.0.0.1) whose X-Forwarded-For names the client, for the API's per-address limits.
+  read -ra proxies <<<"$(sed -n 's/^WEB_TRUSTED_PROXIES=//p' "$ETC/portal.env" | tail -n 1 | tr -d '"'"'"'' | tr ',' ' ')"
+  real_ip=""
+  proxy_re='^[0-9A-Fa-f.:]+(/[0-9]{1,3})?$'
+  for proxy in "${proxies[@]}"; do
+    if [[ "$proxy" =~ $proxy_re && "$proxy" != */0 ]]; then
+      real_ip+="set_real_ip_from $proxy; "
+    else
+      say "WEB_TRUSTED_PROXIES in $ETC/portal.env: $proxy is not an address or CIDR of a proxy; ignored"
+    fi
+  done
+  if [ -n "$real_ip" ]; then
+    sed -i "s|# WEB_TRUSTED_PROXIES in portal.env: none (install.sh writes them here)|${real_ip}real_ip_header X-Forwarded-For; real_ip_recursive on;|" "$conf"
+    say "nginx takes the client address from X-Forwarded-For when the connection comes from: ${real_ip//set_real_ip_from /}(WEB_TRUSTED_PROXIES)"
+  fi
   # NGINX_LISTEN in portal.env: where the site listens (plain HTTP). New installs: this host only.
   # A portal.env from an earlier release has none: every interface on 8080, as it was.
   listen=$(sed -n 's/^NGINX_LISTEN=//p' "$ETC/portal.env" | tail -n 1 | tr -d '"'"'"' ')

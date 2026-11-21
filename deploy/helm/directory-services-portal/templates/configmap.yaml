@@ -13,6 +13,11 @@ data:
   PORT: "3001"
   # Only the web tier reaches the API, and it overwrites X-Forwarded-*.
   SERVER_FORWARD_HEADERS_STRATEGY: framework
+  {{- with $v.web.trustedProxies }}
+  # The web tier sees past these proxies (web.trustedProxies); without it the API warns while
+  # single sign-on is on.
+  WEB_TRUSTED_PROXIES: {{ join "," . | quote }}
+  {{- end }}
   JAVA_TOOL_OPTIONS: {{ include "dsp.str" $v.api.javaToolOptions | quote }}
   {{- if $v.metrics.enabled }}
   # Health and Prometheus on their own port (the Service's "metrics" port).

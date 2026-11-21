@@ -194,6 +194,13 @@ web:
     timeoutSeconds: 5
     failureThreshold: 3
 
+  # Proxies in front of the web pods whose X-Forwarded-For names the client: the ingress
+  # controller's pod CIDR, a load balancer's addresses (WEB_TRUSTED_PROXIES). Empty: every user
+  # has the ingress controller's address, and the per-address limits (single sign-on starts,
+  # failed API tokens, the sign-in lockout) count them together. List only proxies: X-Forwarded-For
+  # from a listed address is believed.
+  trustedProxies: []
+
   extraEnv: []
   extraEnvFrom: []
   extraVolumes: []
