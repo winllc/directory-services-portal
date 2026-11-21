@@ -46,6 +46,10 @@ import javax.sql.DataSource;
  *       can't be read or written at that moment, it is tried again on a check 30 seconds later.</li>
  * </ul>
  *
+ * <p>Licenses are checked against the clock, but never as of more than a day before the latest
+ * time this installation has recorded (in the store, once an hour), so setting the clock back
+ * doesn't bring an expired license back. Ordinary clock corrections change nothing.
+ *
  * <p>Thread-safe. {@link #current()} is cheap: it re-reads the license only when
  * it changes (a file's modification time, a database row's version, asked for at
  * most every {@link LicenseStore#recheckInterval()}), so call it per request if
@@ -177,7 +181,7 @@ public final class LicenseManager {
     /** The license as it stands now. */
     public synchronized LicenseCheck current() {
         applyEnvironmentLicenseOnce();
-        Instant now = clock.instant();
+        Instant now = now();
         refreshIfDue(false);
         if (loaded == null) {
             return loadError == null
@@ -187,6 +191,11 @@ public final class LicenseManager {
         LicenseCheck check = LicensePolicy.evaluate(loaded, context(loaded, now));
         if (check.state() != LicenseState.SUPERSEDED && check.state().mode() != LicenseState.Mode.UNLICENSED) {
             remember(loaded);
+        }
+        if (clockSetBack) {
+            check = new LicenseCheck(product, loaded, check.state(), check.message() + " (This server's clock is behind a time"
+                    + " this installation has already seen, so the license is checked as of " + now.toString().substring(0, 10)
+                    + ".)", now);
         }
         return check;
     }
@@ -203,7 +212,7 @@ public final class LicenseManager {
     public synchronized LicenseCheck install(String fileText) throws LicenseException, IOException {
         EnsLicense candidate = verifier.verify(fileText);
         refreshIfDue(true); // the latest revisions, from every replica
-        Instant now = clock.instant();
+        Instant now = now();
         LicenseCheck check = LicensePolicy.evaluate(candidate, context(candidate, now));
         switch (check.state()) {
             case WRONG_PRODUCT, WRONG_INSTALLATION, SUPERSEDED -> {
@@ -291,7 +300,7 @@ public final class LicenseManager {
             refreshIfDue(true);
             EnsLicense installed = loaded;
             boolean installedUsable = installed != null && LicensePolicy.evaluate(installed,
-                    context(installed, clock.instant())).state().mode() != LicenseState.Mode.UNLICENSED;
+                    context(installed, now())).state().mode() != LicenseState.Mode.UNLICENSED;
             if (installedUsable && !installed.id().equals(candidate.id())) {
                 status = "ENS_LICENSE (" + candidate.id() + ") was not installed: license " + installed.id()
                         + " is already installed. Remove it, or upload the new one on the license screen, to change licenses.";
@@ -324,6 +333,53 @@ public final class LicenseManager {
         }
         environmentStatus = status;
         LOG.log(level, status);
+    }
+
+    /* ---- The time licenses are checked at ------------------------------------- */
+
+    /** A clock set back by up to this much (an NTP step, a host's clock corrected) changes nothing. */
+    static final Duration CLOCK_TOLERANCE = Duration.ofDays(1);
+    /** How often the clock's time is recorded in the store as the latest time seen. */
+    static final Duration LATEST_TIME_INTERVAL = Duration.ofHours(1);
+    private static final Duration LATEST_TIME_RETRY = Duration.ofMinutes(5);
+
+    /** The latest time seen, as the store last returned it; null if it keeps none. */
+    private Instant latestSeen;
+    private boolean latestSeenAsked;
+    private long latestSeenDueAt;
+    private boolean latestSeenFailing;
+    private boolean clockSetBack;
+
+    /**
+     * The time to check licenses at: the clock's, unless it is more than {@link #CLOCK_TOLERANCE}
+     * before the latest time this installation has recorded (the clock was set back), and then that
+     * time less the tolerance, so an expired license doesn't come back. Records the clock's time
+     * at most every {@link #LATEST_TIME_INTERVAL}. A store that keeps no time, or can't be reached,
+     * leaves the clock's time in force.
+     */
+    private Instant now() {
+        Instant wall = clock.instant();
+        long t = System.nanoTime();
+        if (!latestSeenAsked || t - latestSeenDueAt >= 0) {
+            latestSeenAsked = true;
+            try {
+                installationId(); // a database keeps the time on the installation's row
+                latestSeen = store.raiseLatestTimeSeen(wall).orElse(null);
+                latestSeenDueAt = t + LATEST_TIME_INTERVAL.toNanos();
+                latestSeenFailing = false;
+            } catch (IOException | RuntimeException e) {
+                latestSeenDueAt = t + LATEST_TIME_RETRY.toNanos();
+                LOG.log(latestSeenFailing ? System.Logger.Level.DEBUG : System.Logger.Level.WARNING,
+                        "Cannot record the latest time seen in " + store.location() + ": " + e.getMessage());
+                latestSeenFailing = true;
+            }
+            if (latestSeen != null && wall.isBefore(latestSeen.minus(CLOCK_TOLERANCE))) {
+                LOG.log(System.Logger.Level.WARNING, "The clock reads " + wall + ", before " + latestSeen + ", the latest time"
+                        + " this installation has seen: licenses are checked as of " + latestSeen.minus(CLOCK_TOLERANCE) + ".");
+            }
+        }
+        clockSetBack = latestSeen != null && wall.isBefore(latestSeen.minus(CLOCK_TOLERANCE));
+        return clockSetBack ? latestSeen.minus(CLOCK_TOLERANCE) : wall;
     }
 
     private LicensePolicy.Context context(EnsLicense l, Instant now) {

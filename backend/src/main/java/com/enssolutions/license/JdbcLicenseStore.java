@@ -10,6 +10,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -24,6 +25,11 @@ import javax.sql.DataSource;
  * <p>The tables come from the application's own migrations: copy {@link Dialect#ddl()} (also in
  * the jar at {@code com/enssolutions/license/schema/<dialect>.sql}, and in licensing/README.md)
  * into a Flyway migration. The store never creates or alters tables.
+ *
+ * <p>After 1.2.0 the store also keeps the latest time the installation has seen, in
+ * {@code ens_license_installation.latest_seen_ms}. Tables made for 1.2.0 need that column added
+ * ({@code ALTER TABLE ens_license_installation ADD COLUMN latest_seen_ms BIGINT}); until then,
+ * licenses are checked against the clock alone, as before.
  *
  * <p>Safe with any number of replicas:
  * <ul>
@@ -252,6 +258,37 @@ public final class JdbcLicenseStore implements LicenseStore {
             s.setInt(4, revision);
             return s.executeUpdate();
         }
+    }
+
+    /* ---- Latest time seen ------------------------------------------------------- */
+
+    /**
+     * Kept in {@code ens_license_installation.latest_seen_ms} (epoch milliseconds, added after 1.2.0),
+     * once the installation id is there. A database without the column throws, and the
+     * {@link LicenseManager} then checks licenses against the clock alone.
+     */
+    @Override
+    public Optional<Instant> raiseLatestTimeSeen(Instant time) throws IOException {
+        importIfPending();
+        long ms = time.toEpochMilli();
+        return run(c -> {
+            try (PreparedStatement s = c.prepareStatement("UPDATE ens_license_installation SET latest_seen_ms = ? "
+                    + "WHERE product = ? AND (latest_seen_ms IS NULL OR latest_seen_ms < ?)")) {
+                s.setLong(1, ms);
+                s.setString(2, product);
+                s.setLong(3, ms);
+                s.executeUpdate();
+            }
+            try (PreparedStatement s = c.prepareStatement(
+                    "SELECT latest_seen_ms FROM ens_license_installation WHERE product = ?")) {
+                s.setString(1, product);
+                try (ResultSet r = s.executeQuery()) {
+                    if (!r.next()) return Optional.<Instant>empty();
+                    long stored = r.getLong(1);
+                    return r.wasNull() ? Optional.<Instant>empty() : Optional.of(Instant.ofEpochMilli(stored));
+                }
+            }
+        });
     }
 
     /* ---- One-time import from a file state directory -------------------------- */

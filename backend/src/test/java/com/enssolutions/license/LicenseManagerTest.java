@@ -13,7 +13,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Installing over a license in force. */
+/** Installing over a license in force, and a clock set back. */
 class LicenseManagerTest {
     static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-01T00:00:00Z"), ZoneOffset.UTC);
 
@@ -83,5 +83,49 @@ class LicenseManagerTest {
         assertTrue(m.environmentLicenseStatus().orElseThrow().contains("was refused: This license starts on 2027-10-01"),
                 m.environmentLicenseStatus().orElseThrow());
         assertEquals(1, m.current().license().orElseThrow().revision());
+    }
+
+    /* ---- Clock set back -------------------------------------------------------------- */
+
+    // The license runs until 2027-10-01, with 30 days' grace: GRACE until 2027-10-31, EXPIRED after.
+    static final String TERM_START = "2026-10-01T00:00:00Z";
+    static final String TERM_END = "2027-10-01T00:00:00Z";
+
+    @Test
+    void settingTheClockBackDoesNotBringAnExpiredLicenseBack() throws Exception {
+        manager("2026-11-01T00:00:00Z").install(TestLicenses.license("lic_a", 1, TERM_START, TERM_END));
+        assertEquals(LicenseState.EXPIRED, manager("2027-12-01T00:00:00Z").current().state());
+        assertEquals("2027-12-01T00:00:00Z", Files.readString(dir.resolve("state/latest-time-seen")).trim());
+
+        LicenseCheck back = manager("2027-06-01T00:00:00Z").current();
+        assertEquals(LicenseState.EXPIRED, back.state());
+        assertTrue(back.message().contains("clock is behind a time this installation has already seen, so the license is checked as of 2027-11-30"),
+                back.message());
+        // and the time recorded is not lowered
+        assertEquals("2027-12-01T00:00:00Z", Files.readString(dir.resolve("state/latest-time-seen")).trim());
+        // An upload is checked as of that time too: a renewal that started by then is in force.
+        assertEquals(LicenseState.VALID, manager("2027-06-01T00:00:00Z")
+                .install(TestLicenses.license("lic_b", 1, "2027-11-15T00:00:00Z", "2028-11-15T00:00:00Z")).state());
+    }
+
+    @Test
+    void aClockCorrectedByMinutesChangesNothing() throws Exception {
+        manager("2026-11-01T00:00:00Z").install(TestLicenses.license("lic_a", 1, TERM_START, TERM_END));
+        // Grace ends at 2027-10-31T00:00Z. A clock that ran 7 minutes fast past that, then corrected:
+        assertEquals(LicenseState.EXPIRED, manager("2027-10-31T00:05:00Z").current().state());
+        LicenseCheck corrected = manager("2027-10-30T23:58:00Z").current();
+        assertEquals(LicenseState.GRACE, corrected.state());
+        assertFalse(corrected.message().contains("clock"), corrected.message());
+    }
+
+    @Test
+    void withoutARecordedTimeTheClockAloneCounts() throws Exception {
+        manager("2026-11-01T00:00:00Z").install(TestLicenses.license("lic_a", 1, TERM_START, TERM_END));
+        assertEquals(LicenseState.EXPIRED, manager("2027-12-01T00:00:00Z").current().state());
+        // State from a release that kept no time, or a file that can't be read: as before.
+        Files.writeString(dir.resolve("state/latest-time-seen"), "not a time\n");
+        assertEquals(LicenseState.VALID, manager("2027-06-01T00:00:00Z").current().state());
+        Files.delete(dir.resolve("state/latest-time-seen"));
+        assertEquals(LicenseState.VALID, manager("2027-06-01T00:00:00Z").current().state());
     }
 }
