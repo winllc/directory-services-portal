@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type {
   AnalysisDefinition,
   AnalysisInput,
@@ -188,17 +188,44 @@ export const useOptionSearch = (definitionId: string, fieldId: string, q: string
   });
 
 /** Labels (and descriptions) of stored values, looked up without loading every option. */
+const optionLabelsQuery = (definitionId: string, fieldId: string, values: string[]) => ({
+  queryKey: [...keys.options(definitionId, fieldId), 'values', [...values].sort()],
+  queryFn: () => {
+    const p = new URLSearchParams();
+    values.forEach((v) => p.append('value', v));
+    return api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}?${p.toString()}`);
+  },
+  staleTime: 60_000,
+});
+
 export const useOptionLabels = (definitionId: string, fieldId: string, values: string[], enabled: boolean) =>
-  useQuery({
-    queryKey: [...keys.options(definitionId, fieldId), 'values', [...values].sort()],
-    queryFn: () => {
-      const p = new URLSearchParams();
-      values.forEach((v) => p.append('value', v));
-      return api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}?${p.toString()}`);
-    },
-    enabled: enabled && values.length > 0,
-    staleTime: 60_000,
+  useQuery({ ...optionLabelsQuery(definitionId, fieldId, values), enabled: enabled && values.length > 0 });
+
+/** Values per label request in useFieldLabels (keeps the query string short). */
+const LABELS_PER_REQUEST = 50;
+
+/**
+ * Labels of several directory-search drop-down fields' values at once, e.g. a list page's columns:
+ * one request per field (per 50 distinct values) for the whole page instead of one per row.
+ * Returns the labels found per field id (undefined while loading).
+ */
+export function useFieldLabels(definitionId: string, wanted: { fieldId: string; values: string[] }[]): Record<string, OptionItem[] | undefined> {
+  const chunks = wanted.flatMap(({ fieldId, values }) => {
+    const distinct = [...new Set(values)].sort();
+    const out: { fieldId: string; values: string[] }[] = [];
+    for (let i = 0; i < distinct.length; i += LABELS_PER_REQUEST) out.push({ fieldId, values: distinct.slice(i, i + LABELS_PER_REQUEST) });
+    return out;
   });
+  const results = useQueries({
+    queries: chunks.map((c) => ({ ...optionLabelsQuery(definitionId, c.fieldId, c.values), enabled: !!definitionId })),
+  });
+  const labels: Record<string, OptionItem[] | undefined> = {};
+  chunks.forEach((c, i) => {
+    const found = results[i]?.data?.options;
+    if (found) labels[c.fieldId] = [...(labels[c.fieldId] ?? []), ...found];
+  });
+  return labels;
+}
 
 export interface OptionPreview {
   options: OptionItem[];
