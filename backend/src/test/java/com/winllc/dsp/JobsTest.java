@@ -22,6 +22,7 @@ import tools.jackson.databind.JsonNode;
 @TestPropertySource(properties = {"portal.metrics.wait-millis=0", "portal.jobs.max-active-per-user=2"})
 class JobsTest extends ApiTestSupport {
   @Autowired JobService jobs;
+  @Autowired com.winllc.dsp.config.PortalProperties props;
 
   static final SessionUser ALICE_USER = new SessionUser("alice", ALICE, "Alice", null, List.of(), false, "password", null);
 
@@ -127,6 +128,25 @@ class JobsTest extends ApiTestSupport {
       assertThat(status(alice.get("/api/jobs/" + second.id()))).isEqualTo(404);
     } finally {
       release.countDown();
+    }
+  }
+
+  @Test
+  void unfinishedJobsFailWhenTheServerStops() throws Exception {
+    JobService service = new JobService(props, com.winllc.dsp.cluster.Cluster.standalone(), mapper);
+    CountDownLatch release = new CountDownLatch(1);
+    try {
+      Job running = service.submit(ALICE_USER, spec("stop"), blocking(release));
+      Job done = service.submit(ALICE_USER, spec("quick"), () -> "ok");
+      service.await(done, Duration.ofSeconds(5));
+      service.destroy();
+      service.await(running, Duration.ofSeconds(5));
+      assertThat(running.status()).isEqualTo(Job.Status.FAILED);
+      assertThat(running.view().error()).contains("stopped");
+      assertThat(done.status()).isEqualTo(Job.Status.SUCCEEDED);
+    } finally {
+      release.countDown();
+      service.destroy();
     }
   }
 

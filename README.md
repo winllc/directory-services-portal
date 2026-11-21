@@ -1371,7 +1371,9 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
   takes over within seconds when it stops); retention and the license-mode check run under a
   cluster lock (ShedLock).
 - **Background tasks** run on the instance that started them; their progress and results are
-  shared, so the task list, results, cancelling and dismissing work from any instance.
+  shared, so the task list, results, cancelling and dismissing work from any instance. Tasks of
+  an instance that stops (an upgrade, a crash) are marked failed about 30 seconds later and no
+  longer count against `JOBS_MAX_ACTIVE_PER_USER`.
 - **Single sign-on** requests in flight and used SAML assertion ids are shared, so the provider's
   answer may reach any instance.
 - **Per-address limits** (failed API tokens, single sign-on starts) are counted in
