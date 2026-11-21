@@ -138,6 +138,59 @@ class AnalysisTest extends ApiTestSupport {
     assertThat(byKey(strictRows).get("bob").get("differences").get(0).get("label").asString()).isEqualTo("E-mail");
   }
 
+  /** The quality findings of a run of the demo analysis, as "dn | message", for one rule. */
+  private List<String> uniqueFindings(Client admin, String ruleId, Map<String, Long> violations) throws Exception {
+    MvcResult r = admin.post("/api/admin/analysis/an-people-quality/run", null);
+    JsonNode q = awaitResult(admin, r).get("quality");
+    q.get("rules").forEach(rule -> violations.put(rule.get("id").asString(), rule.get("violations").asLong()));
+    List<String> out = new ArrayList<>();
+    body(admin.get("/api/admin/analysis/an-people-quality/findings?pageSize=500")).get("items").forEach(i -> {
+      if (i.get("ruleId").asString().equals(ruleId)) out.add(i.get("dn").asString() + " | " + i.get("message").asString());
+    });
+    return out;
+  }
+
+  /** How many entries a "dn | message" finding of a unique rule names. */
+  private static int named(String finding) {
+    String names = finding.substring(finding.indexOf("\" is also used by ") + 1);
+    return names.split("uid=", -1).length - 1;
+  }
+
+  @Test
+  void uniqueRulesNameThreeOthersAndCountTheRest() throws Exception {
+    for (String uid : List.of("alice", "bob", "carol", "dave", "erin")) {
+      directory.modify("uid=" + uid + ",ou=people," + B, List.of(new Modification(ModificationType.REPLACE, "mail", "shared@example.com")));
+    }
+    directory.modify("uid=hana,ou=partners," + B, List.of(new Modification(ModificationType.REPLACE, "mail", "shared@example.com")));
+    Client admin = login("admin");
+
+    // Across sources: six holders, each with five others.
+    Map<String, Long> violations = new HashMap<>();
+    List<String> all = uniqueFindings(admin, "r-mail-unique", violations);
+    assertThat(violations).containsEntry("r-mail-unique", 6L);
+    assertThat(all).hasSize(6).allMatch(m -> named(m) == 3 && m.endsWith(" and 2 more"));
+    assertThat(all).filteredOn(m -> m.startsWith(ALICE)).singleElement().matches(m -> !m.substring(m.indexOf('|')).contains(ALICE));
+    assertThat(all).filteredOn(m -> m.startsWith("uid=hana")).singleElement().matches(m -> m.contains(",ou=people," + B + " ("));
+
+    // Per source: the partner's address is no longer a duplicate; the staff have four others each.
+    store.update(d -> {
+      d.analyses.replaceAll(a -> {
+        if (!a.id().equals("an-people-quality")) return a;
+        tools.jackson.databind.node.ObjectNode tree = mapper.valueToTree(a);
+        tree.get("quality").get("rules").forEach(rule -> {
+          if (rule.get("id").asString().equals("r-mail-unique")) ((tools.jackson.databind.node.ObjectNode) rule).put("scope", "source");
+        });
+        return mapper.treeToValue(tree, com.winllc.dsp.analysis.AnalysisDefinition.class);
+      });
+      return null;
+    });
+    violations.clear();
+    List<String> perSource = uniqueFindings(admin, "r-mail-unique", violations);
+    assertThat(violations).containsEntry("r-mail-unique", 5L);
+    assertThat(perSource).hasSize(5).noneMatch(m -> m.startsWith("uid=hana") || m.contains("hana") || m.contains("("))
+        .allMatch(m -> named(m) == 3 && m.endsWith(" and 1 more"));
+  }
+
   @Test
   void checksValuesForCorrectnessAndUniqueness() throws Exception {
     directory.modify(ALICE, List.of(new Modification(ModificationType.REPLACE, "mail", "bob@example.com")));
