@@ -101,6 +101,32 @@ class LdapFailoverTest {
   }
 
   @Test
+  void aDirectoryThatIsDownIsTriedAgainOnlyAfterAWhile() throws Exception {
+    int port;
+    try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+      port = socket.getLocalPort();
+    }
+    try (LdapDirectory d = directory(false, "ldap://127.0.0.1:" + port)) {
+      assertThatThrownBy(d::ping).isInstanceOf(DirectoryException.class);
+      // The server comes up: calls right after the failure still fail at once, without connecting.
+      InMemoryDirectoryServerConfig config = new InMemoryDirectoryServerConfig(BASE);
+      config.addAdditionalBindCredentials("cn=admin", "secret");
+      config.setListenerConfigs(InMemoryListenerConfig.createLDAPConfig("ldap", InetAddress.getLoopbackAddress(), port, null));
+      InMemoryDirectoryServer late = new InMemoryDirectoryServer(config);
+      late.add("dn: " + BASE, "objectClass: top", "objectClass: domain", "dc: example", "description: late");
+      late.startListening();
+      try {
+        assertThatThrownBy(d::ping).isInstanceOf(DirectoryException.class)
+            .satisfies(e -> assertThat(((DirectoryException) e).code()).isEqualTo(DirectoryException.Code.UNAVAILABLE));
+        Thread.sleep(LdapDirectory.RETRY_AFTER.toMillis() + 200);
+        assertThat(description(d)).isEqualTo("late");
+      } finally {
+        late.shutDown(true);
+      }
+    }
+  }
+
+  @Test
   void roundRobinUsesEveryServerThatAnswers() throws Exception {
     try (LdapDirectory d = directory(true, down(), url(second))) {
       d.ping();

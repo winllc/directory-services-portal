@@ -80,6 +80,51 @@ class GroupsTest extends ApiTestSupport {
   }
 
   @Test
+  void anApprovalChangesTheGroupOnlyForARequestItClosed() throws Exception {
+    Client dave = login("dave");
+    String id = ask(dave, ENGINEERING, "On-call rotation");
+    // The requester withdraws while the directory is adding them.
+    List<String> cancel = new java.util.concurrent.CopyOnWriteArrayList<>();
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyRequest request) {
+        try {
+          requests.close(id, AccessRequests.CANCELLED, "dave", "Dave", null);
+          cancel.add("cancelled");
+        } catch (RuntimeException e) {
+          cancel.add(e.getMessage());
+        }
+      }
+    });
+    Client carol = login("carol");
+    MvcResult approved = carol.post("/api/groups/requests/" + id + "/approve", Map.of());
+    assertThat(status(approved)).as(approved.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(cancel).containsExactly("This request was already approved");
+    assertThat(requests.find(id).status()).isEqualTo(AccessRequests.APPROVED);
+    embedded.intercept(null);
+    assertThat(member(dave, ENGINEERING)).isTrue();
+  }
+
+  @Test
+  void aRequestTheDirectoryCouldNotCarryOutStaysOpen() throws Exception {
+    Client dave = login("dave");
+    String id = ask(dave, ENGINEERING, "On-call rotation");
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyRequest request)
+          throws com.unboundid.ldap.sdk.LDAPException {
+        throw new com.unboundid.ldap.sdk.LDAPException(com.unboundid.ldap.sdk.ResultCode.CONSTRAINT_VIOLATION, "refused");
+      }
+    });
+    Client carol = login("carol");
+    assertThat(status(carol.post("/api/groups/requests/" + id + "/approve", Map.of()))).isEqualTo(400);
+    assertThat(requests.find(id).pending()).isTrue();
+    embedded.intercept(null);
+    assertThat(status(carol.post("/api/groups/requests/" + id + "/approve", Map.of()))).isEqualTo(200);
+    assertThat(member(dave, ENGINEERING)).isTrue();
+  }
+
+  @Test
   void ownersApproveAndRejectRequests() throws Exception {
     Client dave = login("dave");
     // A reason is required here; members, the administrators' group and repeats are refused.

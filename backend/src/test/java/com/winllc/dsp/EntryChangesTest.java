@@ -221,6 +221,80 @@ class EntryChangesTest extends ApiTestSupport {
   }
 
   @Test
+  void aRefusedChangeLeavesTheEntryWhereItWas() throws Exception {
+    // The directory refuses the title (as a schema or uniqueness check would).
+    embedded.intercept(new InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyRequest(InMemoryInterceptedModifyRequest request) throws com.unboundid.ldap.sdk.LDAPException {
+        if (request.getRequest().getModifications().stream().anyMatch(m -> m.getAttributeName().equalsIgnoreCase("title"))) {
+          throw new com.unboundid.ldap.sdk.LDAPException(com.unboundid.ldap.sdk.ResultCode.CONSTRAINT_VIOLATION, "title refused");
+        }
+      }
+    });
+    Client admin = login("admin");
+    MvcResult r = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("uid", "bob.baker", "title", "Head of Sales")));
+    assertThat(status(r)).isEqualTo(400);
+    // Not renamed: the client's DN is still right.
+    assertThat(read(BOB)).isNotNull();
+    assertThat(read("uid=bob.baker,ou=people," + B)).isNull();
+    assertThat(trail(BOB)).singleElement().satisfies(e -> assertThat(e.get("outcome").asString()).isEqualTo("failure"));
+  }
+
+  @Test
+  void aRefusedRenameAfterTheOtherChangesIsRecordedAsWhatWasDone() throws Exception {
+    embedded.intercept(new InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyDNRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyDNRequest request)
+          throws com.unboundid.ldap.sdk.LDAPException {
+        throw new com.unboundid.ldap.sdk.LDAPException(com.unboundid.ldap.sdk.ResultCode.CONSTRAINT_VIOLATION, "rename refused");
+      }
+    });
+    Client admin = login("admin");
+    MvcResult r = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("uid", "bob.baker", "title", "Head of Sales")));
+    assertThat(status(r)).isEqualTo(400);
+    assertThat(body(r).get("code").asString()).isEqualTo("partially_saved");
+    assertThat(body(r).get("error").asString()).contains("not renamed").endsWith("The entry is now " + BOB + ".");
+    // The title was changed, and the trail says so (and that the rename was not done).
+    assertThat(read(BOB).values("title")).containsExactly("Head of Sales");
+    JsonNode event = trail(BOB).get(0);
+    assertThat(event.get("outcome").asString()).isEqualTo("success");
+    assertThat(detail(event, "title.new")).isEqualTo("Head of Sales");
+    assertThat(detail(event, "uid.new")).isNull();
+    assertThat(detail(event, "previousDn")).isNull();
+    assertThat(detail(event, "partial")).contains("not renamed");
+  }
+
+  @Test
+  void writesThatWouldLeaveTheDirectorysFilterAreRefused() throws Exception {
+    store.update(d -> {
+      d.definitions.replaceAll(def -> {
+        if (!def.id().equals("def-staff")) return def;
+        tools.jackson.databind.node.ObjectNode tree = mapper.valueToTree(def);
+        tree.put("filter", "(&(objectClass=inetOrgPerson)(!(departmentNumber=Finance)))");
+        return mapper.treeToValue(tree, com.winllc.dsp.model.DirectoryDefinition.class);
+      });
+      return null;
+    });
+    Client admin = login("admin");
+    MvcResult moved = admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("departmentNumber", "Finance")));
+    assertThat(status(moved)).isEqualTo(400);
+    assertThat(body(moved).get("error").asString()).contains("no longer belong");
+    assertThat(read(BOB).values("departmentNumber")).containsExactly("Sales");
+    // Changes the filter doesn't depend on, and those that keep it matching, are made as before.
+    assertThat(status(admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("title", "Head of Sales"))))).isEqualTo(200);
+    assertThat(status(admin.put("/api/directories/staff/entry" + q(BOB), Map.of("values", Map.of("departmentNumber", "Marketing"))))).isEqualTo(200);
+
+    Map<String, Object> values = new HashMap<>(Map.of("uid", "zoe", "givenName", "Zoe", "sn", "Zimmer", "cn", "Zoe Zimmer",
+        "mail", "zoe@example.com", "departmentNumber", "Finance"));
+    MvcResult outside = admin.post("/api/directories/staff/entries", Map.of("values", values));
+    assertThat(status(outside)).isEqualTo(400);
+    assertThat(read("uid=zoe,ou=people," + B)).isNull();
+    values.put("departmentNumber", "Sales");
+    MvcResult inside = admin.post("/api/directories/staff/entries", Map.of("values", values));
+    assertThat(status(inside)).as(error(inside)).isEqualTo(201);
+  }
+
+  @Test
   void aDeleteKeepsEveryAttributeTheEntryHeldOnItsFormOrNotWithSecretsRedacted() throws Exception {
     // Bob holds attributes his form shows (title, mail, ...) and others it doesn't (employeeType,
     // roomNumber, a photo, his password).

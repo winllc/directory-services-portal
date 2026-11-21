@@ -368,6 +368,47 @@ class SharedStoreTest extends ApiTestSupport {
     }
   }
 
+  @Test
+  void jobsOfAStoppedReplicaFailAndNoLongerCount() throws Exception {
+    // Not "alice": the other job tests in this context use her.
+    SessionUser dave = new SessionUser("dave", "uid=dave,ou=people," + B, "Dave", null, List.of(), false, "password", null);
+    // A replica that stopped left its jobs running: no heartbeat for a minute.
+    for (int i = 0; i < 6; i++) orphan(dave, "job-gone-" + i, "1 minute");
+    // One that is still alive (fresh heartbeat).
+    orphan(dave, "job-alive", "0 seconds");
+    // Unfinished rows of a stopped replica don't count against the limit (5): this is not a 429.
+    Job quick = jobs.submit(dave, new JobService.Spec("metrics", "Quick", null, "/metrics", null, JobService.Pool.METRICS, Duration.ZERO),
+        () -> "ok");
+    jobs.await(quick, Duration.ofSeconds(5));
+
+    // A stopped replica's job can be dismissed at once.
+    jobs.dismiss(dave, "job-gone-5");
+    assertThat(jdbc.queryForObject("SELECT count(*) FROM dsp_job WHERE id = 'job-gone-5'", Long.class)).isZero();
+
+    // The next sync (on any replica) marks them failed, in the status column and the view.
+    invokeSync(jobs);
+    assertThat(jdbc.queryForList("SELECT status FROM dsp_job WHERE id LIKE 'job-gone-%'", String.class)).hasSize(5).containsOnly("FAILED");
+    Job.View failed = jobs.get(dave, "job-gone-0").view();
+    assertThat(failed.status()).isEqualTo("failed");
+    assertThat(failed.error()).contains("stopped");
+    assertThat(failed.finishedAt()).isNotNull();
+    assertThat(jobs.list(dave)).filteredOn(v -> v.id().startsWith("job-gone-")).extracting(Job.View::status).containsOnly("failed");
+    assertThat(jdbc.queryForObject("SELECT status FROM dsp_job WHERE id = 'job-alive'", String.class)).isEqualTo("RUNNING");
+    jobs.dismiss(dave, "job-gone-0");
+    assertThat(jdbc.queryForObject("SELECT count(*) FROM dsp_job WHERE id = 'job-gone-0'", Long.class)).isZero();
+    jdbc.update("DELETE FROM dsp_job WHERE owner = ?", dave.key());
+  }
+
+  /** A running job of another replica whose last heartbeat was {@code ago} ago. */
+  private void orphan(SessionUser owner, String id, String ago) {
+    String created = java.time.Instant.now().minusSeconds(120).toString();
+    Job.View view = new Job.View(id, "metrics", "Orphan", "running", null, "/metrics", 10, null, "Reading", created, created, null, null, false);
+    jdbc.update("""
+        INSERT INTO dsp_job (id, owner, replica, view_json, status, background, created_at, updated_at)
+        VALUES (?, ?, 'stopped-replica', ?, 'RUNNING', true, now() - interval '2 minutes', now() - CAST(? AS interval))""",
+        id, owner.key(), mapper.writeValueAsString(view), ago);
+  }
+
   private static void invokeSync(JobService service) throws Exception {
     var m = JobService.class.getDeclaredMethod("syncShared");
     m.setAccessible(true);

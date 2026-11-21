@@ -440,18 +440,35 @@ public class AnalysisService {
       if (scan.truncated()) warnings.add("Only the first " + maxEntries + " entries of " + labels.get(s) + " were checked");
     }
 
-    // unique: every holder of a value someone else also holds.
+    // unique: every holder of a value someone else also holds. The others are counted (per source
+    // unless across sources), and only the first three are named, so this is linear in the holders.
+    JobContext uniqueJob = JobContext.current();
     for (Map.Entry<Integer, Map<String, List<Holder>>> u : uniques.entrySet()) {
       Check c = checks.get(u.getKey());
       boolean across = "all".equals(c.rule().scope());
       for (List<Holder> holders : u.getValue().values()) {
         if (holders.size() < 2) continue;
+        uniqueJob.checkCancelled();
+        // The first four holders of each candidate list: enough for three others besides any one holder.
+        Map<Integer, List<Holder>> bySource = new HashMap<>();
+        Map<Integer, Integer> perSource = new HashMap<>();
         for (Holder h : holders) {
-          List<Holder> others = holders.stream().filter(o -> o != h && (across || o.source() == h.source())).toList();
-          if (others.isEmpty()) continue;
-          String names = String.join(", ", others.stream().limit(3).map(o -> across && o.source() != h.source() ? o.dn() + " (" + labels.get(o.source()) + ")" : o.dn()).toList());
-          sink.add(c, u.getKey(), h.source(), h.dn(), h.title(), c.attribute(), List.of(h.value()),
-              "\"" + h.value() + "\" is also used by " + names + (others.size() > 3 ? " and " + (others.size() - 3) + " more" : ""));
+          perSource.merge(h.source(), 1, Integer::sum);
+          List<Holder> head = bySource.computeIfAbsent(h.source(), k -> new ArrayList<>(4));
+          if (head.size() < 4) head.add(h);
+        }
+        List<Holder> allHead = holders.subList(0, Math.min(4, holders.size()));
+        for (Holder h : holders) {
+          int others = across ? holders.size() - 1 : perSource.get(h.source()) - 1;
+          if (others == 0) continue;
+          String message = "";
+          if (issues.size() < maxIssues) {
+            List<Holder> head = across ? allHead : bySource.get(h.source());
+            String names = String.join(", ", head.stream().filter(o -> o != h).limit(3)
+                .map(o -> across && o.source() != h.source() ? o.dn() + " (" + labels.get(o.source()) + ")" : o.dn()).toList());
+            message = "\"" + h.value() + "\" is also used by " + names + (others > 3 ? " and " + (others - 3) + " more" : "");
+          }
+          sink.add(c, u.getKey(), h.source(), h.dn(), h.title(), c.attribute(), List.of(h.value()), message);
         }
       }
     }

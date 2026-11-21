@@ -33,7 +33,7 @@ import org.springframework.stereotype.Service;
 public class DirectoryOptions {
   /** Most typed words used in one search. */
   static final int MAX_WORDS = 5;
-  /** Most values resolved by one lookup. */
+  /** Most values labelled by one {@link #labels} call, and the values per directory search of a lookup. */
   static final int MAX_LOOKUP = 200;
   private static final int SEARCH_CACHE_SIZE = 500;
 
@@ -178,12 +178,18 @@ public class DirectoryOptions {
     return cached(directory.id() + "\u0000" + src + "\u0000" + q.toLowerCase(Locale.ROOT), seconds, () -> run(directory, src, searchFilter(src, q)));
   }
 
+  /** {@link #lookup} of at most the first {@value #MAX_LOOKUP} values: labels for values a user is shown. */
+  public List<OptionItem> labels(LdapDirectory directory, DropdownSource.Ldap src, Collection<String> values) {
+    return lookup(directory, src, values.stream().filter(v -> v != null && !v.isBlank()).distinct().limit(MAX_LOOKUP).toList());
+  }
+
   /**
    * The options for these values, as submitted (values that aren't options are left out). Used
-   * to label stored values and to validate input without loading every option.
+   * to validate input without loading every option: every value is resolved, in searches of
+   * {@value #MAX_LOOKUP} values at a time.
    */
   public List<OptionItem> lookup(LdapDirectory directory, DropdownSource.Ldap src, Collection<String> values) {
-    List<String> wanted = values.stream().filter(v -> v != null && !v.isBlank()).distinct().limit(MAX_LOOKUP).toList();
+    List<String> wanted = values.stream().filter(v -> v != null && !v.isBlank()).distinct().toList();
     if (wanted.isEmpty()) return List.of();
     Filter base = baseFilter(src);
     Map<String, OptionItem> found = new LinkedHashMap<>();
@@ -206,14 +212,18 @@ public class DirectoryOptions {
       }
       return new ArrayList<>(found.values());
     }
-    Filter any = Filter.createORFilter(wanted.stream().map(v -> Filter.createEqualityFilter(src.valueAttribute(), v)).toList());
-    List<DirectoryEntry> entries = directory.search(src.baseDn(), scope(src), Filter.createANDFilter(base, any), wanted.size() * 2 + 10,
-        attributes(src)).entries();
-    List<OptionItem> opts = options(src, entries);
-    for (String v : wanted) {
+    for (int from = 0; from < wanted.size(); from += MAX_LOOKUP) {
+      List<String> chunk = wanted.subList(from, Math.min(wanted.size(), from + MAX_LOOKUP));
+      Filter any = Filter.createORFilter(chunk.stream().map(v -> Filter.createEqualityFilter(src.valueAttribute(), v)).toList());
+      List<DirectoryEntry> entries = directory.search(src.baseDn(), scope(src), Filter.createANDFilter(base, any), chunk.size() * 2 + 10,
+          attributes(src)).entries();
       // The directory matched with the attribute's matching rule (usually case-insensitive).
-      opts.stream().filter(o -> o.value().equalsIgnoreCase(v)).findFirst()
-          .ifPresent(o -> found.put(v, new OptionItem(v, o.label(), o.description())));
+      Map<String, OptionItem> byValue = new java.util.HashMap<>();
+      for (OptionItem o : options(src, entries)) byValue.putIfAbsent(o.value().toLowerCase(Locale.ROOT), o);
+      for (String v : chunk) {
+        OptionItem o = byValue.get(v.toLowerCase(Locale.ROOT));
+        if (o != null) found.put(v, new OptionItem(v, o.label(), o.description()));
+      }
     }
     return new ArrayList<>(found.values());
   }

@@ -209,6 +209,30 @@ class SessionControlsTest extends ApiTestSupport {
   }
 
   @Test
+  void endsTheSessionOfAnAccountTheDirectoryDisables() throws Exception {
+    // The demo schema has no lock attributes: teach the embedded server Active Directory's
+    // userAccountControl (once; the schema outlives the directory reset).
+    if (directory.get("cn=schema", List.of("attributeTypes")).values("attributeTypes").stream().noneMatch(t -> t.contains("'userAccountControl'"))) {
+      directory.modify("cn=schema", List.of(new Modification(ModificationType.REPLACE, "cn", "schema"),
+          new Modification(ModificationType.ADD, "attributeTypes",
+              "( 1.2.840.113556.1.4.8 NAME 'userAccountControl' SYNTAX 1.3.6.1.4.1.1466.115.121.1.27 SINGLE-VALUE )")));
+    }
+    directory.modify(ADMINS, List.of(new Modification(ModificationType.ADD, "member", ALICE)));
+    Client alice = login("alice");
+    assertThat(status(alice.get("/api/admin/forms"))).isEqualTo(200);
+    // 514: a normal account (512) with ACCOUNTDISABLE (2).
+    directory.modify(ALICE, List.of(new Modification(ModificationType.ADD, "objectClass", "extensibleObject"),
+        new Modification(ModificationType.ADD, "userAccountControl", "514")));
+
+    // Checked with the groups: not due yet, then due.
+    assertThat(status(alice.get("/api/admin/forms"))).isEqualTo(200);
+    ago(alice.session, SessionService.GROUPS_RESOLVED_AT, Duration.ofMinutes(6));
+    assertExpired(alice.get("/api/admin/forms"));
+    assertThat(status(alice.get("/api/admin/forms"))).isEqualTo(401);
+    assertThat(events("auth.session-expired")).anySatisfy(e -> assertThat(e.get("reason").asString()).isEqualTo("account-disabled"));
+  }
+
+  @Test
   void locksOutAfterTheConfiguredNumberOfFailures() throws Exception {
     props.getLogin().setMaxFailures(3);
     props.getLogin().setLockoutWindow(Duration.ofMinutes(30));

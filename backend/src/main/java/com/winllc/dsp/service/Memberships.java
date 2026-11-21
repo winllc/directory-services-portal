@@ -9,6 +9,7 @@ import com.winllc.dsp.model.FormField;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.web.ApiException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -68,7 +69,8 @@ public class Memberships {
 
   public Members read(SessionUser user, DirectoryDefinition def, String dn, String attribute) {
     FormField f = field(entries.form(def), attribute);
-    DirectoryEntry entry = entries.get(user, def, dn);
+    // Every member, also of a group the directory returns in ranges (Active Directory, over 1,500).
+    DirectoryEntry entry = entries.directoryOf(def).ldap().withAllValues(entries.get(user, def, dn), f.attribute());
     return new Members(entry.dn(), f.attribute(), entry.values(f.attribute()));
   }
 
@@ -84,10 +86,13 @@ public class Memberships {
    */
   public Change change(SessionUser user, DirectoryDefinition def, String dn, String attribute, List<String> add, List<String> remove,
       String reason) {
+    int max = props.getTransfer().getBulkMaxMembers();
+    // Checked as sent too, before any work on the lists.
+    if ((add == null ? 0 : add.size()) + (remove == null ? 0 : remove.size()) > max) {
+      throw ApiException.badRequest("At most " + max + " members can be added or removed at once");
+    }
     List<String> toAdd = clean(add);
     List<String> toRemove = clean(remove);
-    int max = props.getTransfer().getBulkMaxMembers();
-    if (toAdd.size() + toRemove.size() > max) throw ApiException.badRequest("At most " + max + " members can be added or removed at once");
     if (toAdd.isEmpty() && toRemove.isEmpty()) throw ApiException.badRequest("Nothing to add or remove");
     FormField f = field(entries.form(def), attribute);
     boolean dnValued = dnValued(f);
@@ -105,13 +110,13 @@ public class Memberships {
 
   private static List<String> clean(List<String> values) {
     if (values == null) return List.of();
-    List<String> out = new ArrayList<>();
+    Set<String> out = new LinkedHashSet<>();
     for (String v : values) {
       if (v == null) continue;
       String s = v.trim();
-      if (!s.isEmpty() && !out.contains(s)) out.add(s);
+      if (!s.isEmpty()) out.add(s);
     }
-    return out;
+    return new ArrayList<>(out);
   }
 
   private static String shorten(String s) {

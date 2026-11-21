@@ -97,11 +97,15 @@ public class DataSources {
     if (attribute == null || attribute.isBlank()) return "An attribute is required";
     if (DN.equalsIgnoreCase(attribute)) return null;
     if (!attribute.matches(Patterns.ATTRIBUTE)) return "\"" + attribute + "\" is not a valid attribute name";
-    if (EntryService.isHidden(attribute)) return "\"" + attribute + "\" can't be used here";
-    if (LdapDirectory.isBinary(attribute)) return "\"" + attribute + "\" holds binary data and can't be aggregated";
+    SchemaIndex index = schema.mergedIndex(def.directory());
+    // By schema name too: an OID or alias names the same attribute.
+    if (EntryService.isHidden(attribute, index)) return "\"" + attribute + "\" can't be used here";
+    int semi = attribute.indexOf(';');
+    if (LdapDirectory.isBinary(attribute) || LdapDirectory.isBinary(index.primaryAttributeName(semi > 0 ? attribute.substring(0, semi) : attribute))) {
+      return "\"" + attribute + "\" holds binary data and can't be aggregated";
+    }
     if (user.isAdmin()) return null;
     if (TIMESTAMPS.stream().anyMatch(t -> t.equalsIgnoreCase(attribute))) return null;
-    SchemaIndex index = schema.mergedIndex(def.directory());
     String primary = index.primaryAttributeName(attribute);
     for (String a : EntryService.readableAttributes(def, form)) {
       if (a.equalsIgnoreCase(attribute) || index.primaryAttributeName(a).equalsIgnoreCase(primary)) return null;
@@ -134,14 +138,15 @@ public class DataSources {
    * {@code dn} in the list is ignored (the DN is always present).
    */
   public LdapDirectory.ScanResult scan(Source source, Collection<String> attributes, int max, Consumer<DirectoryEntry> consumer) {
+    DirectoryDefinition def = source.definition();
+    SchemaIndex index = schema.mergedIndex(def.directory());
     Map<String, String> attrs = new LinkedHashMap<>();
     for (String a : attributes) {
-      if (a == null || DN.equalsIgnoreCase(a)) continue;
+      if (a == null || DN.equalsIgnoreCase(a) || EntryService.isHidden(a, index)) continue;
       attrs.putIfAbsent(a.toLowerCase(), a);
     }
     // "1.1" asks for no attributes at all (RFC 4511), for scans that only need DNs.
     List<String> requested = attrs.isEmpty() ? List.of("1.1") : new ArrayList<>(attrs.values());
-    DirectoryDefinition def = source.definition();
     String sizeKey = def.id() + "\u0000" + source.filter();
     // Captured here: the SDK may hand entries to the consumer on another thread.
     JobContext job = JobContext.current();
@@ -155,7 +160,8 @@ public class DataSources {
         return;
       }
       job.entryRead();
-      consumer.accept(e);
+      // Password attributes never reach an aggregator, whatever name they were asked for by.
+      consumer.accept(EntryService.withoutHidden(e, index));
     });
     int delivered = r.entries() - skipped[0];
     if (!r.truncated()) sizes.put(sizeKey, delivered);

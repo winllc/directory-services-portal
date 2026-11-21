@@ -20,6 +20,13 @@ public class InfoController {
   private final X509AuthService x509;
   private final ConsentService consent;
   private final com.winllc.dsp.sso.SsoSecurity sso;
+  /** Whether the primary directory answered, reused for {@link #REACH_TTL}: anyone may call /api/info. */
+  private volatile Reach reach;
+
+  static final java.time.Duration REACH_TTL = java.time.Duration.ofSeconds(10);
+
+  /** {@code error} is null when the directory answered. */
+  private record Reach(long at, String directory, String error) {}
 
   public InfoController(Directories directories, PortalProperties props, X509AuthService x509, ConsentService consent,
       com.winllc.dsp.sso.SsoSecurity sso) {
@@ -65,11 +72,22 @@ public class InfoController {
         sso.options().stream().map(o -> new ServerInfo.Sso(o.id(), o.label(), o.url())).toList(),
         directories.several() ? directories.enabled().stream().map(d -> new ServerInfo.DirectoryOption(d.id(), d.name())).toList() : null);
     ServerInfo.Consent notice = consent.enabled() ? new ServerInfo.Consent(consent.title(), consent.text()) : null;
+    Reach r = reach(primary);
+    return new ServerInfo(mode, url, baseDn, r.error() == null, admin ? r.error() : null, VERSION, auth, hint, banner, notice);
+  }
+
+  private Reach reach(Directories.Directory primary) {
+    Reach r = reach;
+    long now = System.nanoTime();
+    if (r != null && r.directory().equals(primary.id()) && now - r.at() < REACH_TTL.toNanos()) return r;
+    String error = null;
     try {
       primary.ldap().ping();
-      return new ServerInfo(mode, url, baseDn, true, null, VERSION, auth, hint, banner, notice);
     } catch (RuntimeException e) {
-      return new ServerInfo(mode, url, baseDn, false, admin ? e.getMessage() : null, VERSION, auth, hint, banner, notice);
+      error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
+    r = new Reach(now, primary.id(), error);
+    reach = r;
+    return r;
   }
 }
