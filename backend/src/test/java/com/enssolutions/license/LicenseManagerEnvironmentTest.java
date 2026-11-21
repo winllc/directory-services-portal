@@ -5,6 +5,8 @@ package com.enssolutions.license;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,11 +15,13 @@ import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeAll;
@@ -172,6 +176,33 @@ class LicenseManagerEnvironmentTest {
         m.install(license("lic_uploaded", 1, "certalert"));
         m.current();
         assertEquals("lic_uploaded", installedId());
+    }
+
+    @Test
+    void aStoreThatFailsAtFirstIsTriedAgain() throws Exception {
+        AtomicBoolean down = new AtomicBoolean(true);
+        FileLicenseStore files = new FileLicenseStore(dir.resolve("license.lic"), dir.resolve("state"));
+        LicenseStore flaky = (LicenseStore) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[] {LicenseStore.class}, (proxy, method, args) -> {
+                    if (down.get() && !method.getName().equals("location") && !method.getName().equals("recheckInterval")) {
+                        throw new IOException("database starting (test)");
+                    }
+                    try {
+                        return method.invoke(files, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        LicenseManager m = new LicenseManager("certalert", verifier, flaky, Optional.empty(), CLOCK,
+                Optional.of(license("lic_env", 1, "certalert")));
+        m.environmentRetry = Duration.ZERO;
+        assertEquals(LicenseState.Mode.UNLICENSED, m.current().state().mode());
+        assertTrue(m.environmentLicenseStatus().orElseThrow().contains("could not be written"));
+
+        down.set(false);
+        assertEquals(LicenseState.Mode.FULL, m.current().state().mode());
+        assertEquals("lic_env", installedId());
+        assertTrue(m.environmentLicenseStatus().orElseThrow().contains("was installed"));
     }
 
     @Test

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
@@ -41,7 +42,8 @@ import javax.sql.DataSource;
  *       token on its own line), or the file base64-encoded. It is installed (written
  *       to the license file) the first time the license is checked, if no usable license is
  *       installed yet or if it is a newer revision of the installed one; a license installed any
- *       other way, such as an upload on the license screen, is otherwise left alone.</li>
+ *       other way, such as an upload on the license screen, is otherwise left alone. If the store
+ *       can't be read or written at that moment, it is tried again on a check 30 seconds later.</li>
  * </ul>
  *
  * <p>Thread-safe. {@link #current()} is cheap: it re-reads the license only when
@@ -57,6 +59,9 @@ public final class LicenseManager {
     private final Clock clock;
     private final Optional<String> environmentLicense;
     private boolean environmentApplied;
+    /** System.nanoTime() after which ENS_LICENSE is tried again, once writing it failed. */
+    private long environmentRetryAt;
+    private boolean environmentRetryPending;
     private String environmentStatus;
 
     private Object loadedVersion;
@@ -248,11 +253,21 @@ public final class LicenseManager {
                 + "its BEGIN and END lines, or the file base64-encoded");
     }
 
+    /**
+     * How long after a failed attempt to install {@code ENS_LICENSE} (the store could not be read or
+     * written) it is tried again, at the least; a store's longer recheck interval applies instead.
+     */
+    static final Duration ENVIRONMENT_RETRY = Duration.ofSeconds(30);
+    Duration environmentRetry = ENVIRONMENT_RETRY; // shorter in tests
+
     private void applyEnvironmentLicenseOnce() {
         if (environmentApplied || environmentLicense.isEmpty()) {
             return;
         }
-        environmentApplied = true;
+        if (environmentRetryPending && System.nanoTime() - environmentRetryAt < 0) {
+            return;
+        }
+        environmentApplied = true; // also while installing: install() calls current()
         String status;
         System.Logger.Level level = System.Logger.Level.INFO;
         try {
@@ -283,8 +298,14 @@ public final class LicenseManager {
             level = System.Logger.Level.WARNING;
             status = "ENS_LICENSE was not installed: " + e.getMessage() + ".";
         } catch (IOException | RuntimeException e) {
+            // Not a verdict on the license (the store may be down for a moment): try again later.
+            Duration wait = store.recheckInterval().compareTo(environmentRetry) > 0 ? store.recheckInterval() : environmentRetry;
+            environmentApplied = false;
+            environmentRetryPending = true;
+            environmentRetryAt = System.nanoTime() + wait.toNanos();
             level = System.Logger.Level.WARNING;
-            status = "ENS_LICENSE could not be written to " + store.location() + ": " + e.getMessage();
+            status = "ENS_LICENSE could not be written to " + store.location() + ": " + e.getMessage()
+                    + ". It is tried again in " + wait.toSeconds() + " seconds.";
         }
         environmentStatus = status;
         LOG.log(level, status);
