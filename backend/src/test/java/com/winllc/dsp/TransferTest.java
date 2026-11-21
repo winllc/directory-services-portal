@@ -255,6 +255,57 @@ class TransferTest extends ApiTestSupport {
     assertThat(event.get("details").get("member.new").asString()).isEqualTo("uid=bob,ou=people," + B);
   }
 
+  /** {@code n} more people (uid=extraN), DNs returned in order. */
+  private List<String> addPeople(int n) {
+    List<String> dns = new ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      Map<String, List<String>> a = new java.util.LinkedHashMap<>();
+      a.put("objectClass", List.of("top", "person", "organizationalPerson", "inetOrgPerson"));
+      a.put("uid", List.of("extra" + i));
+      a.put("cn", List.of("Extra " + i));
+      a.put("sn", List.of("E" + i));
+      String dn = "uid=extra" + i + ",ou=people," + B;
+      directory.add(dn, a);
+      dns.add(dn);
+    }
+    return dns;
+  }
+
+  @Test
+  void groupsOfMoreThan200MembersAreValidatedInFull() throws Exception {
+    Client admin = login("admin");
+    List<String> people = addPeople(450);
+    List<String> before = directory.get(ENGINEERING, List.of("member")).values("member");
+    // A member the drop down doesn't offer (no such entry) that the group already has.
+    String ghost = "uid=ghost,ou=people," + B;
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.ADD, "member", ghost)));
+
+    // The form: every one of 250 new members is looked up (the drop down's options are people).
+    List<String> members = new ArrayList<>(before);
+    members.add(ghost);
+    members.addAll(people.subList(0, 250));
+    MvcResult form = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", members)));
+    assertThat(status(form)).as(form.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(directory.get(ENGINEERING, List.of("member")).values("member")).hasSize(before.size() + 251).contains(ghost, people.get(249));
+    // A value that is not an option, past the 200th, is still refused.
+    List<String> bad = new ArrayList<>(members);
+    bad.addAll(people.subList(250, 450));
+    bad.add(bad.size() - 10, "uid=nobody,ou=people," + B);
+    MvcResult refused = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", bad)));
+    assertThat(status(refused)).isEqualTo(400);
+    assertThat(body(refused).get("details").get("member").asString()).contains("uid=nobody");
+
+    // In bulk: 200 more at once, then the same with one that is not an option.
+    MvcResult bulk = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", people.subList(250, 450)));
+    assertThat(status(bulk)).as(bulk.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(bulk).get("added").size()).isEqualTo(200);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.DELETE, "member",
+        people.subList(0, 450).toArray(String[]::new))));
+    MvcResult all = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", people));
+    assertThat(status(all)).as(all.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(all).get("added").size()).isEqualTo(450);
+  }
+
   /** Returns engineering's members in ranges of two, as Active Directory does past 1,500 values. */
   private void rangedEngineering() {
     embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {

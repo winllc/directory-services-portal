@@ -394,7 +394,7 @@ public class EntryService {
     if (field.dropdown() instanceof DropdownSource.Static s) return new DirectoryOptions.Page(s.options(), false, null);
     if (!(field.dropdown() instanceof DropdownSource.Ldap src)) return new DirectoryOptions.Page(List.of(), false, null);
     LdapDirectory dir = ldap(def);
-    if (values != null && !values.isEmpty()) return new DirectoryOptions.Page(options.lookup(dir, src, values), false, null);
+    if (values != null && !values.isEmpty()) return new DirectoryOptions.Page(options.labels(dir, src, values), false, null);
     DirectoryOptions.Page page = q == null || q.isBlank() ? (src.searchMode() ? options.search(dir, src, "") : options.list(dir, src))
         : options.search(dir, src, q);
     // The effective filter is for administrators testing the settings, not for every user.
@@ -403,22 +403,54 @@ public class EntryService {
 
   /**
    * For each directory-backed drop down among the submitted values: the options matching those
-   * values (looked up directly, so validation works however many options there are).
+   * values (looked up directly, so validation works however many options there are). On an update
+   * ({@code current} set), members the group already has are kept as they are: only the added
+   * ones are looked up, as {@link #changeValues} does.
    */
-  private Map<String, List<OptionItem>> resolveOptions(DirectoryDefinition def, FormDefinition form, Map<String, Object> input) {
+  private Map<String, List<OptionItem>> resolveOptions(DirectoryDefinition def, FormDefinition form, Map<String, Object> input, DirectoryEntry current) {
     Map<String, List<OptionItem>> out = new HashMap<>();
     Map<String, Object> byAttr = new HashMap<>();
     if (input != null) input.forEach((k, v) -> byAttr.put(k.toLowerCase(), v));
     for (FormField f : form.fields()) {
       if (!f.dropdownWidget() || !(f.dropdown() instanceof DropdownSource.Ldap src) || f.allowsCustomValues()) continue;
-      List<String> submitted = FormValidator.normalize(byAttr.get(f.attribute().toLowerCase()));
-      out.put(f.id(), submitted.isEmpty() ? List.of() : options.lookup(ldap(def), src, submitted));
+      String key = f.attribute().toLowerCase();
+      List<String> submitted = FormValidator.normalize(byAttr.get(key));
+      List<OptionItem> resolved = new ArrayList<>();
+      List<String> lookUp = submitted;
+      if (current != null && MEMBER_ATTRIBUTES.contains(key)) {
+        boolean dnValued = !key.equals("memberuid");
+        Set<String> held = new java.util.HashSet<>();
+        for (String v : current.values(key)) held.add(valueKey(v, dnValued));
+        lookUp = new ArrayList<>();
+        for (String v : submitted) {
+          if (held.contains(valueKey(v, dnValued))) resolved.add(new OptionItem(v, v, null));
+          else lookUp.add(v);
+        }
+      }
+      if (!lookUp.isEmpty()) resolved.addAll(options.lookup(ldap(def), src, lookUp));
+      out.put(f.id(), resolved);
     }
     return out;
   }
 
-  private Map<String, List<String>> validate(DirectoryDefinition def, FormDefinition form, Map<String, Object> values, FormValidator.Mode mode) {
-    FormValidator.Result result = FormValidator.validate(form, values, mode, resolveOptions(def, form, values));
+  /**
+   * A value compared as members are: a DN by its normalized form (an invalid one, and any value
+   * of a non-DN attribute, case-insensitively).
+   */
+  static String valueKey(String value, boolean dnValued) {
+    if (dnValued) {
+      try {
+        return "dn:" + new com.unboundid.ldap.sdk.DN(value).toNormalizedString();
+      } catch (LDAPException e) {
+        // Not a DN: compared as text below.
+      }
+    }
+    return value.toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private Map<String, List<String>> validate(DirectoryDefinition def, FormDefinition form, Map<String, Object> values, FormValidator.Mode mode,
+      DirectoryEntry current) {
+    FormValidator.Result result = FormValidator.validate(form, values, mode, resolveOptions(def, form, values, current));
     if (!result.errors().isEmpty()) throw ApiException.badRequest("Some fields are invalid", result.errors());
     return result.values();
   }
@@ -477,7 +509,7 @@ public class EntryService {
       throw ApiException.badRequest("This directory only contains direct children of its base DN");
     }
 
-    Map<String, List<String>> values = validate(def, form, input, FormValidator.Mode.CREATE);
+    Map<String, List<String>> values = validate(def, form, input, FormValidator.Mode.CREATE, null);
     String rdnKey = form.rdnAttribute().toLowerCase();
     List<String> rdnValues = values.getOrDefault(rdnKey, List.of());
     if (rdnValues.isEmpty()) throw ApiException.badRequest("Missing naming attribute", Map.of(rdnKey, "Required"));
@@ -525,7 +557,7 @@ public class EntryService {
     event.target("entry", current.dn(), title(def, current));
     if (self) assertSelf(user, def, form, current.dn());
 
-    Map<String, List<String>> values = validate(def, form, input, self ? FormValidator.Mode.SELF : FormValidator.Mode.UPDATE);
+    Map<String, List<String>> values = validate(def, form, input, self ? FormValidator.Mode.SELF : FormValidator.Mode.UPDATE, current);
     SchemaIndex index = schema.mergedIndex(def.directory());
 
     // Rename first if the naming attribute's value changed.
