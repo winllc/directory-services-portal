@@ -45,6 +45,8 @@ import org.slf4j.LoggerFactory;
 public class FileAuditStore extends AuditStore {
   private static final Logger log = LoggerFactory.getLogger(FileAuditStore.class);
   static final Pattern FILE = Pattern.compile("audit-(\\d{4})-(\\d{2})\\.jsonl");
+  /** Where retention records how far it pruned ({@link #prunedThrough}): {@code seq:hash}. */
+  static final String PRUNED_FILE = "audit-pruned";
   /** Recent lines kept in memory so forwarders and the pull API rarely read files. */
   static final int TAIL_CAPACITY = 20_000;
 
@@ -429,6 +431,9 @@ public class FileAuditStore extends AuditStore {
       });
       if (doomed.isEmpty()) return new Pruned(0, null, null, null, null);
       long upTo = doomed.get(doomed.size() - 1).seq();
+      // Recorded first: an interrupted prune leaves events retention chose to delete, never a gap
+      // verification cannot account for.
+      recordPrunedThrough(new PrunedThrough(upTo, AuditJson.hashOf(doomed.get(doomed.size() - 1).line())));
       for (Path f : storeFiles()) {
         List<String> lines = readLines(f);
         List<String> keep = new ArrayList<>();
@@ -462,6 +467,30 @@ public class FileAuditStore extends AuditStore {
     } finally {
       lock.writeLock().unlock();
     }
+  }
+
+  @Override
+  public PrunedThrough prunedThrough() {
+    Path f = dir.resolve(PRUNED_FILE);
+    if (!Files.exists(f)) return null;
+    try {
+      return PrunedThrough.parse(Files.readString(f, StandardCharsets.UTF_8));
+    } catch (IOException e) {
+      log.warn("Could not read {}: {}", f, e.getMessage());
+      return null;
+    }
+  }
+
+  private void recordPrunedThrough(PrunedThrough pruned) throws IOException {
+    PrunedThrough before = prunedThrough();
+    if (before != null && before.seq() >= pruned.seq()) return;
+    Path f = dir.resolve(PRUNED_FILE);
+    Path tmp = f.resolveSibling(PRUNED_FILE + ".tmp");
+    Files.writeString(tmp, pruned.text() + "\n", StandardCharsets.UTF_8);
+    try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.WRITE)) {
+      ch.force(true);
+    }
+    Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
   }
 
   /** Every legacy (pre ens-audit/1) file in the store directory. */

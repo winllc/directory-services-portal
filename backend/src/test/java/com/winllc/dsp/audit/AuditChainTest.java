@@ -139,6 +139,48 @@ class AuditChainTest {
   }
 
   @Test
+  void eventsDeletedFromTheStartWithoutRetentionAreDetected() throws Exception {
+    AuditStore store = new FileAuditStore(dir);
+    for (int i = 0; i < 4; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
+    Path file = dir.resolve("audit-2026-01.jsonl");
+    List<String> lines = new ArrayList<>(Files.readAllLines(file));
+    Files.write(file, lines.subList(2, lines.size()));
+
+    AuditStore.Verification v = new FileAuditStore(dir).verify();
+    assertThat(v.intact()).isFalse();
+    assertThat(v.brokenSeq()).isEqualTo(1);
+    assertThat(v.problem()).contains("retention has pruned nothing");
+  }
+
+  @Test
+  void afterPruningTheAnchorMustBeTheEventAfterTheLastPruned() throws Exception {
+    AuditStore store = new FileAuditStore(dir);
+    for (int i = 0; i < 5; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
+    store.prune(s -> s.seq() <= 2);
+    assertThat(store.prunedThrough().seq()).isEqualTo(2);
+    assertThat(store.verify().intact()).isTrue();
+
+    Path file = dir.resolve("audit-2026-01.jsonl");
+    List<String> lines = new ArrayList<>(Files.readAllLines(file));
+    Files.write(file, lines.subList(1, lines.size()));
+    AuditStore.Verification v = new FileAuditStore(dir).verify();
+    assertThat(v.intact()).isFalse();
+    assertThat(v.brokenSeq()).isEqualTo(3);
+    assertThat(v.problem()).contains("pruned only up to seq 2");
+  }
+
+  @Test
+  void aStoreThatPrunedBeforeItRecordedHowFarKeepsItsAnchor() throws Exception {
+    AuditStore store = new FileAuditStore(dir);
+    for (int i = 0; i < 3; i++) store.append(event("system.started", "2026-01-0" + (i + 1) + "T00:00:00.000Z"), null);
+    store.append(event("audit.pruned", "2026-01-04T00:00:00.000Z"), null);
+    store.prune(s -> s.seq() <= 2);
+    Files.delete(dir.resolve(FileAuditStore.PRUNED_FILE)); // as an earlier release left it
+
+    assertThat(new FileAuditStore(dir).verify().intact()).isTrue();
+  }
+
+  @Test
   void migratesTheOriginalAuditFilesInTimeOrder() throws Exception {
     Path auditDir = dir.resolve("audit");
     Files.createDirectories(auditDir);
