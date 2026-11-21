@@ -30,15 +30,15 @@ public final class FormValidator {
 
   /** Trim, drop blanks and duplicates. Accepts a string, a list or null. */
   public static List<String> normalize(Object raw) {
-    List<String> out = new ArrayList<>();
-    if (raw == null) return out;
+    if (raw == null) return new ArrayList<>();
+    java.util.Set<String> out = new java.util.LinkedHashSet<>();
     List<?> list = raw instanceof List<?> l ? l : List.of(raw);
     for (Object v : list) {
       if (v == null) continue;
       String s = String.valueOf(v).trim();
-      if (!s.isEmpty() && !out.contains(s)) out.add(s);
+      if (!s.isEmpty()) out.add(s);
     }
-    return out;
+    return new ArrayList<>(out);
   }
 
   public static boolean isWritable(FormDefinition form, FormField field, Mode mode) {

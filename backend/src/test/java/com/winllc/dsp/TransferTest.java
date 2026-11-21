@@ -255,6 +255,44 @@ class TransferTest extends ApiTestSupport {
     assertThat(event.get("details").get("member.new").asString()).isEqualTo("uid=bob,ou=people," + B);
   }
 
+  @Test
+  void largeMemberListsAreComparedOnceEach() throws Exception {
+    Client admin = login("admin");
+    // 6,000 members; removing 2,000 compared each pair before (12 million DN comparisons).
+    List<String> many = new ArrayList<>();
+    for (int i = 0; i < 6_000; i++) many.add("uid=user" + i + ",ou=people," + B);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member",
+        many.toArray(String[]::new))));
+    // Written differently from the stored values (case, spaces): still the same members.
+    List<String> remove = new ArrayList<>();
+    for (int i = 0; i < 2_000; i++) remove.add("UID=user" + i + ", ou=People, DC=example, DC=com");
+    long start = System.nanoTime();
+    MvcResult r = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("remove", remove));
+    long millis = (System.nanoTime() - start) / 1_000_000;
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(r).get("removed").size()).isEqualTo(2_000);
+    assertThat(millis).as("milliseconds").isLessThan(15_000);
+    List<String> after = directory.get(ENGINEERING, List.of("member")).values("member");
+    assertThat(after).hasSize(4_000).contains("uid=user2000,ou=people," + B).doesNotContain("uid=user1999,ou=people," + B);
+
+    // The form: the same list in another spelling plus one new member changes just that one.
+    List<String> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyRequest request) {
+        request.getRequest().getModifications().forEach(m -> seen.add(m.getModificationType() + " " + m.getValues().length));
+      }
+    });
+    List<String> form = new ArrayList<>(after.stream().map(String::toUpperCase).toList());
+    form.add(ALICE);
+    start = System.nanoTime();
+    MvcResult saved = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", form)));
+    millis = (System.nanoTime() - start) / 1_000_000;
+    assertThat(status(saved)).as(saved.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(seen).containsExactly("ADD 1");
+    assertThat(millis).as("milliseconds").isLessThan(15_000);
+  }
+
   /** {@code n} more people (uid=extraN), DNs returned in order. */
   private List<String> addPeople(int n) {
     List<String> dns = new ArrayList<>();

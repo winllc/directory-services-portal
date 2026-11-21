@@ -65,6 +65,8 @@ public class EntryService {
   private static final Set<String> HIDDEN = Set.of("userpassword", "unicodepwd", "sambantpassword", "sambalmpassword", "krbprincipalkey",
       "2.5.4.35", "1.2.840.113556.1.4.90", "1.3.6.1.4.1.7165.2.1.25", "1.3.6.1.4.1.7165.2.1.24", "2.16.840.1.113719.1.301.4.9.1");
   private static final int LIST_LIMIT = 1000;
+  /** Most new values of one directory-backed drop down a save looks up (each may be a directory search). */
+  static final int MAX_NEW_VALUES = 5_000;
   /** Group member attributes: changed value by value, never replaced as a whole (see {@link #changeValues}). */
   public static final Set<String> MEMBER_ATTRIBUTES = Set.of("member", "uniquemember", "memberuid");
   private static final String REDACTED = AuditDetails.REDACTED;
@@ -427,6 +429,9 @@ public class EntryService {
           else lookUp.add(v);
         }
       }
+      if (lookUp.size() > MAX_NEW_VALUES) {
+        throw ApiException.badRequest("Some fields are invalid", Map.of(key, f.label() + ": at most " + MAX_NEW_VALUES + " new values can be saved at once"));
+      }
       if (!lookUp.isEmpty()) resolved.addAll(options.lookup(ldap(def), src, lookUp));
       out.put(f.id(), resolved);
     }
@@ -446,6 +451,12 @@ public class EntryService {
       }
     }
     return value.toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private static Set<String> valueKeys(List<String> values, boolean dnValued) {
+    Set<String> out = new java.util.HashSet<>();
+    for (String v : values) out.add(valueKey(v, dnValued));
+    return out;
   }
 
   private Map<String, List<String>> validate(DirectoryDefinition def, FormDefinition form, Map<String, Object> values, FormValidator.Mode mode,
@@ -540,7 +551,7 @@ public class EntryService {
   }
 
   private static boolean sameSet(List<String> a, List<String> b) {
-    return a.size() == b.size() && a.containsAll(b);
+    return a.size() == b.size() && new java.util.HashSet<>(a).containsAll(b);
   }
 
   public DirectoryEntry update(SessionUser user, DirectoryDefinition def, String dn, Map<String, Object> input, boolean self) {
@@ -613,9 +624,10 @@ public class EntryService {
               + "parts); add and remove them with \"Change members in bulk\" or the API", "ranged_values");
         }
         boolean dnValued = !key.equals("memberuid");
-        java.util.function.BiPredicate<String, String> same = (a, b) -> dnValued ? Dns.equal(a, b) || a.equalsIgnoreCase(b) : a.equalsIgnoreCase(b);
-        List<String> added = next.stream().filter(v -> prev.stream().noneMatch(p -> same.test(p, v))).toList();
-        List<String> removed = prev.stream().filter(p -> next.stream().noneMatch(v -> same.test(p, v))).toList();
+        Set<String> prevKeys = valueKeys(prev, dnValued);
+        Set<String> nextKeys = valueKeys(next, dnValued);
+        List<String> added = next.stream().filter(v -> !prevKeys.contains(valueKey(v, dnValued))).toList();
+        List<String> removed = prev.stream().filter(p -> !nextKeys.contains(valueKey(p, dnValued))).toList();
         if (added.isEmpty() && removed.isEmpty()) continue;
         recorded.add(change(attr, prev, next));
         if (!added.isEmpty()) changes.add(new Modification(ModificationType.ADD, attr, added.toArray(String[]::new)));
@@ -696,10 +708,12 @@ public class EntryService {
       String key = attr.toLowerCase();
       boolean partial = current.attributes().keySet().stream().anyMatch(k -> k.startsWith(key + ";range="));
       List<String> present = current.values(attr);
-      java.util.function.BiPredicate<String, String> same = (a, b) -> dnValued ? Dns.equal(a, b) || a.equalsIgnoreCase(b) : a.equalsIgnoreCase(b);
-      List<String> toAdd = partial ? List.copyOf(add) : add.stream().filter(v -> present.stream().noneMatch(p -> same.test(p, v))).toList();
-      List<String> toRemove = partial ? List.copyOf(remove) : present.stream().filter(p -> remove.stream().anyMatch(r -> same.test(p, r))).toList();
-      toRemove = toRemove.stream().filter(v -> toAdd.stream().noneMatch(a -> same.test(a, v))).toList();
+      Set<String> presentKeys = valueKeys(present, dnValued);
+      Set<String> removeKeys = valueKeys(remove, dnValued);
+      List<String> toAdd = partial ? List.copyOf(add) : add.stream().filter(v -> !presentKeys.contains(valueKey(v, dnValued))).toList();
+      List<String> toRemove = partial ? List.copyOf(remove) : present.stream().filter(p -> removeKeys.contains(valueKey(p, dnValued))).toList();
+      Set<String> addKeys = valueKeys(toAdd, dnValued);
+      toRemove = toRemove.stream().filter(v -> !addKeys.contains(valueKey(v, dnValued))).toList();
       if (!toAdd.isEmpty()) {
         List<OptionItem> resolved = field.dropdownWidget() && field.dropdown() instanceof DropdownSource.Ldap src && !field.allowsCustomValues()
             ? options.lookup(ldap(def), src, toAdd) : null;
