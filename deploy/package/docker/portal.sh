@@ -76,15 +76,35 @@ case "$cmd" in
   backup)
     file="${1:-portal-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
     say "Backing up the portal data to $file"
-    dc run --rm --no-deps -T --entrypoint tar api -cf - -C /data . | gzip > "$file"
+    # Written to $file.part and renamed when complete: a failed backup leaves no archive that
+    # looks like one.
+    trap 'rm -f "$file.part"' EXIT
+    dc run --rm --no-deps -T --entrypoint tar api -cf - -C /data . | gzip > "$file.part"
+    mv -f "$file.part" "$file"
+    trap - EXIT
     say "Done ($(du -h "$file" | cut -f1))"
     ;;
   restore)
     file="${1:-}"; [ -f "$file" ] || die "Usage: ./portal.sh restore <backup.tar.gz>"
+    # Checked before anything is stopped or deleted.
+    if ! gzip -t "$file" 2>/dev/null || ! tar -tzf "$file" >/dev/null; then
+      die "$file is not a complete backup (gzip-compressed tar); nothing was changed"
+    fi
     read -r -p "Replace ALL portal data with $file? [y/N] " answer
     [ "$answer" = y ] || [ "$answer" = Y ] || exit 1
     dc stop api
-    gzip -dc "$file" | dc run --rm --no-deps -T --entrypoint sh api -c 'find /data -mindepth 1 -delete && tar -xf - -C /data'
+    # Extracted into a staging directory in the volume first; the data is replaced only once the
+    # whole archive is out, so a failure leaves it as it was.
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    if ! gzip -dc "$file" | dc run --rm --no-deps -T --entrypoint sh api -c '
+        stage=/data/.portal-restore
+        rm -rf "$stage" && mkdir "$stage" || exit 1
+        tar -xf - -C "$stage" || { rm -rf "$stage"; exit 1; }
+        find /data -mindepth 1 -maxdepth 1 ! -name .portal-restore -exec rm -rf {} + \
+          && find "$stage" -mindepth 1 -maxdepth 1 -exec mv {} /data/ \; && rmdir "$stage"'; then
+      dc up -d api
+      die "Could not restore $file (see above); the API was started again"
+    fi
     dc up -d api
     wait_healthy
     say "Restored $file"

@@ -1,13 +1,27 @@
-import type { EntryAttributes, FormDefinition, FormField } from '@dsp/shared';
+import type { EntryAttributes, FormDefinition, FormField, OptionItem } from '@dsp/shared';
 import { getAttr } from '@dsp/shared';
 import { useOptionLabels } from '../api/hooks';
 import { optionLabel } from './FieldInput';
 import { groupBySection } from './EntryForm';
 
-export function FieldValue({ field, values, definitionId }: { field: FormField; values: string[]; definitionId: string }) {
+/**
+ * One field's values, as labels for a drop down. A directory-search drop down's labels are
+ * fetched here unless `labels` brings them (a list page fetches them once for all its rows).
+ */
+export function FieldValue({
+  field,
+  values,
+  definitionId,
+  labels,
+}: {
+  field: FormField;
+  values: string[];
+  definitionId: string;
+  labels?: { options: OptionItem[] | undefined };
+}) {
   const isLdap = field.widget === 'dropdown' && field.dropdown?.type === 'ldap';
-  const q = useOptionLabels(definitionId, field.id, values, isLdap);
-  const options = field.dropdown?.type === 'static' ? field.dropdown.options : q.data?.options;
+  const q = useOptionLabels(definitionId, field.id, values, isLdap && !labels);
+  const options = field.dropdown?.type === 'static' ? field.dropdown.options : (labels ? labels.options : q.data?.options);
   if (!values.length) return <span className="muted">—</span>;
 
   const render = (v: string) => {

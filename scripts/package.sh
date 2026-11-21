@@ -225,6 +225,7 @@ package_native() {
       -e 's|\${DSP_CSP_HEADER}|Content-Security-Policy|' \
       -e 's|"\${DSP_FORWARDED_HOST}"|"$http_host"|' \
       -e 's|\${DSP_MAX_BODY_SIZE}|5m|' \
+      -e 's|\${DSP_REAL_IP}|# WEB_TRUSTED_PROXIES in portal.env: none (install.sh writes them here)|' \
       -e 's|CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh)|CSP is only reported with the header name Content-Security-Policy-Report-Only|' \
       -e '/X509_EDGE_TERMINATION, see entrypoint.sh/d' \
       "$ROOT/web/nginx/templates/default.conf.template" | cat -s > "$dir/nginx/directory-services-portal.conf"

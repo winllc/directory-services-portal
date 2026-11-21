@@ -17,10 +17,12 @@ import org.opensaml.saml.saml2.core.SubjectConfirmation;
 import org.opensaml.saml.saml2.core.SubjectConfirmationData;
 import org.opensaml.saml.saml2.assertion.SAML2AssertionValidationParameters;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.saml2.provider.service.web.authentication.Saml2WebSsoAuthenticationFilter;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
@@ -39,6 +41,8 @@ import org.springframework.security.saml2.provider.service.authentication.OpenSa
 import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticatedPrincipal;
 import org.springframework.security.saml2.provider.service.authentication.Saml2Authentication;
 import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticationException;
+import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticationToken;
+import org.springframework.security.saml2.provider.service.registration.RelyingPartyRegistration;
 import org.springframework.security.saml2.provider.service.authentication.Saml2ResponseAssertionAccessor;
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
@@ -136,7 +140,7 @@ public class SsoSecurity {
           .failureHandler(signIn.failure));
     }
     if (props.getSaml().enabled()) {
-      OpenSaml5AuthenticationProvider provider = samlProvider();
+      AuthenticationProvider provider = retryingSignature(samlProvider(), samlParties);
       http.saml2Login(s -> s
           .relyingPartyRegistrationRepository(samlParties)
           .authenticationManager(new ProviderManager(provider))
@@ -243,6 +247,35 @@ public class SsoSecurity {
   // ---------------------------------------------------------------------------
   // SAML
   // ---------------------------------------------------------------------------
+
+  /**
+   * A response whose signature does not check out is checked once more when the IdP's metadata,
+   * read again (at most once a minute), has other signing certificates: the IdP rolled its
+   * certificate since the metadata was read.
+   */
+  static AuthenticationProvider retryingSignature(AuthenticationProvider provider, SsoRegistrations.Saml parties) {
+    return new AuthenticationProvider() {
+      @Override
+      public Authentication authenticate(Authentication authentication) {
+        try {
+          return provider.authenticate(authentication);
+        } catch (Saml2AuthenticationException e) {
+          if (!(authentication instanceof Saml2AuthenticationToken token) || e.getSaml2Error() == null
+              || !Saml2ErrorCodes.INVALID_SIGNATURE.equals(e.getSaml2Error().getErrorCode())) {
+            throw e;
+          }
+          RelyingPartyRegistration fresh = parties.reloadAfterSignatureFailure();
+          if (fresh == null) throw e;
+          return provider.authenticate(new Saml2AuthenticationToken(fresh, token.getSaml2Response(), token.getAuthenticationRequest()));
+        }
+      }
+
+      @Override
+      public boolean supports(Class<?> authentication) {
+        return provider.supports(authentication);
+      }
+    };
+  }
 
   OpenSaml5AuthenticationProvider samlProvider() {
     SsoProperties.Saml cfg = props.getSaml();

@@ -150,6 +150,7 @@ export function Modal({
   children,
   footer,
   wide,
+  dismissible = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -157,6 +158,8 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** False: closed only by the footer's own buttons (no Escape, backdrop click or close button). */
+  dismissible?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -164,7 +167,7 @@ export function Modal({
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && dismissible) onClose();
     };
     document.addEventListener('keydown', onKey);
     const t = setTimeout(() => {
@@ -176,16 +179,18 @@ export function Modal({
       document.removeEventListener('keydown', onKey);
       prev?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open, onClose, dismissible]);
   if (!open) return null;
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => dismissible && e.target === e.currentTarget && onClose()}>
       <div className={cx('modal', wide && 'modal-wide')} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
         <header className="modal-header">
           <h2 id={titleId}>{title}</h2>
-          <button type="button" className="icon-btn modal-close" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
+          {dismissible && (
+            <button type="button" className="icon-btn modal-close" onClick={onClose} aria-label="Close">
+              <X size={18} />
+            </button>
+          )}
         </header>
         <div className="modal-body">{children}</div>
         {footer && <footer className="modal-footer">{footer}</footer>}

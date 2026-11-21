@@ -13,6 +13,11 @@ data:
   PORT: "3001"
   # Only the web tier reaches the API, and it overwrites X-Forwarded-*.
   SERVER_FORWARD_HEADERS_STRATEGY: framework
+  {{- with $v.web.trustedProxies }}
+  # The web tier sees past these proxies (web.trustedProxies); without it the API warns while
+  # single sign-on is on.
+  WEB_TRUSTED_PROXIES: {{ join "," . | quote }}
+  {{- end }}
   JAVA_TOOL_OPTIONS: {{ include "dsp.str" $v.api.javaToolOptions | quote }}
   {{- if $v.metrics.enabled }}
   # Health and Prometheus on their own port (the Service's "metrics" port).
@@ -135,6 +140,9 @@ data:
   SSO_SAML_ADMIN_GROUPS: {{ include "dsp.joinSemi" $v.sso.saml.adminGroups | quote }}
   SSO_SAML_LABEL: {{ include "dsp.str" $v.sso.saml.label | quote }}
   SSO_SAML_CLOCK_SKEW: {{ include "dsp.str" $v.sso.saml.clockSkew | quote }}
+  {{- with include "dsp.str" $v.sso.saml.metadataRefresh }}
+  SSO_SAML_METADATA_REFRESH: {{ . | quote }}
+  {{- end }}
   {{- with include "dsp.newInstallDefault" (dict "root" . "value" $v.sso.saml.singleLogout "key" "SSO_SAML_SINGLE_LOGOUT") }}
   SSO_SAML_SINGLE_LOGOUT: {{ . | quote }}
   {{- end }}

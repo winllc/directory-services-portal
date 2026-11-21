@@ -67,6 +67,26 @@ Each package has its own README (`deploy/package/docker/README.md`,
 installers verify. Building from source, the demo compose stack in this repository and
 `docker build` are for development only (see [Development](#development)).
 
+### Upgrade notes: sign-in, web tier and deployment fixes
+
+- **Client addresses behind a proxy in front of the web tier**: new `WEB_TRUSTED_PROXIES` (Helm
+  `web.trustedProxies`), the addresses or CIDRs of an ingress controller, load balancer or TLS
+  proxy whose `X-Forwarded-For` the web tier may believe. Unset, as on an upgrade, everyone behind
+  such a proxy still has its address; while single sign-on is on the API warns at startup. The
+  single sign-on start limit's default rises from 30 to 600 a minute per address, so one shared
+  address no longer turns users away at a morning peak; a release-package `.env` or `portal.env`
+  that sets `SSO_START_LIMIT_PER_MINUTE=30` keeps it: raise it, or set `WEB_TRUSTED_PROXIES`
+  ([Security headers and cookies](#security-headers-and-cookies)).
+- **Release package backups**: `./portal.sh backup` writes `<file>.part` and renames it when
+  complete, so a failed backup leaves no truncated archive. `./portal.sh restore` checks the
+  archive before stopping the API and extracts it next to the data before replacing it; on a
+  failure the data is left as it was and the API started again. With `DSP_DATABASE_URL`,
+  `upgrade.sh` warns that the database is not in its backup (and asks before going on when run
+  from a terminal).
+- **SAML metadata is read again** every `SSO_SAML_METADATA_REFRESH` (default `1h`; Helm
+  `sso.saml.metadataRefresh`), and at once when a response's signature fails, so an IdP's new
+  signing certificate is used without restarting the API. Nothing to configure.
+
 ### Upgrade notes: multiple directories and failover
 
 Nothing changes on upgrade: the `LDAP_*` settings still describe one directory, now called
@@ -831,6 +851,8 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   (every package and the chart set it): with `none` every request seems to come from the proxy, and
   one client's bad tokens make every caller behind it get 429. The API warns at startup when it
   is evidently behind a proxy (`X509_SOURCE=header`, or `SERVER_ADDRESS` on loopback) with `none`.
+  A proxy in front of the web tier (an ingress controller, a TLS proxy) hides the client the same
+  way unless it is listed in `WEB_TRUSTED_PROXIES` ([Security headers and cookies](#security-headers-and-cookies)).
   With the shared database these per-address counts (and the single sign-on start limit) are kept
   in it (`dsp_rate_limit`), so they hold across replicas; should the database fail, a replica
   counts in its own memory meanwhile (a warning at most once a minute). The per-token limit is
@@ -914,7 +936,9 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   New release-package `.env` files and new Helm installations get a random key (see Upgrade notes).
   Secrets are never returned by the API again, logged or audited. Changes to webhooks are audited
   (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.
-- `WEBHOOKS_ENABLED=false` stops sending (deliveries stay queued) and creating webhooks.
+- `WEBHOOKS_ENABLED=false` stops sending and creating webhooks. Deliveries already queued stay
+  queued; changes made while it is off are not queued (so the outbox can't grow unattended), and
+  finished deliveries are still forgotten after the retention.
 
 ### Import and export
 - **Export**: on a directory page, *Export CSV* or *Export LDIF* downloads the entries matching the
@@ -1203,7 +1227,7 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 |---|---|---|
 | `PORTAL_PUBLIC_URL` | | the address users open, e.g. `https://portal.example.com`: redirect URI, SAML entity id and ACS are built from it, never from the request's `Host`. **Required for SAML** (unless `SSO_SAML_ENTITY_ID` is set), recommended for OIDC. Give the web tier `PUBLIC_HOST` (its host[:port]) too |
 | `SSO_IDP_ADMIN_SESSION_LIFETIME` | `1h` | a session whose administrator rights come only from the provider's groups ends this long after sign-in (the provider is asked again then) |
-| `SSO_START_LIMIT_PER_MINUTE` | `30` | sign-ons one client address may start per minute (across replicas with the shared database, else per API replica; the address as resolved with `SERVER_FORWARD_HEADERS_STRATEGY`). Each start keeps a sign-in request for 10 minutes; more are sent back to `/login?sso_error=busy` with `Retry-After` |
+| `SSO_START_LIMIT_PER_MINUTE` | `600` | sign-ons one client address may start per minute (across replicas with the shared database, else per API replica; the address as resolved with `SERVER_FORWARD_HEADERS_STRATEGY`). Each start keeps a sign-in request for 10 minutes; more are sent back to `/login?sso_error=busy` with `Retry-After`. Behind a proxy in front of the web tier that is not in `WEB_TRUSTED_PROXIES`, every user has the proxy's address and all share this limit (a startup WARN while single sign-on is on and `WEB_TRUSTED_PROXIES` is unset) |
 | `SSO_MAX_PENDING_REQUESTS` | `10000` | sign-in requests in flight kept in memory at most (without the shared database, where expired rows are deleted every minute); when full, new starts get `sso_error=busy` |
 | `SSO_OIDC_ISSUER_URI` | | the issuer; `https://` (http only for localhost). Its discovery document must name the same issuer |
 | `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
@@ -1219,6 +1243,7 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 | `SSO_SAML_USERNAME_ATTRIBUTE` | empty: the NameID | the attribute mapped through the user filter |
 | `SSO_SAML_USER_FILTER`, `SSO_SAML_GROUPS_ATTRIBUTE`, `SSO_SAML_ADMIN_GROUPS`, `SSO_SAML_LABEL` | as OIDC | |
 | `SSO_SAML_CLOCK_SKEW` | `2m` | tolerated clock difference (at most `10m`) |
+| `SSO_SAML_METADATA_REFRESH` | `1h` | how long the IdP's metadata (its signing certificates, endpoints) is used before it is read again; `0`: once, until the API restarts. A response whose signature fails also has it read again at once (at most once a minute), so a rolled IdP certificate is picked up without a restart. A failed read keeps the last good copy |
 | `SSO_SAML_SIGNING_KEY_FILE` / `SSO_SAML_SIGNING_CERT_FILE` | | PKCS#8 PEM key and certificate, for IdPs that require signed AuthnRequests, and for single logout |
 | `SSO_SAML_SINGLE_LOGOUT` | `false` (new release-package `.env` and new Helm installs: `true`) | SAML single logout when signing out (see *Signing out* below); needs the signing key and certificate |
 
@@ -1532,6 +1557,7 @@ responses for anyone who reaches it directly:
 | `ENS_CSP_REPORT_ONLY` | `false` | `true` sends `Content-Security-Policy-Report-Only` instead (API and web image): an escape hatch for a page the policy breaks. Report it, and turn this off again |
 | `ENS_COOKIE_SECURE` | `false` | Always mark the session cookie (`DSP_SESSION`) `Secure`, for TLS terminated at a proxy. Over direct TLS it is `Secure` anyway. `COOKIE_SECURE` is the older name and still works |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `none` | Spring Boot's own setting: `framework` behind a proxy that overwrites `X-Forwarded-*` (the web tier does; every package sets it). `FORWARD_HEADERS_STRATEGY` is the older name and still works |
+| `WEB_TRUSTED_PROXIES` | | web tier (and the API, which only warns without it): addresses or CIDRs, comma-separated, of proxies in front of the web tier (an ingress controller's pod CIDR, a load balancer, a TLS proxy on the Docker host as the web container sees it) whose `X-Forwarded-For` names the client. nginx then takes the client's address from it (`set_real_ip_from`, `real_ip_recursive`) and forwards that to the API. Unset, everyone behind such a proxy has its address, for the per-address limits and the audit trail alike. List only proxies; `0.0.0.0/0` is refused. Helm: `web.trustedProxies`; native package: in `portal.env`, then run `install.sh` again |
 
 The session cookie is `HttpOnly` and `SameSite=Strict` (stricter than the baseline's `Lax`; the
 browser only ever reaches the API through the same origin).
@@ -1588,7 +1614,7 @@ either signature or both:
   (`X-DSP-Proxy-Secret`, compared in constant time); without the secret and a trusted CA file
   the API does not start in header mode.
 - The web proxy overwrites `X-Forwarded-For` (clients can't spoof their address, which login
-  throttling relies on) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
+  throttling relies on; only the proxies in `WEB_TRUSTED_PROXIES` may name the client) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
   certificate header. The API is not published in Docker Compose, so only the proxy can reach it.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
   `SameSite=Strict`, `Secure` over TLS or when `ENS_COOKIE_SECURE=true`). The session ID is rotated at login,

@@ -169,6 +169,8 @@ public class WebhookService {
   public Deliveries use(Deliveries outbox) {
     Deliveries before = this.deliveries;
     this.deliveries = outbox;
+    // Never purged yet: the next run purges it.
+    lastPurge = Instant.EPOCH;
     return before;
   }
 
@@ -208,6 +210,9 @@ public class WebhookService {
 
   @EventListener
   public void onEntryChanged(EntryChanged change) {
+    // Sending is off (WEBHOOKS_ENABLED=false): nothing is queued, so the outbox can't grow while
+    // nothing drains it. Deliveries queued before stay queued.
+    if (!props.getWebhooks().isEnabled()) return;
     Spooled item = new Spooled(change, Instant.now().truncatedTo(ChronoUnit.MILLIS));
     if (savepoint != null && TransactionSynchronizationManager.isActualTransactionActive()) {
       inTransaction(item);
@@ -466,12 +471,13 @@ public class WebhookService {
   public int dispatch() {
     synchronized (running) {
       replaySpool();
-      if (!props.getWebhooks().isEnabled()) return 0;
+      // Finished deliveries are forgotten after the retention whether or not sending is on.
       Instant now = Instant.now();
       if (Duration.between(lastPurge, now).compareTo(Duration.ofHours(1)) >= 0) {
         lastPurge = now;
         deliveries.purge(now.minus(props.getWebhooks().getLogRetention()));
       }
+      if (!props.getWebhooks().isEnabled()) return 0;
       return run();
     }
   }
