@@ -197,6 +197,9 @@ portal:
       signing-key-file: ${SSO_SAML_SIGNING_KEY_FILE:}
       signing-certificate-file: ${SSO_SAML_SIGNING_CERT_FILE:}
       clock-skew: ${SSO_SAML_CLOCK_SKEW:2m}
+      # How long the IdP's metadata (signing certificates, endpoints) is used before it is read
+      # again; 0: once. A failed read keeps the last good copy.
+      metadata-refresh: ${SSO_SAML_METADATA_REFRESH:1h}
       # SAML single logout (SP-initiated, HTTP-Redirect, signed): needs the signing key and
       # certificate above and an IdP whose metadata offers a SingleLogoutService by HTTP-Redirect.
       single-logout: ${SSO_SAML_SINGLE_LOGOUT:false}

@@ -83,6 +83,9 @@ installers verify. Building from source, the demo compose stack in this reposito
   failure the data is left as it was and the API started again. With `DSP_DATABASE_URL`,
   `upgrade.sh` warns that the database is not in its backup (and asks before going on when run
   from a terminal).
+- **SAML metadata is read again** every `SSO_SAML_METADATA_REFRESH` (default `1h`; Helm
+  `sso.saml.metadataRefresh`), and at once when a response's signature fails, so an IdP's new
+  signing certificate is used without restarting the API. Nothing to configure.
 
 ### Upgrade notes: multiple directories and failover
 
@@ -1237,6 +1240,7 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 | `SSO_SAML_USERNAME_ATTRIBUTE` | empty: the NameID | the attribute mapped through the user filter |
 | `SSO_SAML_USER_FILTER`, `SSO_SAML_GROUPS_ATTRIBUTE`, `SSO_SAML_ADMIN_GROUPS`, `SSO_SAML_LABEL` | as OIDC | |
 | `SSO_SAML_CLOCK_SKEW` | `2m` | tolerated clock difference (at most `10m`) |
+| `SSO_SAML_METADATA_REFRESH` | `1h` | how long the IdP's metadata (its signing certificates, endpoints) is used before it is read again; `0`: once, until the API restarts. A response whose signature fails also has it read again at once (at most once a minute), so a rolled IdP certificate is picked up without a restart. A failed read keeps the last good copy |
 | `SSO_SAML_SIGNING_KEY_FILE` / `SSO_SAML_SIGNING_CERT_FILE` | | PKCS#8 PEM key and certificate, for IdPs that require signed AuthnRequests, and for single logout |
 | `SSO_SAML_SINGLE_LOGOUT` | `false` (new release-package `.env` and new Helm installs: `true`) | SAML single logout when signing out (see *Signing out* below); needs the signing key and certificate |
 

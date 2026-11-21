@@ -510,6 +510,7 @@ Existing claims (`existingClaim`) are never touched.
 | `sso.saml.entityId` | `""` | empty: `https://<portal>/api/auth/sso/saml/metadata` |
 | `sso.saml.usernameAttribute` / `.groupsAttribute` | `""` | empty username attribute: the NameID |
 | `sso.saml.userFilter` / `.adminGroups` / `.label` / `.clockSkew` | as OIDC / `2m` | |
+| `sso.saml.metadataRefresh` | `1h` | `SSO_SAML_METADATA_REFRESH`: how long the IdP's metadata is used before it is read again (`0`: once) |
 | `sso.saml.signing.existingSecret` / `.certificateKey` / `.privateKeyKey` | `""` / `tls.crt` / `tls.key` | for IdPs that require signed AuthnRequests, and for single logout |
 | `sso.oidc.providerLogout` | `""` | `SSO_OIDC_PROVIDER_LOGOUT`: sign out at the provider too (allow `<publicUrl>/login?signed_out` as a post-logout redirect URI there); empty: `true` on install, kept on upgrade |
 | `sso.saml.singleLogout` | `""` | `SSO_SAML_SINGLE_LOGOUT`: SAML single logout (needs `signing`, and an IdP offering it by HTTP-Redirect); empty: `true` on install, kept on upgrade |

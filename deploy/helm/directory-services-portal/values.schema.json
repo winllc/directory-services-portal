@@ -1497,6 +1497,12 @@
             "clockSkew": {
               "type": "string"
             },
+            "metadataRefresh": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
             "singleLogout": {
               "enum": [
                 "",

@@ -166,6 +166,12 @@ public class SsoProperties {
     /** Clock skew tolerated when checking an assertion's NotBefore and NotOnOrAfter. */
     private Duration clockSkew = Duration.ofMinutes(2);
     /**
+     * How long the IdP's metadata is used before it is read again (its signing certificates and
+     * endpoints change, e.g. when the IdP rolls its certificate); 0 reads it once. A failed read
+     * keeps the last good copy.
+     */
+    private Duration metadataRefresh = Duration.ofHours(1);
+    /**
      * SAML single logout, SP-initiated: signing out of the portal after a SAML sign-in sends a
      * signed LogoutRequest (HTTP-Redirect) to the IdP. Only with the signing key and certificate,
      * and when the IdP's metadata offers a SingleLogoutService by HTTP-Redirect; this SP's metadata
@@ -204,6 +210,8 @@ public class SsoProperties {
     public void setSigningCertificateFile(String signingCertificateFile) { this.signingCertificateFile = signingCertificateFile; }
     public Duration getClockSkew() { return clockSkew; }
     public void setClockSkew(Duration clockSkew) { this.clockSkew = clockSkew; }
+    public Duration getMetadataRefresh() { return metadataRefresh; }
+    public void setMetadataRefresh(Duration metadataRefresh) { this.metadataRefresh = metadataRefresh; }
     public boolean isSingleLogout() { return singleLogout; }
     public void setSingleLogout(boolean singleLogout) { this.singleLogout = singleLogout; }
 
@@ -244,6 +252,9 @@ public class SsoProperties {
       }
       if (saml.getClockSkew() == null || saml.getClockSkew().isNegative() || saml.getClockSkew().compareTo(Duration.ofMinutes(10)) > 0) {
         out.add("SSO_SAML_CLOCK_SKEW must be between 0 and 10 minutes");
+      }
+      if (saml.getMetadataRefresh() == null || saml.getMetadataRefresh().isNegative()) {
+        out.add("SSO_SAML_METADATA_REFRESH must be 0 (read once) or a duration such as 1h");
       }
     }
     return out;

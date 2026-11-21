@@ -304,6 +304,9 @@ sso:
     adminGroups: []
     label: ""
     clockSkew: 2m
+    # How long the IdP's metadata (its signing certificates) is used before it is read again
+    # (SSO_SAML_METADATA_REFRESH); 0: once.
+    metadataRefresh: 1h
     # SSO_SAML_SINGLE_LOGOUT: signing out of the portal sends a signed LogoutRequest to the IdP
     # (needs signing below, and an IdP whose metadata offers a SingleLogoutService by
     # HTTP-Redirect; this SP's metadata then lists <publicUrl>/api/auth/sso/saml/logout). Empty:
