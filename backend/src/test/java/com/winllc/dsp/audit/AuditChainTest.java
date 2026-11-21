@@ -100,6 +100,33 @@ class AuditChainTest {
   }
 
   @Test
+  void aPartialAppendIsRemovedSoTheChainStaysIntact() throws Exception {
+    boolean[] fail = {false};
+    FileAuditStore store = new FileAuditStore(dir) {
+      @Override
+      void writeLine(Path file, String line) throws java.io.IOException {
+        if (!fail[0]) {
+          super.writeLine(file, line);
+          return;
+        }
+        fail[0] = false;
+        Files.writeString(file, line.substring(0, 40), java.nio.file.StandardOpenOption.APPEND); // the disk filled up
+        throw new java.io.IOException("No space left on device");
+      }
+    };
+    store.append(event("system.started", "2026-01-01T00:00:00.000Z"), null);
+    fail[0] = true;
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+        () -> store.append(event("system.started", "2026-01-02T00:00:00.000Z"), null)).isInstanceOf(java.io.IOException.class);
+    store.append(event("system.started", "2026-01-03T00:00:00.000Z"), null);
+
+    AuditStore.Verification v = store.verify();
+    assertThat(v.intact()).as(v.problem()).isTrue();
+    assertThat(v.checked()).isEqualTo(2);
+    assertThat(v.unreadableLines()).isZero();
+  }
+
+  @Test
   void countsAStoreWithoutRoomAsNotWritable() throws Exception {
     assertThat(new FileAuditStore(dir.resolve("audit")).writable()).isTrue();
     assertThat(AuditStore.enoughSpace(AuditStore.MIN_FREE_BYTES)).isTrue();

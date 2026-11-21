@@ -180,12 +180,16 @@ public class FileAuditStore extends AuditStore {
         String line = AuditJson.line(body, hash);
         YearMonth month = monthFor(event.time());
         Path file = fileFor(month);
+        long before = -1;
         try {
           Files.createDirectories(dir);
-          Files.writeString(file, line + "\n", StandardCharsets.UTF_8,
-              StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
+          // A failed append may have left part of its line in a file: end it before writing on.
+          if (lastWriteFailure != null && Files.exists(file)) repairTrailingNewline(file);
+          before = Files.exists(file) ? Files.size(file) : 0;
+          writeLine(file, line + "\n");
         } catch (IOException | RuntimeException e) {
           lastWriteFailure = Instant.now();
+          if (before >= 0) truncate(file, before);
           throw e instanceof IOException io ? io : new IOException(e.getMessage(), e);
         }
         lastWriteFailure = null;
@@ -201,6 +205,27 @@ public class FileAuditStore extends AuditStore {
       }
     } finally {
       lock.readLock().unlock();
+    }
+  }
+
+  /** Appends one line, synced to disk. */
+  void writeLine(Path file, String line) throws IOException {
+    Files.writeString(file, line, StandardCharsets.UTF_8,
+        StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
+  }
+
+  /**
+   * Cuts what a failed append left (part of a line, the disk being full) so the next event does not
+   * share its line; when that fails too, the next append ends the partial line first.
+   */
+  private static void truncate(Path file, long size) {
+    try (FileChannel ch = FileChannel.open(file, StandardOpenOption.WRITE)) {
+      if (ch.size() > size) {
+        ch.truncate(size);
+        ch.force(true);
+      }
+    } catch (IOException | RuntimeException e) {
+      log.warn("Could not remove the partial line a failed append left in {}: {}", file, e.getMessage());
     }
   }
 
