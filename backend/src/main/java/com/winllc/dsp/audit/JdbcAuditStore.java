@@ -220,23 +220,26 @@ public class JdbcAuditStore extends AuditStore {
   public Pruned prune(Predicate<Stored> prunable) throws IOException {
     try {
       long head = headSeq();
-      List<Stored> doomed = new ArrayList<>();
+      // Only the first and last prunable events and how many: never the whole range in memory.
+      Stored[] first = {null};
+      Stored[] last = {null};
+      long[] count = {0};
       scanOldestFirst(s -> {
         if (s.seq() < 0) return true;
         if (s.seq() >= head || !prunable.test(s)) return false;
-        doomed.add(s);
+        if (first[0] == null) first[0] = s;
+        last[0] = s;
+        count[0]++;
         return true;
       });
-      if (doomed.isEmpty()) return new Pruned(0, null, null, null, null);
-      long upTo = doomed.get(doomed.size() - 1).seq();
-      PrunedThrough through = new PrunedThrough(upTo, AuditJson.hashOf(doomed.get(doomed.size() - 1).line()));
+      if (count[0] == 0) return new Pruned(0, null, null, null, null);
+      long upTo = last[0].seq();
+      PrunedThrough through = new PrunedThrough(upTo, AuditJson.hashOf(last[0].line()));
       tx.executeWithoutResult(status -> {
         jdbc.update("DELETE FROM dsp_audit_event WHERE seq <= ? AND seq < ?", upTo, head);
         recordPrunedThrough(through);
       });
-      Stored a = doomed.get(0);
-      Stored b = doomed.get(doomed.size() - 1);
-      return new Pruned(doomed.size(), a.seq(), b.seq(), a.time(), b.time());
+      return new Pruned(count[0], first[0].seq(), last[0].seq(), first[0].time(), last[0].time());
     } catch (DataAccessException e) {
       throw new IOException(e.getMessage(), e);
     }
