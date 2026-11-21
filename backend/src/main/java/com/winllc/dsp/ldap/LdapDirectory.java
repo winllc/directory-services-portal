@@ -46,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -376,6 +377,48 @@ public class LdapDirectory implements AutoCloseable {
         throw wrap(e);
       }
     });
+  }
+
+  /** Most ranges {@link #withAllValues} reads (Active Directory's are 1,500 values: 15 million). */
+  private static final int MAX_RANGES = 10_000;
+
+  /**
+   * The entry with every value of {@code attribute}, following Active Directory's ranged retrieval:
+   * a server that returns a large attribute in parts ({@code member;range=0-1499}) is asked for the
+   * rest ({@code member;range=1500-*}) until it answers with the last part ({@code ...-*}). The
+   * values are then held under the attribute's own name. The entry itself when it has no ranged
+   * values.
+   */
+  public DirectoryEntry withAllValues(DirectoryEntry entry, String attribute) {
+    String prefix = attribute.toLowerCase(Locale.ROOT) + ";range=";
+    String key = rangedKey(entry, prefix);
+    if (key == null) return entry;
+    List<String> values = new ArrayList<>(entry.attributes().get(key));
+    for (int i = 0; i < MAX_RANGES && !key.endsWith("-*"); i++) {
+      long next;
+      try {
+        next = Long.parseLong(key.substring(key.lastIndexOf('-') + 1)) + 1;
+      } catch (NumberFormatException e) {
+        break;
+      }
+      DirectoryEntry part = get(entry.dn(), List.of(attribute + ";range=" + next + "-*"));
+      String partKey = part == null ? null : rangedKey(part, prefix);
+      // Nothing more (or the entry went away meanwhile): what was read is all there is.
+      if (partKey == null) break;
+      values.addAll(part.attributes().get(partKey));
+      key = partKey;
+    }
+    Map<String, List<String>> attrs = new LinkedHashMap<>();
+    entry.attributes().forEach((k, v) -> {
+      if (!k.startsWith(prefix)) attrs.put(k, v);
+    });
+    attrs.put(attribute.toLowerCase(Locale.ROOT), values);
+    return new DirectoryEntry(entry.dn(), attrs);
+  }
+
+  private static String rangedKey(DirectoryEntry entry, String prefix) {
+    for (String k : entry.attributes().keySet()) if (k.startsWith(prefix)) return k;
+    return null;
   }
 
   public void add(String dn, Map<String, List<String>> attributes) {

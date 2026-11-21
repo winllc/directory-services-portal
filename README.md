@@ -950,7 +950,7 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   group in the entry form, an API update and an import row also change member, uniqueMember and
   memberUid by their difference (value-level adds and deletes), and refuse (409 `ranged_values`)
   to edit a member list the directory returned in ranges, which only the bulk change can add to
-  or remove from.
+  or remove from. Reading and exporting the members of such a group reads every range.
 - Not yet (Wave 4): import as an unattended scheduled job, LDIF modify and delete records,
   multi-select bulk edit and delete in the list, clearing attributes by import, and lifting the
   1,000-entry cap of the list view.

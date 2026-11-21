@@ -69,7 +69,8 @@ public class Memberships {
 
   public Members read(SessionUser user, DirectoryDefinition def, String dn, String attribute) {
     FormField f = field(entries.form(def), attribute);
-    DirectoryEntry entry = entries.get(user, def, dn);
+    // Every member, also of a group the directory returns in ranges (Active Directory, over 1,500).
+    DirectoryEntry entry = entries.directoryOf(def).ldap().withAllValues(entries.get(user, def, dn), f.attribute());
     return new Members(entry.dn(), f.attribute(), entry.values(f.attribute()));
   }
 

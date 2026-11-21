@@ -319,7 +319,9 @@ public class GroupService {
     DirectoryDefinition def = definition(user, definitionId);
     managed(user, def, dn);
     FormField member = memberField(def);
-    DirectoryEntry e = entries.readInNamespace(def, dn, List.of(member.attribute()));
+    // Every member, also of a group the directory returns in ranges (Active Directory, over 1,500).
+    DirectoryEntry e = directories.forDefinition(def).ldap().withAllValues(entries.readInNamespace(def, dn, List.of(member.attribute())),
+        member.attribute());
     String key = member.attribute().toLowerCase(Locale.ROOT);
     boolean partial = e.attributes().keySet().stream().anyMatch(k -> k.startsWith(key + ";range="));
     String needle = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);

@@ -360,6 +360,72 @@ class TransferTest extends ApiTestSupport {
     });
   }
 
+  /**
+   * Answers like Active Directory for engineering's members: {@code size} values per range, and
+   * the rest when asked for {@code member;range=N-*}, the last range ending in "-*".
+   */
+  private void rangedEngineering(int size) {
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processSearchRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchRequest request) {
+        List<String> attrs = new ArrayList<>();
+        int start = 0;
+        for (String a : request.getRequest().getAttributeList()) {
+          String l = a.toLowerCase(java.util.Locale.ROOT);
+          if (l.startsWith("member;range=")) {
+            start = Integer.parseInt(l.substring("member;range=".length(), l.indexOf('-')));
+            attrs.add("member");
+          } else {
+            attrs.add(a);
+          }
+        }
+        com.unboundid.ldap.sdk.SearchRequest copy = request.getRequest().duplicate();
+        copy.setAttributes(attrs);
+        request.setRequest(copy);
+        request.setProperty("rangeStart", start);
+      }
+
+      @Override
+      public void processSearchEntry(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchEntry entry) {
+        var e = entry.getSearchEntry();
+        if (!com.winllc.dsp.ldap.Dns.equal(e.getDN(), ENGINEERING) || !e.hasAttribute("member")) return;
+        int start = entry.getProperty("rangeStart") instanceof Integer i ? i : 0;
+        String[] values = e.getAttributeValues("member");
+        int end = Math.min(values.length, start + size);
+        com.unboundid.ldap.sdk.Entry copy = e.duplicate();
+        copy.removeAttribute("member");
+        copy.addAttribute("member;range=" + start + "-" + (end >= values.length ? "*" : String.valueOf(end - 1)),
+            java.util.Arrays.copyOfRange(values, start, end));
+        entry.setSearchEntry(copy);
+      }
+    });
+  }
+
+  @Test
+  void membersReturnedInRangesAreReadAndExportedInFull() throws Exception {
+    Client admin = login("admin");
+    List<String> seven = new ArrayList<>();
+    for (int i = 0; i < 7; i++) seven.add("uid=user" + i + ",ou=people," + B);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member",
+        seven.toArray(String[]::new))));
+    // Ranges of three: 0-2, 3-5, 6-*.
+    rangedEngineering(3);
+
+    JsonNode members = body(admin.get("/api/directories/groups/members" + q(ENGINEERING)));
+    List<String> read = new ArrayList<>();
+    members.get("members").forEach(m -> read.add(m.asString()));
+    assertThat(read).containsExactlyInAnyOrderElementsOf(seven);
+
+    MvcResult export = admin.post("/api/directories/groups/members/export" + q(ENGINEERING), null);
+    assertThat(export.getResponse().getHeader("X-DSP-Export-Count")).isEqualTo("7");
+    assertThat(export.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains("uid=user0,").contains("uid=user6,");
+
+    // The owners' page of members.
+    JsonNode page = body(admin.get("/api/groups/def-groups/members" + q(ENGINEERING)));
+    assertThat(page.get("total").asInt()).isEqualTo(7);
+    assertThat(page.get("partial").asBoolean()).isFalse();
+  }
+
   @Test
   void editingAGroupInTheFormSendsOnlyTheMembersThatChanged() throws Exception {
     Client admin = login("admin");
