@@ -1047,6 +1047,12 @@ output at startup. The rename of the log category from `audit` to `ens.audit` ke
 working: the lines go to stdout (and the file) as before, now without the log prefix; set
 `LOGGING_LEVEL_ENS_AUDIT=OFF` (instead of `LOGGING_LEVEL_AUDIT`) to silence them.
 
+Syslog over `tcp` and `tls` has no delivery acknowledgement, so it is best effort. Before each
+batch the forwarder checks that the collector has not closed the connection, and it opens a new
+one after 30 seconds unused; when a connection turns out broken, the batch last written on it is
+sent again (a collector restart can repeat up to one batch). A batch the collector does not take
+within 10 seconds fails and is retried. Where no event may be missing, use HEC or the pull API.
+
 **Getting it into Splunk** (any one of):
 
 1. **HEC**: create an HEC token (sourcetype `ens:audit`) and set `ENS_AUDIT_SPLUNK_URL` and
