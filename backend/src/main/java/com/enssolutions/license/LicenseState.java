@@ -22,7 +22,12 @@ public enum LicenseState {
     /** No license file installed. */
     MISSING(Mode.UNLICENSED),
     /** A file that isn't a genuine ENS license. */
-    INVALID(Mode.UNLICENSED);
+    INVALID(Mode.UNLICENSED),
+    /**
+     * Not yet valid or already expired, and offered while the installed license is in full effect:
+     * not installed, so the installed one stays in force. Only {@link LicenseManager#install} returns it.
+     */
+    NOT_IN_EFFECT(Mode.UNLICENSED);
 
     private final Mode mode;
 

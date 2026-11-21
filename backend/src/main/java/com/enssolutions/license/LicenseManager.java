@@ -194,23 +194,38 @@ public final class LicenseManager {
     /**
      * Checks an uploaded license and, if this installation can use it,
      * replaces the installed file with it. Returns the check either way, so the
-     * license screen can say why a file was refused.
+     * license screen can say why a file was refused: a file is not installed when
+     * the check's state is {@link LicenseState#WRONG_PRODUCT WRONG_PRODUCT},
+     * {@link LicenseState#WRONG_INSTALLATION WRONG_INSTALLATION},
+     * {@link LicenseState#SUPERSEDED SUPERSEDED} or {@link LicenseState#NOT_IN_EFFECT NOT_IN_EFFECT}
+     * (one not yet valid or already expired, while the installed license is in full effect).
      */
     public synchronized LicenseCheck install(String fileText) throws LicenseException, IOException {
         EnsLicense candidate = verifier.verify(fileText);
         refreshIfDue(true); // the latest revisions, from every replica
-        LicenseCheck check = LicensePolicy.evaluate(candidate, context(candidate, clock.instant()));
+        Instant now = clock.instant();
+        LicenseCheck check = LicensePolicy.evaluate(candidate, context(candidate, now));
         switch (check.state()) {
             case WRONG_PRODUCT, WRONG_INSTALLATION, SUPERSEDED -> {
                 return check;
             }
+            case NOT_YET_VALID, EXPIRED -> {
+                if (loaded != null && LicensePolicy.evaluate(loaded, context(loaded, now)).isFullyLicensed()) {
+                    return LicensePolicy.notInEffect(candidate, context(candidate, now));
+                }
+                return write(fileText);
+            }
             default -> {
-                store.writeLicense(fileText);
-                loadedVersion = null; // re-read it even if the file's time didn't change
-                refreshIfDue(true);
-                return current();
+                return write(fileText);
             }
         }
+    }
+
+    private LicenseCheck write(String fileText) throws IOException {
+        store.writeLicense(fileText);
+        loadedVersion = null; // re-read it even if the file's time didn't change
+        refreshIfDue(true);
+        return current();
     }
 
     /* ---- ENS_LICENSE --------------------------------------------------------- */
@@ -286,7 +301,7 @@ public final class LicenseManager {
             } else {
                 LicenseCheck check = install(text);
                 if (check.state() == LicenseState.WRONG_PRODUCT || check.state() == LicenseState.WRONG_INSTALLATION
-                        || check.state() == LicenseState.SUPERSEDED) {
+                        || check.state() == LicenseState.SUPERSEDED || check.state() == LicenseState.NOT_IN_EFFECT) {
                     level = System.Logger.Level.WARNING;
                     status = "ENS_LICENSE (" + candidate.id() + ") was refused: " + check.message();
                 } else {

@@ -402,7 +402,8 @@ counted or enforced: counting directory users would mean scanning the whole dire
 maintenance), every feature ticked or not, the size, this **installation id** (copy it into the
 ENS portal to bind a license to this installation) and an upload. The upload accepts the file as
 the request body (`text/plain`) or as the multipart field `file`, and says why a file is refused
-(not signed by ENS, another product, bound to another installation, an older revision).
+(not signed by ENS, another product, bound to another installation, an older revision, or not yet
+valid or already expired while the installed license is in full effect: `"state": "NOT_IN_EFFECT"`).
 
 **Files**: the license and the installation's state are environment settings, not Spring
 properties:

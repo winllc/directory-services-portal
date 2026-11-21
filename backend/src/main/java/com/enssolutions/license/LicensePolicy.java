@@ -59,6 +59,19 @@ public final class LicensePolicy {
         return check(c, l, LicenseState.VALID, "Licensed to " + l.licensee() + until + ".");
     }
 
+    /**
+     * The refusal of {@code l}, which is {@link LicenseState#NOT_YET_VALID} or {@link LicenseState#EXPIRED}
+     * at {@code c.now()}, while the installed license is in full effect.
+     */
+    static LicenseCheck notInEffect(EnsLicense l, Context c) {
+        String why = c.now().isBefore(l.notBefore())
+                ? "This license starts on " + day(l.notBefore()) + "; the license installed now is still in force. "
+                        + "Upload this one on or after that day."
+                : "This license expired on " + l.expiresAt().map(LicensePolicy::day).orElse("?")
+                        + "; the license installed now is still in force.";
+        return check(c, l, LicenseState.NOT_IN_EFFECT, why);
+    }
+
     static LicenseCheck missing(String product, Instant now, String why) {
         return new LicenseCheck(product, null, LicenseState.MISSING, why, now);
     }
