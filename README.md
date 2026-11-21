@@ -627,8 +627,9 @@ doesn't take the portal out of service. It is DOWN when none answers.
 
 ### End users
 - Directory list with search, sorting and paging. Entries can be viewed, created, edited
-  (only changed attributes are sent, and changing the naming attribute renames the entry) and
-  deleted.
+  (only changed attributes are sent, and changing the naming attribute renames the entry, after
+  the other changes were made) and deleted. A create or change after which the entry would no
+  longer match the definition's filter is refused (400).
 - **My profile** shows every definition that can locate the user, and lets them edit their own
   self-service fields. A definition locates the user's entry by its DN, or by an attribute
   (*entry attribute equals the user's attribute*). Matching by an attribute is refused while users
@@ -979,7 +980,7 @@ Splunk or any SIEM.
 | authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent`, `account-removed` or `account-disabled`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
 | authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
 | account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
-| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps every attribute the entry held, on its form or not, with secrets as `[redacted]` and binary values such as `jpegPhoto` in base64; a rename records `previousDn`; like every detail, each attribute's values are cut at 1,000 characters), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
+| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps every attribute the entry held, on its form or not, with secrets as `[redacted]` and binary values such as `jpegPhoto` in base64; a rename records `previousDn`; an update whose rename the directory refused after its other changes were made is recorded as what was done, with `partial`; like every detail, each attribute's values are cut at 1,000 characters), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
 | configuration | `dashboard.*`, `analysis.create` / `update` / `delete` |
 | license | `license.installed`, `license.rejected` (with the reason), `license.mode-changed` (old and new mode; checked at startup, every minute and after an upload). Older history keeps the original `license.install` |
 | system | `system.started` (version), `system.stopped`, `job.completed` / `job.failed` (the retention job) |

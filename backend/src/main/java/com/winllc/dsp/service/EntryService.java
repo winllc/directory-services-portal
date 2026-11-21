@@ -244,6 +244,69 @@ public class EntryService {
   }
 
   /**
+   * Reads an entry just written, checked against the namespace only: the write happened, so it is
+   * never answered with a 404 (the definition's filter was checked before it, see
+   * {@link #requireStillInDefinition}).
+   */
+  private DirectoryEntry loadWritten(DirectoryDefinition def, FormDefinition form, String dn) {
+    assertInNamespace(def, dn);
+    DirectoryEntry e = ldap(def).get(dn, returnAttributes(def, form));
+    if (e == null) throw ApiException.notFound("Entry not found");
+    return sanitize(e);
+  }
+
+  /**
+   * Refuses (400) a write after which the entry would no longer match the definition's filter,
+   * judged by the attributes the write sets ({@code written}). What the filter tests beyond those,
+   * or can't be judged here (ordering and extensible matches), is left to the directory.
+   */
+  private void requireStillInDefinition(DirectoryDefinition def, FormDefinition form, SchemaIndex index, Map<String, List<String>> written,
+      String message) {
+    if (def.filter() == null || def.filter().isBlank()) return;
+    Map<String, List<String>> known = new HashMap<>();
+    written.forEach((k, v) -> known.put(index.primaryAttributeName(k).toLowerCase(java.util.Locale.ROOT), v));
+    if (Boolean.FALSE.equals(matches(baseFilter(def, form), known, index))) {
+      throw ApiException.badRequest(message + " (it would not match the directory's filter " + def.filter().trim() + ")");
+    }
+  }
+
+  /** Whether the known attributes (by lower-case primary name) match {@code f}: null when they don't decide it. */
+  static Boolean matches(Filter f, Map<String, List<String>> known, SchemaIndex index) {
+    switch (f.getFilterType()) {
+      case Filter.FILTER_TYPE_AND, Filter.FILTER_TYPE_OR -> {
+        boolean and = f.getFilterType() == Filter.FILTER_TYPE_AND;
+        boolean undecided = false;
+        for (Filter c : f.getComponents()) {
+          Boolean r = matches(c, known, index);
+          if (r == null) undecided = true;
+          else if (r != and) return r;
+        }
+        return undecided ? null : and;
+      }
+      case Filter.FILTER_TYPE_NOT -> {
+        Boolean r = matches(f.getNOTComponent(), known, index);
+        return r == null ? null : !r;
+      }
+      case Filter.FILTER_TYPE_EQUALITY, Filter.FILTER_TYPE_SUBSTRING, Filter.FILTER_TYPE_PRESENCE -> {
+        String name = f.getAttributeName();
+        if (name.indexOf(';') >= 0) return null;
+        List<String> values = known.get(index.primaryAttributeName(name).toLowerCase(java.util.Locale.ROOT));
+        if (values == null) return null;
+        try {
+          com.unboundid.ldap.sdk.Entry e = new com.unboundid.ldap.sdk.Entry("cn=x");
+          if (!values.isEmpty()) e.addAttribute(name, values.toArray(String[]::new));
+          return f.matchesEntry(e);
+        } catch (LDAPException e) {
+          return null;
+        }
+      }
+      default -> {
+        return null;
+      }
+    }
+  }
+
+  /**
    * Every attribute an entry of the definition holds (all user attributes, plus the form's and the
    * definition's own, which may be operational), secrets included: for the record a delete keeps,
    * which redacts them ({@link #change}). Never returned to clients.
@@ -546,6 +609,7 @@ public class EntryService {
     List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), List.of());
     event.target("entry", dn, titles.isEmpty() ? rdnValues.get(0) : titles.get(0));
     event.changes(attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList());
+    requireStillInDefinition(def, form, schema.mergedIndex(def.directory()), attributes, "The new entry would not belong to this directory");
     if (preview != null) {
       if (ldap(def).get(dn, List.of("1.1")) != null) throw ApiException.conflict("An entry named " + dn + " already exists");
       preview.result = new Preview(EntryChanged.CREATE, dn, attributes.keySet().stream().filter(a -> !a.equalsIgnoreCase("objectClass")).toList());
@@ -558,7 +622,7 @@ public class EntryService {
     List<AuditEvent.Change> created = attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList();
     event.alongside(changed(user, EntryChanged.CREATE, def, form, dn, null, titles.isEmpty() ? rdnValues.get(0) : titles.get(0), created, false))
         .success();
-    return loadEntry(def, form, dn);
+    return loadWritten(def, form, dn);
   }
 
   private static boolean sameSet(List<String> a, List<String> b) {
@@ -582,7 +646,8 @@ public class EntryService {
     Map<String, List<String>> values = validate(def, form, input, self ? FormValidator.Mode.SELF : FormValidator.Mode.UPDATE, current);
     SchemaIndex index = schema.mergedIndex(def.directory());
 
-    // Rename first if the naming attribute's value changed.
+    // A new value of the naming attribute renames the entry: done last, after the other changes,
+    // so a refused change never leaves the entry renamed (see the end of this method).
     String targetDn = current.dn();
     String rdnKey = form.rdnAttribute().toLowerCase();
     RDN currentRdn = Dns.parse(current.dn()).getRDN();
@@ -593,17 +658,13 @@ public class EntryService {
       if (index.primaryAttributeName(rdnNames[i]).equalsIgnoreCase(rdnPrimary)) rdnPos = i;
     }
     List<String> newRdnValues = values.get(rdnKey);
+    RDN newRdn = null;
     if (rdnPos >= 0 && newRdnValues != null) {
       String currentValue = currentRdn.getAttributeValues()[rdnPos];
       if (newRdnValues.stream().noneMatch(v -> v.equalsIgnoreCase(currentValue))) {
         if (rdnNames.length > 1) throw ApiException.badRequest("Entries with multi-valued RDNs cannot be renamed here");
-        if (preview != null) {
-          targetDn = Dns.build(rdnNames[0], newRdnValues.get(0), Dns.parse(current.dn()).getParentString());
-        } else {
-          audit.requireWritable();
-          targetDn = ldap(def).rename(current.dn(), new RDN(rdnNames[0], newRdnValues.get(0)));
-        }
-        event.detail("previousDn", current.dn()).target("entry", targetDn, title(def, current));
+        newRdn = new RDN(rdnNames[0], newRdnValues.get(0));
+        targetDn = Dns.build(rdnNames[0], newRdnValues.get(0), Dns.parse(current.dn()).getParentString());
       }
     }
 
@@ -614,18 +675,30 @@ public class EntryService {
     current.values("objectClass").forEach(c -> currentClasses.add(c.toLowerCase()));
     List<String> missingClasses = form.objectClasses().stream().filter(c -> !currentClasses.contains(c.toLowerCase())).toList();
     boolean writesSomething = values.entrySet().stream().anyMatch(e -> !sameSet(e.getValue(), current.values(e.getKey())));
+    // The entry as it will be, for the attributes this update writes (checked against the definition's filter).
+    Map<String, List<String>> written = new LinkedHashMap<>(values);
     if (!missingClasses.isEmpty() && writesSomething) {
       changes.add(new Modification(ModificationType.ADD, "objectClass", missingClasses.toArray(String[]::new)));
       List<String> after = new ArrayList<>(current.values("objectClass"));
       after.addAll(missingClasses);
       recorded.add(change("objectClass", current.values("objectClass"), after));
+      written.put("objectclass", after);
     }
+    // The naming attribute, when renaming: its change and its values beyond the new RDN value.
+    AuditEvent.Change renameChange = null;
+    List<Modification> afterRename = new ArrayList<>();
     for (Map.Entry<String, List<String>> e : values.entrySet()) {
       String key = e.getKey();
       List<String> next = e.getValue();
       List<String> prev = current.values(key);
       FormField field = form.fields().stream().filter(f -> f.attribute().equalsIgnoreCase(key)).findFirst().orElseThrow();
       String attr = field.attribute();
+      if (newRdn != null && key.equals(rdnKey)) {
+        // The rename sets the new value and removes the old one; anything more is set after it.
+        renameChange = change(attr, prev, next);
+        if (next.size() > 1) afterRename.add(new Modification(ModificationType.REPLACE, attr, next.toArray(String[]::new)));
+        continue;
+      }
       if (MEMBER_ATTRIBUTES.contains(key)) {
         // Members: only the difference, as value-level ADD and DELETE, so a concurrent change to
         // other members is kept. A group the directory returned in ranges (Active Directory, over
@@ -653,31 +726,72 @@ public class EntryService {
         changes.add(new Modification(ModificationType.REPLACE, attr, next.toArray(String[]::new)));
       }
     }
+    if (!recorded.isEmpty() || newRdn != null) requireStillInDefinition(def, form, index, written, "The entry would no longer belong to this directory");
+    List<AuditEvent.Change> all = new ArrayList<>(recorded);
+    if (renameChange != null) all.add(renameChange);
+    // The naming attribute's change is added to the event once the rename is done (or failed whole).
     event.changes(recorded);
     if (preview != null) {
-      List<String> attrs = recorded.stream().map(AuditEvent.Change::attribute).toList();
+      List<String> attrs = all.stream().map(AuditEvent.Change::attribute).toList();
       preview.result = new Preview(attrs.isEmpty() && Dns.equal(targetDn, current.dn()) ? "unchanged" : EntryChanged.UPDATE, targetDn, attrs);
       return null;
     }
-    if (!changes.isEmpty()) audit.requireWritable();
-    // Permissive: value-level member changes skip values another change already added or removed.
-    ldap(def).modifyValues(targetDn, changes);
-    // A save that changed nothing is not worth a line in the audit log.
-    if (!recorded.isEmpty()) {
-      List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
-      String name = titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0);
-      event.target("entry", targetDn, name)
-          .alongside(changed(user, EntryChanged.UPDATE, def, form, targetDn, Dns.equal(targetDn, current.dn()) ? null : current.dn(), name,
-              recorded, self))
-          .success();
-      // A password set through a form: the user's own change, or an administrator's reset.
-      List<String> secrets = recorded.stream().map(AuditEvent.Change::attribute).filter(a -> HIDDEN.contains(a.toLowerCase())).toList();
-      if (!secrets.isEmpty()) {
-        audit.event(self ? "auth.password-changed" : "auth.password-reset").by(user).definition(def.id()).directory(directoryId(def)).target("user", targetDn, name)
-            .detail("attributes", String.join(",", secrets)).success();
+    if (!changes.isEmpty() || newRdn != null) audit.requireWritable();
+    try {
+      // Permissive: value-level member changes skip values another change already added or removed.
+      ldap(def).modifyValues(current.dn(), changes);
+    } catch (DirectoryException e) {
+      if (renameChange != null) event.changes(List.of(renameChange));
+      throw e;
+    }
+    if (newRdn != null) {
+      boolean renamed = false;
+      try {
+        targetDn = ldap(def).rename(current.dn(), newRdn);
+        renamed = true;
+        event.detail("previousDn", current.dn()).target("entry", targetDn, title(def, current));
+        ldap(def).modifyValues(targetDn, afterRename);
+        event.changes(List.of(renameChange));
+      } catch (DirectoryException e) {
+        if (recorded.isEmpty() && !renamed) {
+          event.changes(List.of(renameChange));
+          throw e;
+        }
+        // The other changes were made (and perhaps the rename): record and pass on what was, and say
+        // where the entry is now.
+        String nowAt = renamed ? targetDn : current.dn();
+        List<AuditEvent.Change> applied = new ArrayList<>(recorded);
+        if (renamed) {
+          AuditEvent.Change renamedTo = change(form.rdnAttribute(), current.values(rdnKey), List.of(newRdnValues.get(0)));
+          applied.add(renamedTo);
+          event.changes(List.of(renamedTo));
+        }
+        event.detail("partial", (renamed ? "renamed, but its other values were not set: " : "not renamed: ") + e.getMessage());
+        recordUpdate(event, user, def, form, current, values, nowAt, applied, self);
+        throw new ApiException(e.status(), "The other changes were saved, but " + (renamed ? "not all values of " + form.rdnAttribute()
+            : "the entry was not renamed") + ": " + e.getMessage() + ". The entry is now " + nowAt + ".", Map.of("dn", nowAt));
       }
     }
-    return loadEntry(def, form, targetDn);
+    recordUpdate(event, user, def, form, current, values, targetDn, all, self);
+    return loadWritten(def, form, targetDn);
+  }
+
+  /** Records (audit and webhook) an update that changed the entry; a save that changed nothing is not worth a line. */
+  private void recordUpdate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, FormDefinition form, DirectoryEntry current,
+      Map<String, List<String>> values, String targetDn, List<AuditEvent.Change> recorded, boolean self) {
+    if (recorded.isEmpty()) return;
+    List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), current.values(def.titleAttribute()));
+    String name = titles.isEmpty() ? Dns.rdnValue(targetDn) : titles.get(0);
+    event.target("entry", targetDn, name)
+        .alongside(changed(user, EntryChanged.UPDATE, def, form, targetDn, Dns.equal(targetDn, current.dn()) ? null : current.dn(), name,
+            recorded, self))
+        .success();
+    // A password set through a form: the user's own change, or an administrator's reset.
+    List<String> secrets = recorded.stream().map(AuditEvent.Change::attribute).filter(a -> HIDDEN.contains(a.toLowerCase())).toList();
+    if (!secrets.isEmpty()) {
+      audit.event(self ? "auth.password-changed" : "auth.password-reset").by(user).definition(def.id()).directory(directoryId(def)).target("user", targetDn, name)
+          .detail("attributes", String.join(",", secrets)).success();
+    }
   }
 
   /** The outcome of {@link #changeValues}; {@code partial}: the server returned the values in ranges. */
