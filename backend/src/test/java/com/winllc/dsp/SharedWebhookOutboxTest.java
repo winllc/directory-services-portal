@@ -60,9 +60,9 @@ class SharedWebhookOutboxTest extends ApiTestSupport {
 
   @BeforeEach
   void setUp() throws Exception {
+    // No background delivery runs: changes are queued (what is checked here) and nothing is sent.
+    // Sending stays on, since with WEBHOOKS_ENABLED=false nothing is queued at all.
     service.pauseBackground(true);
-    // Delivery runs only queue (what is checked here); nothing is sent.
-    integration.getWebhooks().setEnabled(false);
     service.use(new UrlGuard(List.of(), host -> {
       if (host.equals("hooks.example")) return new InetAddress[] {InetAddress.getByAddress(host, new byte[] {93, (byte) 184, (byte) 216, 34})};
       throw new UnknownHostException(host);
@@ -142,6 +142,8 @@ class SharedWebhookOutboxTest extends ApiTestSupport {
     assertThat(service.spooled()).isEqualTo(1);
 
     jdbc.execute("DROP TRIGGER dsp_test_fail_now ON dsp_webhook_delivery");
+    // A run with sending off only queues what was kept in memory.
+    integration.getWebhooks().setEnabled(false);
     service.dispatch();
     assertThat(service.spooled()).isZero();
     assertThat(queued(h.webhook().id())).isEqualTo(1);
