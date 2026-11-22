@@ -303,6 +303,22 @@ jobs:
           if cm --set-string license.menuVisible=hidden > /dev/null 2>&1; then echo "accepted a non-boolean license.menuVisible"; exit 1; fi
           echo "license settings OK"
 
+      - name: Check the trusted proxies
+        run: |
+          # web.trustedProxies reaches the web tier (which takes the client's address from their
+          # X-Forwarded-For) and the API; none by default; a catch-all is refused.
+          d="$CHART/ci/default-values.yaml"
+          set_proxies=(--set 'web.trustedProxies={10.244.0.0/16,192.0.2.10}')
+          helm template dsp "$CHART" -f "$d" "${set_proxies[@]}" --show-only templates/web-deployment.yaml \
+            | grep -A1 'name: WEB_TRUSTED_PROXIES' | grep -q '"10.244.0.0/16,192.0.2.10"'
+          grep -qx '  WEB_TRUSTED_PROXIES: "10.244.0.0/16,192.0.2.10"' \
+            <<<"$(helm template dsp "$CHART" -f "$d" "${set_proxies[@]}" --show-only templates/configmap.yaml)"
+          if helm template dsp "$CHART" -f "$d" | grep -q WEB_TRUSTED_PROXIES; then echo "trusted proxies rendered by default"; exit 1; fi
+          if helm template dsp "$CHART" -f "$d" --set 'web.trustedProxies={0.0.0.0/0}' > /dev/null 2>&1; then
+            echo "accepted 0.0.0.0/0 as a trusted proxy"; exit 1
+          fi
+          echo "trusted proxies OK"
+
   bundle:
     # The Docker/Podman deployment package: lint its scripts, and check that every documented
     # way of installing it gives a valid compose configuration, publishing the expected ports,
@@ -542,6 +558,12 @@ jobs:
               echo "answered after ${i}s"
               curl -fsS http://localhost:8080/api/health
               curl -fsS -o /dev/null http://localhost:8080/
+              # The app shell is never cached, whichever path loads it, and keeps the security headers.
+              for path in / /d/staff /index.html; do
+                headers="$(curl -fsS -o /dev/null -D - "http://localhost:8080$path")"
+                grep -qi '^cache-control: no-cache' <<<"$headers" || { echo "$path: no Cache-Control: no-cache"; exit 1; }
+                grep -qi '^x-frame-options: deny' <<<"$headers" || { echo "$path: no X-Frame-Options"; exit 1; }
+              done
               # Unlicensed (the image only trusts the production key and has no license): sign-in
               # works, everything else answers license_required.
               curl -fsS -c /tmp/jar -H 'X-DSP-Request: 1' -H 'Content-Type: application/json' \
@@ -552,6 +574,11 @@ jobs:
               docker exec api curl -fsS http://localhost:3001/livez
               # The web tier publishes no actuator endpoint (the path is just the client's page).
               ! curl -s http://localhost:8080/actuator/health | grep -q '"status"'
+              # Trusted proxies render into a configuration nginx accepts; a catch-all is refused.
+              docker run --rm -e NGINX_LOCAL_RESOLVERS=127.0.0.11 -e 'WEB_TRUSTED_PROXIES=10.0.0.0/8, 192.0.2.1' dsp-web:ci nginx -t
+              if docker run --rm -e NGINX_LOCAL_RESOLVERS=127.0.0.11 -e WEB_TRUSTED_PROXIES=0.0.0.0/0 dsp-web:ci nginx -t; then
+                echo "WEB_TRUSTED_PROXIES=0.0.0.0/0 accepted"; exit 1
+              fi
               exit 0
             fi
             sleep 1
@@ -590,6 +617,15 @@ jobs:
               sudo podman port directory-services-portal_web_1 | tee /dev/stderr | grep -qx '8080/tcp -> 127.0.0.1:18080'
               as_root ./portal.sh backup "$RUNNER_TEMP/podman-backup-$pc.tar.gz"
               tar -tzf "$RUNNER_TEMP/podman-backup-$pc.tar.gz" > /dev/null
+              [ ! -e "$RUNNER_TEMP/podman-backup-$pc.tar.gz.part" ]
+              # A truncated backup is refused before anything is stopped; a complete one restores.
+              head -c 100 "$RUNNER_TEMP/podman-backup-$pc.tar.gz" > "$RUNNER_TEMP/podman-truncated-$pc.tar.gz"
+              if echo y | as_root ./portal.sh restore "$RUNNER_TEMP/podman-truncated-$pc.tar.gz"; then
+                echo "restored a truncated backup"; exit 1
+              fi
+              curl -fsS http://127.0.0.1:18080/api/health
+              echo y | as_root ./portal.sh restore "$RUNNER_TEMP/podman-backup-$pc.tar.gz"
+              curl -fsS --retry 10 --retry-delay 2 --retry-all-errors http://127.0.0.1:18080/api/health
               as_root ./portal.sh down
               sudo podman volume rm directory-services-portal_portal-data directory-services-portal_ens-license directory-services-portal_ens-audit
             )

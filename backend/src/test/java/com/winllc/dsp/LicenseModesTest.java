@@ -340,10 +340,23 @@ class LicenseModesTest extends ApiTestSupport {
 
     @Test
     void installsAnExpiredLicenseAndSaysSo() throws Exception {
+      TestLicensing.remove();
       MvcResult r = upload(login("admin"), TestLicenses.license().expired().sign());
       assertThat(status(r)).isEqualTo(200);
       assertThat(body(r).get("license").get("mode").asString()).isEqualTo("READ_ONLY");
       assertThat(body(r).get("message").asString()).contains("read-only");
+    }
+
+    @Test
+    void refusesAnExpiredLicenseOverOneInForceAndKeepsIt() throws Exception {
+      Client admin = login("admin");
+      MvcResult r = upload(admin, TestLicenses.license().expired().sign());
+      assertThat(status(r)).isEqualTo(400);
+      assertThat(body(r).get("state").asString()).isEqualTo("NOT_IN_EFFECT");
+      assertThat(body(r).get("error").asString()).startsWith("This license expired on ")
+          .endsWith("; the license installed now is still in force.");
+      assertThat(body(admin.get("/api/license")).get("mode").asString()).isEqualTo("FULL");
+      assertThat(status(admin.get(STAFF))).isEqualTo(200);
     }
   }
 }

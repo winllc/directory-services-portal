@@ -35,7 +35,8 @@ function SecretModal({ title, secret, onClose, what }: { title: string; secret: 
   const toast = useToast();
   const [copied, setCopied] = useState(false);
   return (
-    <Modal open={!!secret} onClose={onClose} title={title} footer={<Button onClick={onClose}>Done</Button>}>
+    // Closed only with Done: an Escape or a stray click must not lose a secret shown once.
+    <Modal open={!!secret} onClose={onClose} title={title} footer={<Button onClick={onClose}>Done</Button>} dismissible={false}>
       <Alert tone="warning">Copy this {what} now. It is not shown again.</Alert>
       <div className="audit-secret">
         <code data-testid="integration-secret">{secret}</code>
@@ -395,6 +396,7 @@ function WebhooksTab() {
   const [editing, setEditing] = useState<Webhook | 'new' | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Webhook | null>(null);
+  const [rotating, setRotating] = useState<Webhook | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
   return (
@@ -439,14 +441,7 @@ function WebhooksTab() {
                   size="sm"
                   variant="ghost"
                   icon={<RefreshCw size={14} />}
-                  onClick={() =>
-                    m.rotate.mutate(w.id, {
-                      onSuccess: (r) => {
-                        setSecret(r.secret);
-                        m.rotate.reset();
-                      },
-                    })
-                  }
+                  onClick={() => setRotating(w)}
                   aria-label={`New secret for ${w.name}`}
                 >
                   New secret
@@ -479,6 +474,26 @@ function WebhooksTab() {
         loading={m.remove.isPending}
         onCancel={() => setDeleting(null)}
         onConfirm={() => deleting && m.remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
+      />
+      <ConfirmDialog
+        open={!!rotating}
+        title="New signing secret"
+        message={`Replace the signing secret of "${rotating?.name}"? The current secret stops working at once: the receiver rejects every delivery until it is given the new one.`}
+        confirmLabel="Replace secret"
+        loading={m.rotate.isPending}
+        onCancel={() => setRotating(null)}
+        onConfirm={() =>
+          rotating &&
+          m.rotate.mutate(rotating.id, {
+            onSuccess: (r) => {
+              setRotating(null);
+              setSecret(r.secret);
+              m.rotate.reset();
+            },
+            // Shown with the page's other errors.
+            onError: () => setRotating(null),
+          })
+        }
       />
     </>
   );

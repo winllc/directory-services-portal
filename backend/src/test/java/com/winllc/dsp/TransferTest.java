@@ -255,6 +255,95 @@ class TransferTest extends ApiTestSupport {
     assertThat(event.get("details").get("member.new").asString()).isEqualTo("uid=bob,ou=people," + B);
   }
 
+  @Test
+  void largeMemberListsAreComparedOnceEach() throws Exception {
+    Client admin = login("admin");
+    // 6,000 members; removing 2,000 compared each pair before (12 million DN comparisons).
+    List<String> many = new ArrayList<>();
+    for (int i = 0; i < 6_000; i++) many.add("uid=user" + i + ",ou=people," + B);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member",
+        many.toArray(String[]::new))));
+    // Written differently from the stored values (case, spaces): still the same members.
+    List<String> remove = new ArrayList<>();
+    for (int i = 0; i < 2_000; i++) remove.add("UID=user" + i + ", ou=People, DC=example, DC=com");
+    long start = System.nanoTime();
+    MvcResult r = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("remove", remove));
+    long millis = (System.nanoTime() - start) / 1_000_000;
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(r).get("removed").size()).isEqualTo(2_000);
+    assertThat(millis).as("milliseconds").isLessThan(15_000);
+    List<String> after = directory.get(ENGINEERING, List.of("member")).values("member");
+    assertThat(after).hasSize(4_000).contains("uid=user2000,ou=people," + B).doesNotContain("uid=user1999,ou=people," + B);
+
+    // The form: the same list in another spelling plus one new member changes just that one.
+    List<String> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processModifyRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyRequest request) {
+        request.getRequest().getModifications().forEach(m -> seen.add(m.getModificationType() + " " + m.getValues().length));
+      }
+    });
+    List<String> form = new ArrayList<>(after.stream().map(String::toUpperCase).toList());
+    form.add(ALICE);
+    start = System.nanoTime();
+    MvcResult saved = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", form)));
+    millis = (System.nanoTime() - start) / 1_000_000;
+    assertThat(status(saved)).as(saved.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(seen).containsExactly("ADD 1");
+    assertThat(millis).as("milliseconds").isLessThan(15_000);
+  }
+
+  /** {@code n} more people (uid=extraN), DNs returned in order. */
+  private List<String> addPeople(int n) {
+    List<String> dns = new ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      Map<String, List<String>> a = new java.util.LinkedHashMap<>();
+      a.put("objectClass", List.of("top", "person", "organizationalPerson", "inetOrgPerson"));
+      a.put("uid", List.of("extra" + i));
+      a.put("cn", List.of("Extra " + i));
+      a.put("sn", List.of("E" + i));
+      String dn = "uid=extra" + i + ",ou=people," + B;
+      directory.add(dn, a);
+      dns.add(dn);
+    }
+    return dns;
+  }
+
+  @Test
+  void groupsOfMoreThan200MembersAreValidatedInFull() throws Exception {
+    Client admin = login("admin");
+    List<String> people = addPeople(450);
+    List<String> before = directory.get(ENGINEERING, List.of("member")).values("member");
+    // A member the drop down doesn't offer (no such entry) that the group already has.
+    String ghost = "uid=ghost,ou=people," + B;
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.ADD, "member", ghost)));
+
+    // The form: every one of 250 new members is looked up (the drop down's options are people).
+    List<String> members = new ArrayList<>(before);
+    members.add(ghost);
+    members.addAll(people.subList(0, 250));
+    MvcResult form = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", members)));
+    assertThat(status(form)).as(form.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(directory.get(ENGINEERING, List.of("member")).values("member")).hasSize(before.size() + 251).contains(ghost, people.get(249));
+    // A value that is not an option, past the 200th, is still refused.
+    List<String> bad = new ArrayList<>(members);
+    bad.addAll(people.subList(250, 450));
+    bad.add(bad.size() - 10, "uid=nobody,ou=people," + B);
+    MvcResult refused = admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", bad)));
+    assertThat(status(refused)).isEqualTo(400);
+    assertThat(body(refused).get("details").get("member").asString()).contains("uid=nobody");
+
+    // In bulk: 200 more at once, then the same with one that is not an option.
+    MvcResult bulk = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", people.subList(250, 450)));
+    assertThat(status(bulk)).as(bulk.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(bulk).get("added").size()).isEqualTo(200);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.DELETE, "member",
+        people.subList(0, 450).toArray(String[]::new))));
+    MvcResult all = admin.post("/api/directories/groups/members" + q(ENGINEERING), Map.of("add", people));
+    assertThat(status(all)).as(all.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(all).get("added").size()).isEqualTo(450);
+  }
+
   /** Returns engineering's members in ranges of two, as Active Directory does past 1,500 values. */
   private void rangedEngineering() {
     embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
@@ -269,6 +358,72 @@ class TransferTest extends ApiTestSupport {
         entry.setSearchEntry(copy);
       }
     });
+  }
+
+  /**
+   * Answers like Active Directory for engineering's members: {@code size} values per range, and
+   * the rest when asked for {@code member;range=N-*}, the last range ending in "-*".
+   */
+  private void rangedEngineering(int size) {
+    embedded.intercept(new com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor() {
+      @Override
+      public void processSearchRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchRequest request) {
+        List<String> attrs = new ArrayList<>();
+        int start = 0;
+        for (String a : request.getRequest().getAttributeList()) {
+          String l = a.toLowerCase(java.util.Locale.ROOT);
+          if (l.startsWith("member;range=")) {
+            start = Integer.parseInt(l.substring("member;range=".length(), l.indexOf('-')));
+            attrs.add("member");
+          } else {
+            attrs.add(a);
+          }
+        }
+        com.unboundid.ldap.sdk.SearchRequest copy = request.getRequest().duplicate();
+        copy.setAttributes(attrs);
+        request.setRequest(copy);
+        request.setProperty("rangeStart", start);
+      }
+
+      @Override
+      public void processSearchEntry(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchEntry entry) {
+        var e = entry.getSearchEntry();
+        if (!com.winllc.dsp.ldap.Dns.equal(e.getDN(), ENGINEERING) || !e.hasAttribute("member")) return;
+        int start = entry.getProperty("rangeStart") instanceof Integer i ? i : 0;
+        String[] values = e.getAttributeValues("member");
+        int end = Math.min(values.length, start + size);
+        com.unboundid.ldap.sdk.Entry copy = e.duplicate();
+        copy.removeAttribute("member");
+        copy.addAttribute("member;range=" + start + "-" + (end >= values.length ? "*" : String.valueOf(end - 1)),
+            java.util.Arrays.copyOfRange(values, start, end));
+        entry.setSearchEntry(copy);
+      }
+    });
+  }
+
+  @Test
+  void membersReturnedInRangesAreReadAndExportedInFull() throws Exception {
+    Client admin = login("admin");
+    List<String> seven = new ArrayList<>();
+    for (int i = 0; i < 7; i++) seven.add("uid=user" + i + ",ou=people," + B);
+    directory.modify(ENGINEERING, List.of(new com.unboundid.ldap.sdk.Modification(com.unboundid.ldap.sdk.ModificationType.REPLACE, "member",
+        seven.toArray(String[]::new))));
+    // Ranges of three: 0-2, 3-5, 6-*.
+    rangedEngineering(3);
+
+    JsonNode members = body(admin.get("/api/directories/groups/members" + q(ENGINEERING)));
+    List<String> read = new ArrayList<>();
+    members.get("members").forEach(m -> read.add(m.asString()));
+    assertThat(read).containsExactlyInAnyOrderElementsOf(seven);
+
+    MvcResult export = admin.post("/api/directories/groups/members/export" + q(ENGINEERING), null);
+    assertThat(export.getResponse().getHeader("X-DSP-Export-Count")).isEqualTo("7");
+    assertThat(export.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains("uid=user0,").contains("uid=user6,");
+
+    // The owners' page of members.
+    JsonNode page = body(admin.get("/api/groups/def-groups/members" + q(ENGINEERING)));
+    assertThat(page.get("total").asInt()).isEqualTo(7);
+    assertThat(page.get("partial").asBoolean()).isFalse();
   }
 
   @Test

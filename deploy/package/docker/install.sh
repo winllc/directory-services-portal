@@ -242,7 +242,7 @@ case ":$files:" in
     case "$web_bind" in
       127.*|::1|localhost)
         echo "    Published on http://$web_bind:${ports[0]:-8080}, this host only. To serve the network: a TLS proxy on this"
-        echo "    host in front of it (then set ENS_COOKIE_SECURE=true in .env), or ./install.sh --force-env --https." ;;
+        echo "    host in front of it (then set ENS_COOKIE_SECURE=true and WEB_TRUSTED_PROXIES in .env), or ./install.sh --force-env --https." ;;
       *) warn "Plain HTTP on $web_bind:${ports[0]:-8080} is reachable from the network: passwords and session cookies cross it in clear. Put a TLS proxy in front (and set ENS_COOKIE_SECURE=true), use --https, or set WEB_BIND=127.0.0.1 in .env to keep it to this host." ;;
     esac ;;
 esac

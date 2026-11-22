@@ -21,6 +21,10 @@ import tools.jackson.databind.json.JsonMapper;
  * results show whichever replica a request reaches. The replica running a job writes its view when
  * it changes (and its result once it succeeded); others read it from here and ask for a cancel by
  * setting a flag that the running replica acts on.
+ *
+ * <p>{@code updated_at} is the running replica's heartbeat: it touches the rows of its unfinished
+ * jobs on every sync. An unfinished row whose heartbeat is older than {@link #STOPPED_AFTER} belongs
+ * to a replica that stopped; any replica marks it failed, and it no longer counts as active.
  */
 final class JobMirror {
   private static final Logger log = LoggerFactory.getLogger(JobMirror.class);
@@ -30,6 +34,12 @@ final class JobMirror {
   private final String replica;
   /** The revision of each local job last written. */
   private final Map<String, Long> published = new ConcurrentHashMap<>();
+
+  /** An unfinished job whose replica has not touched it for this long is taken as stopped. */
+  static final Duration STOPPED_AFTER = Duration.ofSeconds(30);
+  /** The error of a job whose replica stopped before it finished. */
+  static final String STOPPED = "The server running it stopped before it finished";
+  private static final String STALE = "status IN ('QUEUED', 'RUNNING') AND updated_at < now() - ? * interval '1 millisecond'";
 
   JobMirror(Cluster cluster, JsonMapper mapper) {
     this.jdbc = cluster.jdbc();
@@ -87,7 +97,8 @@ final class JobMirror {
   }
 
   long activeOf(String owner) {
-    Long n = jdbc.queryForObject("SELECT count(*) FROM dsp_job WHERE owner = ? AND status IN ('QUEUED', 'RUNNING')", Long.class, owner);
+    Long n = jdbc.queryForObject("SELECT count(*) FROM dsp_job WHERE owner = ? AND status IN ('QUEUED', 'RUNNING') AND updated_at >= now() - ? * interval '1 millisecond'",
+        Long.class, owner, STOPPED_AFTER.toMillis());
     return n == null ? 0 : n;
   }
 
@@ -96,14 +107,14 @@ final class JobMirror {
   }
 
   void requestCancel(String id) {
-    jdbc.update("UPDATE dsp_job SET cancel_requested = true, updated_at = now() WHERE id = ?", id);
+    jdbc.update("UPDATE dsp_job SET cancel_requested = true WHERE id = ?", id);
   }
 
   void markSeen(String id) {
     Job j = find(id, false);
     if (j == null) return;
     j.markSeen();
-    jdbc.update("UPDATE dsp_job SET view_json = ?, updated_at = now() WHERE id = ?", mapper.writeValueAsString(j.view()), id);
+    jdbc.update("UPDATE dsp_job SET view_json = ? WHERE id = ?", mapper.writeValueAsString(j.view()), id);
   }
 
   void delete(String id) {
@@ -111,13 +122,39 @@ final class JobMirror {
     published.remove(id);
   }
 
+  /** Deletes an unfinished job whose replica stopped; false when it is still running somewhere. */
+  boolean deleteStopped(String id) {
+    boolean deleted = jdbc.update("DELETE FROM dsp_job WHERE id = ? AND " + STALE, id, STOPPED_AFTER.toMillis()) > 0;
+    if (deleted) published.remove(id);
+    return deleted;
+  }
+
+  /** The heartbeat: touches this replica's unfinished jobs. */
+  void heartbeat() {
+    jdbc.update("UPDATE dsp_job SET updated_at = now() WHERE replica = ? AND status IN ('QUEUED', 'RUNNING')", replica);
+  }
+
   /** Ids of this replica's jobs that another replica asked to cancel. */
   List<String> cancelRequests() {
     return jdbc.queryForList("SELECT id FROM dsp_job WHERE replica = ? AND cancel_requested AND status IN ('QUEUED', 'RUNNING')", String.class, replica);
   }
 
-  /** Drops finished jobs past their retention (any replica may run this). */
+  /**
+   * Marks the unfinished jobs of stopped replicas failed, and drops finished jobs past their
+   * retention (any replica may run this).
+   */
   void expire(Duration retain) {
+    List<Map<String, Object>> stale = jdbc.queryForList("SELECT id, view_json FROM dsp_job WHERE " + STALE, STOPPED_AFTER.toMillis());
+    for (Map<String, Object> row : stale) {
+      String id = (String) row.get("id");
+      Job.View v = mapper.readValue((String) row.get("view_json"), Job.View.class);
+      Job.View failed = new Job.View(v.id(), v.kind(), v.title(), "failed", v.target(), v.link(), v.entries(), v.expectedEntries(), null,
+          v.createdAt(), v.startedAt(), Instant.now().toString(), STOPPED, v.seen());
+      // Conditional, so a replica that is still alive after all (its heartbeat came in meanwhile) keeps its job.
+      int n = jdbc.update("UPDATE dsp_job SET status = 'FAILED', view_json = ?, finished_at = now() WHERE id = ? AND " + STALE,
+          mapper.writeValueAsString(failed), id, STOPPED_AFTER.toMillis());
+      if (n > 0) log.info("Job {} failed: the replica running it stopped", LogSafe.of(id));
+    }
     jdbc.update("DELETE FROM dsp_job WHERE finished_at IS NOT NULL AND finished_at < ?", Timestamp.from(Instant.now().minus(retain)));
   }
 

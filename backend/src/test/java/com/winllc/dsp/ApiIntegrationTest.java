@@ -326,6 +326,25 @@ class ApiIntegrationTest extends ApiTestSupport {
     }
 
     @Test
+    void selfServiceUsersSeeOnlyTheOptionsOfTheirOwnEntry() throws Exception {
+      // frank (a partner) has his own entry in partners, read access to no directory.
+      Client frank = login("frank");
+      String carol = "uid=carol,ou=people," + B;
+      // No searching people pickers: not of a directory he has no entry in, not of a field he can't edit.
+      assertThat(status(frank.get("/api/directories/staff/options/f-manager?q=an"))).isEqualTo(403);
+      assertThat(status(frank.get("/api/directories/partners/options/f-acmesponsor?q=an"))).isEqualTo(403);
+      assertThat(status(frank.get("/api/directories/partners/options/f-acmesponsor"))).isEqualTo(403);
+      // Labels for the values his own entry holds (My profile), and nothing for other values.
+      JsonNode own = body(frank.get("/api/directories/partners/options/f-acmesponsor" + q(carol).replace("?dn=", "?value=")));
+      assertThat(own.get("options").size()).isEqualTo(1);
+      assertThat(own.get("options").get(0).get("value").asString()).isEqualTo(carol);
+      JsonNode other = body(frank.get("/api/directories/partners/options/f-acmesponsor" + q(ALICE).replace("?dn=", "?value=")));
+      assertThat(other.get("options").size()).isZero();
+      // Readers are not affected.
+      assertThat(status(login("bob").get("/api/directories/partners/options/f-acmesponsor?q=an"))).isEqualTo(200);
+    }
+
+    @Test
     void letsUsersEditSelfEditableFieldsOnTheirOwnEntryOnly() throws Exception {
       Client alice = login("alice");
       MvcResult ok = alice.put("/api/me/def-staff/entry" + q(ALICE), Map.of("values", Map.of("mobile", List.of("+1 555 9999"), "title", "CTO")));
@@ -511,6 +530,27 @@ class ApiIntegrationTest extends ApiTestSupport {
       assertThat(names).contains("people", "groups", "devices", "partners");
       JsonNode preview = body(admin.post("/api/admin/preview", Map.of("baseDn", "ou=devices," + B, "scope", "one", "filter", "(acmeDeviceType=Laptop)")));
       assertThat(preview.get("entries").size()).isEqualTo(3);
+    }
+
+    @Test
+    void previewNeverReturnsOrSearchesPasswords() throws Exception {
+      Client admin = login("admin");
+      // Named, by OID, with an option, and when no attributes are named (all user attributes).
+      for (Object attributes : List.of(List.of("uid", "userPassword"), List.of("uid", "2.5.4.35", "userPassword;binary"), List.of())) {
+        JsonNode preview = body(admin.post("/api/admin/preview",
+            Map.of("baseDn", "ou=people," + B, "scope", "one", "filter", "(uid=alice)", "attributes", attributes)));
+        assertThat(preview.get("entries").size()).isEqualTo(1);
+        JsonNode attrs = preview.get("entries").get(0).get("attributes");
+        assertThat(attrs.has("uid")).isTrue();
+        assertThat(attrs.propertyNames()).noneMatch(n -> n.toLowerCase().startsWith("userpassword") || n.startsWith("2.5.4.35"));
+      }
+      // Only hidden attributes asked for: none are returned, not all of them.
+      JsonNode only = body(admin.post("/api/admin/preview",
+          Map.of("baseDn", "ou=people," + B, "scope", "one", "filter", "(uid=alice)", "attributes", List.of("userPassword"))));
+      assertThat(only.get("entries").get(0).get("attributes").size()).isZero();
+      for (String filter : List.of("(userPassword=*)", "(&(uid=alice)(2.5.4.35=p*))")) {
+        assertThat(status(admin.post("/api/admin/preview", Map.of("baseDn", "ou=people," + B, "scope", "one", "filter", filter)))).isEqualTo(400);
+      }
     }
   }
 }

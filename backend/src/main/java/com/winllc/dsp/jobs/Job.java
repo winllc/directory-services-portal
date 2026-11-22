@@ -168,14 +168,16 @@ public final class Job {
     finishedAt = Instant.now();
   }
 
-  synchronized void fail(String message, Throwable cause) {
-    if (status.finished()) return;
+  /** Fails the job unless it already finished; says whether it did, checked and changed under one lock. */
+  synchronized boolean fail(String message, Throwable cause) {
+    if (status.finished()) return false;
     revision++;
     error = message;
     failure = cause;
     status = Status.FAILED;
     phase = null;
     finishedAt = Instant.now();
+    return true;
   }
 
   synchronized boolean cancel() {

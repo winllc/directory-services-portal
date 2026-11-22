@@ -44,6 +44,12 @@ proxy on this host in front of it (and set `ENS_COOKIE_SECURE=true` in `.env`), 
 (published on every interface, `ENS_COOKIE_SECURE=true`). `--bind 0.0.0.0` publishes plain HTTP on
 every interface, for a TLS proxy on another host; the installer warns about it.
 
+Behind a proxy, every user has the proxy's address unless the web tier may believe its
+`X-Forwarded-For`: set `WEB_TRUSTED_PROXIES` in `.env` to the address it connects from as the web
+container sees it (the first field of `./portal.sh logs web`; for a proxy on this host usually the
+container network's gateway, e.g. `172.18.0.1`), then `./portal.sh up`. Otherwise sign-in
+throttling, the single sign-on start limit and the audit trail count all users as one address.
+
 Other ways to publish it:
 
 ```bash
@@ -209,7 +215,7 @@ API container (a compose override) and set `ENS_X509_CRL_DIR` to it.
 ./portal.sh status                # containers, health, URL
 ./portal.sh logs api              # follow the API log (audit events are raw JSON lines on it, logger ens.audit)
 ./portal.sh backup                # portal-backup-<date>.tar.gz: configuration, audit log, analysis results
-./portal.sh restore <file>
+./portal.sh restore <file>        # checks the archive first; the data is replaced only once it is all extracted
 ./portal.sh license <file.lic>    # install or replace the ENS license (or upload it on the license screen)
 ./portal.sh down                  # stop (data is kept in the portal-data volume)
 ```
@@ -238,7 +244,10 @@ license volume (`ens-license`: installed license and installation id) are reused
 `license/license.lic` is set as `ENS_LICENSE` in `.env`, installed unless a different usable license,
 or a newer revision of it, is installed already.
 To go back, run `./portal.sh up` in the old directory and, if needed, `./portal.sh restore` the
-backup.
+backup. With the shared database (`DSP_DATABASE_URL`) the configuration and license state are in
+the database, which the upgrade does not back up and the new version may update as it starts:
+back it up first (`pg_dump`). `upgrade.sh` warns about it, and asks before going on when run
+from a terminal.
 
 From a package before Podman support, the upgrade keeps what the portal publishes and where:
 earlier, `docker-compose.yml` published nothing and `docker-compose.publish.yml` published

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Plus, Search, SearchX, Upload } from 'lucide-react';
-import type { DirectoryEntry, FormDefinition, FormField } from '@dsp/shared';
+import type { DirectoryEntry, FormDefinition, FormField, OptionItem } from '@dsp/shared';
 import { getAttr, rdnValue } from '@dsp/shared';
-import { downloadEntries, useDefinition, useEntries } from '../api/hooks';
+import { downloadEntries, useDefinition, useEntries, useFieldLabels } from '../api/hooks';
 import { ImportDialog } from '../components/ImportDialog';
 import { DefinitionIcon } from '../components/Layout';
 import { DirectoryNotFound } from '../components/DirectoryNotFound';
@@ -17,9 +17,32 @@ function columnLabel(form: FormDefinition | undefined, attr: string): string {
   return form?.fields.find((f) => f.attribute.toLowerCase() === attr.toLowerCase())?.label ?? attr;
 }
 
-function Cell({ entry, attr, field, definitionId }: { entry: DirectoryEntry; attr: string; field?: FormField; definitionId: string }) {
+const isLdapDropdown = (f: FormField | undefined): f is FormField => f?.widget === 'dropdown' && f.dropdown?.type === 'ldap';
+
+function Cell({
+  entry,
+  attr,
+  field,
+  definitionId,
+  labels,
+}: {
+  entry: DirectoryEntry;
+  attr: string;
+  field?: FormField;
+  definitionId: string;
+  labels: Record<string, OptionItem[] | undefined>;
+}) {
   const values = getAttr(entry.attributes, attr);
-  if (field) return <FieldValue field={{ ...field, widget: field.widget === 'textarea' ? 'text' : field.widget }} values={values} definitionId={definitionId} />;
+  if (field) {
+    return (
+      <FieldValue
+        field={{ ...field, widget: field.widget === 'textarea' ? 'text' : field.widget }}
+        values={values}
+        definitionId={definitionId}
+        labels={isLdapDropdown(field) ? { options: labels[field.id] } : undefined}
+      />
+    );
+  }
   if (!values.length) return <span className="muted">—</span>;
   return <>{values.join(', ')}</>;
 }
@@ -68,6 +91,14 @@ function DirectoryView({ slug }: { slug: string }) {
 
   const entries = useEntries(definition?.id, { q, page, pageSize: PAGE_SIZE, sort, order });
   const columns = useMemo(() => definition?.listAttributes ?? [], [definition]);
+  // The labels of directory-search drop-down columns, for the whole page at once (not per row).
+  const labels = useFieldLabels(
+    definition?.id ?? '',
+    columns.slice(1).flatMap((c) => {
+      const f = form?.fields.find((x) => x.attribute.toLowerCase() === c.toLowerCase());
+      return isLdapDropdown(f) ? [{ fieldId: f.id, values: (entries.data?.entries ?? []).flatMap((e) => getAttr(e.attributes, c)) }] : [];
+    }),
+  );
 
   const setParam = (updates: Record<string, string | undefined>) => {
     const next = new URLSearchParams(params);
@@ -187,7 +218,13 @@ function DirectoryView({ slug }: { slug: string }) {
                         {getAttr(e.attributes, c)[0] ?? rdnValue(e.dn)}
                       </Link>
                     ) : (
-                      <Cell entry={e} attr={c} field={form.fields.find((f) => f.attribute.toLowerCase() === c.toLowerCase())} definitionId={definition.id} />
+                      <Cell
+                        entry={e}
+                        attr={c}
+                        field={form.fields.find((f) => f.attribute.toLowerCase() === c.toLowerCase())}
+                        definitionId={definition.id}
+                        labels={labels}
+                      />
                     )}
                   </td>
                 ))}

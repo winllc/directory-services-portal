@@ -319,7 +319,9 @@ public class GroupService {
     DirectoryDefinition def = definition(user, definitionId);
     managed(user, def, dn);
     FormField member = memberField(def);
-    DirectoryEntry e = entries.readInNamespace(def, dn, List.of(member.attribute()));
+    // Every member, also of a group the directory returns in ranges (Active Directory, over 1,500).
+    DirectoryEntry e = directories.forDefinition(def).ldap().withAllValues(entries.readInNamespace(def, dn, List.of(member.attribute())),
+        member.attribute());
     String key = member.attribute().toLowerCase(Locale.ROOT);
     boolean partial = e.attributes().keySet().stream().anyMatch(k -> k.startsWith(key + ";range="));
     String needle = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);
@@ -493,10 +495,17 @@ public class GroupService {
     AuditLog.Draft event = audit.event(approve ? "group.access-approved" : "group.access-rejected").by(user).definition(def.id())
         .directory(entries.directoryId(def)).target("group", r.groupDn(), r.groupName()).detail("request", r.id())
         .detail("requester", r.requesterDn() != null ? r.requesterDn() : r.requester()).detail("note", why);
-    if (approve) {
-      memberships.change(user, def, r.groupDn(), memberField(def).attribute(), List.of(r.member()), List.of(), VIA_REQUEST);
-    }
+    // Closed first (409 when it was cancelled or decided meanwhile), so the group is changed only for
+    // a request this decision closed; reopened when the directory refuses the change.
     AccessRequests.Request closed = requests.close(id, approve ? AccessRequests.APPROVED : AccessRequests.REJECTED, user.key(), displayName(user), why);
+    if (approve) {
+      try {
+        memberships.change(user, def, r.groupDn(), memberField(def).attribute(), List.of(r.member()), List.of(), VIA_REQUEST);
+      } catch (RuntimeException e) {
+        requests.reopen(closed);
+        throw e;
+      }
+    }
     event.success();
     return closed;
   }

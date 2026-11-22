@@ -69,6 +69,12 @@ public class EmbeddedDirectory implements AutoCloseable {
     }
 
     @Override
+    public void processModifyDNRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedModifyDNRequest request) throws LDAPException {
+      var i = interceptor;
+      if (i != null) i.processModifyDNRequest(request);
+    }
+
+    @Override
     public void processSearchRequest(com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchRequest request) throws LDAPException {
       var i = interceptor;
       if (i != null) i.processSearchRequest(request);

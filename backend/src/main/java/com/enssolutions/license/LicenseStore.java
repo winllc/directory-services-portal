@@ -3,11 +3,13 @@ package com.enssolutions.license;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 
 /**
  * Where a {@link LicenseManager} keeps an installation's license state: the installed license
- * text, the installation id, and the highest revision accepted per license id.
+ * text, the installation id, the highest revision accepted per license id, and the latest time
+ * the installation has seen (so a clock set back can't bring an expired license back).
  *
  * <ul>
  *   <li>{@link FileLicenseStore}: a license file and a state directory on a local volume, as in
@@ -55,6 +57,16 @@ public interface LicenseStore {
      * already that high. Never lowers it. Returns the highest revision now stored.
      */
     int raiseRevision(String licenseId, int revision) throws IOException;
+
+    /**
+     * Raises the latest time this installation has seen to {@code time}, unless it is already
+     * later. Never lowers it. Returns the latest time now stored: empty when none is (a store that
+     * doesn't keep one, or a database without the column), and then a {@link LicenseManager} checks
+     * licenses against the clock alone, as before.
+     */
+    default Optional<Instant> raiseLatestTimeSeen(Instant time) throws IOException {
+        return Optional.empty();
+    }
 
     /**
      * How long a {@link LicenseManager} may use what it last read before asking the store again

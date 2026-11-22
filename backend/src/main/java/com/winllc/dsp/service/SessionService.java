@@ -47,8 +47,8 @@ import org.springframework.stereotype.Service;
  * ({@value #BACKGROUND_HEADER}) keep the container session alive but are not activity, so an open
  * but unattended tab still times out. The container's own timeout (the same idle timeout) ends
  * sessions whose tab was closed. Every expiry is audited as {@code auth.session-expired} with the
- * reason {@code idle}, {@code absolute}, {@code concurrent}, {@code account-removed} or
- * {@code idp-admin-lifetime}.
+ * reason {@code idle}, {@code absolute}, {@code concurrent}, {@code account-removed},
+ * {@code account-disabled} or {@code idp-admin-lifetime}.
  *
  * <p>With the shared database, sessions live in {@code spring_session} (Spring Session JDBC): the
  * per-user limit finds a user's sessions there (indexed by the SHA-256 of their DN) on whichever
@@ -146,7 +146,7 @@ public class SessionService implements HttpSessionListener {
 
   /**
    * Applies the session controls to a request of a signed-in user: ends the session when it is past
-   * its absolute lifetime or idle timeout (or the account is gone), reads the user's groups again
+   * its absolute lifetime or idle timeout (or the account is gone, disabled or locked), reads the user's groups again
    * when due, and counts the request as activity unless it is background polling.
    *
    * @return null to carry on, or why the session was ended
@@ -177,13 +177,19 @@ public class SessionService implements HttpSessionListener {
       session.setAttribute(GROUPS_RESOLVED_AT, now);
       SessionUser fresh;
       try {
-        fresh = auth.refresh(user);
+        // As for API tokens: an account the directory now marks disabled or locked ends its sessions.
+        AuthService.Checked checked = auth.refreshActive(user);
+        if (checked == null) return expire(session, user, "account-removed");
+        if (checked.locked() != null) {
+          log.info("The account of {} is disabled or locked ({}); ending its session", LogSafe.of(user.username()), LogSafe.of(checked.locked()));
+          return expire(session, user, "account-disabled");
+        }
+        fresh = checked.user();
       } catch (RuntimeException e) {
         // Directory unavailable: keep what the session has and try again after the next interval.
         log.warn("Could not read the groups of {} again ({}); keeping those from sign-in", LogSafe.of(user.username()), LogSafe.of(e.getMessage()));
         fresh = user;
       }
-      if (fresh == null) return expire(session, user, "account-removed");
       if (!fresh.isAdmin() && Boolean.TRUE.equals(session.getAttribute(IDP_ADMIN))) fresh = fresh.asAdmin();
       if (!fresh.equals(user)) {
         if (fresh.isAdmin() != user.isAdmin()) {

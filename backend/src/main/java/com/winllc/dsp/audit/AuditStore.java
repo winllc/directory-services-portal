@@ -39,10 +39,30 @@ public abstract class AuditStore {
 
   public record Pruned(long count, Long fromSeq, Long toSeq, String fromTime, String toTime) {}
 
+  /** The last seq retention deleted and that event's hash: the oldest retained event must follow it. */
+  public record PrunedThrough(long seq, String hash) {
+    /** As stored: {@code seq:hash}. */
+    String text() {
+      return seq + ":" + hash;
+    }
+
+    static PrunedThrough parse(String text) {
+      if (text == null) return null;
+      int colon = text.trim().indexOf(':');
+      if (colon < 0) return null;
+      try {
+        String hash = text.trim().substring(colon + 1);
+        return new PrunedThrough(Long.parseLong(text.trim().substring(0, colon)), hash.isEmpty() ? null : hash);
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    }
+  }
+
   /**
    * The result of walking the chain: {@code brokenSeq} is the first event whose hash, seq or link
-   * doesn't check out (null when intact). The anchor is the first retained event: when it is not
-   * seq 1 (older events were pruned) its prevHash is accepted as given.
+   * doesn't check out (null when intact). The anchor is the first retained event: seq 1, or after
+   * pruning the event right after the last one retention deleted, chained to its hash.
    */
   public record Verification(boolean intact, Long brokenSeq, String problem, Long anchorSeq, boolean anchorIsGenesis,
       Long lastSeq, long checked, long unreadableLines) {}
@@ -96,9 +116,12 @@ public abstract class AuditStore {
 
   /**
    * Deletes the oldest events while {@code prunable} holds, never the newest (the chain head).
-   * The only path that removes events.
+   * The only path that removes events; it records how far it pruned ({@link #prunedThrough}).
    */
   public abstract Pruned prune(Predicate<Stored> prunable) throws IOException;
+
+  /** How far retention has pruned, or null when it never has (or pruned before this was kept). */
+  public abstract PrunedThrough prunedThrough();
 
   static boolean enoughSpace(long usableBytes) {
     return usableBytes >= MIN_FREE_BYTES;
@@ -133,6 +156,11 @@ public abstract class AuditStore {
     long[] unreadable = {0};
     Long[] broken = {null};
     String[] problem = {null};
+    // A store that pruned before it kept how far (no record): the anchor is accepted when an
+    // audit.pruned event says retention ran.
+    Problem[] unrecorded = {null};
+    boolean[] sawPruned = {false};
+    PrunedThrough pruned = prunedThrough();
     scanOldestFirst(s -> {
       if (s.seq() < 0) {
         unreadable[0]++;
@@ -141,6 +169,7 @@ public abstract class AuditStore {
       String body = AuditJson.bodyOf(s.line());
       String prev = body.substring(body.length() - 66, body.length() - 2);
       String recorded = AuditJson.hashOf(s.line());
+      if (body.contains(",\"action\":\"audit.pruned\",")) sawPruned[0] = true;
       if (anchor[0] == null) {
         anchor[0] = s.seq();
         genesis[0] = s.seq() == 1;
@@ -148,6 +177,18 @@ public abstract class AuditStore {
           broken[0] = s.seq();
           problem[0] = "seq 1 does not start from the genesis hash";
           return false;
+        }
+        if (!genesis[0]) {
+          Problem misplaced = anchorProblem(pruned, s.seq(), prev);
+          // retention may have pruned meanwhile: judge by what it records now
+          if (misplaced != null) misplaced = anchorProblem(prunedThrough(), s.seq(), prev);
+          if (misplaced != null && pruned == null) {
+            unrecorded[0] = misplaced;
+          } else if (misplaced != null) {
+            broken[0] = misplaced.seq();
+            problem[0] = misplaced.problem();
+            return false;
+          }
         }
       } else if (s.seq() != last[0] + 1) {
         broken[0] = last[0] + 1;
@@ -168,6 +209,10 @@ public abstract class AuditStore {
       lastHash[0] = recorded;
       return true;
     });
+    if (broken[0] == null && unrecorded[0] != null && !sawPruned[0]) {
+      broken[0] = unrecorded[0].seq();
+      problem[0] = unrecorded[0].problem();
+    }
     long head = headSeq();
     if (broken[0] == null && anchor[0] != null && last[0] != head) {
       broken[0] = last[0] + 1;
@@ -175,5 +220,24 @@ public abstract class AuditStore {
     }
     return new Verification(broken[0] == null, broken[0], problem[0], anchor[0], genesis[0],
         anchor[0] == null ? null : last[0], checked[0], unreadable[0]);
+  }
+
+  record Problem(long seq, String problem) {}
+
+  /**
+   * Why {@code seq}, the oldest retained event after seq 1, is not where retention left the chain,
+   * or null. An anchor at or before the last seq pruned is accepted: retention chose to delete it
+   * and was interrupted.
+   */
+  static Problem anchorProblem(PrunedThrough pruned, long seq, String prev) {
+    long through = pruned == null ? 0 : pruned.seq();
+    if (through < seq - 1) {
+      return new Problem(through + 1, "events " + (through + 1) + " to " + (seq - 1) + " are missing; retention "
+          + (through == 0 ? "has pruned nothing" : "pruned only up to seq " + through));
+    }
+    if (through == seq - 1 && pruned.hash() != null && !pruned.hash().equals(prev)) {
+      return new Problem(seq, "prevHash is not the hash of seq " + through + ", the last event retention pruned");
+    }
+    return null;
   }
 }

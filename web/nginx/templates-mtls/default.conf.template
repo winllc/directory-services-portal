@@ -39,6 +39,10 @@ server {
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
+    # The client's address behind trusted proxies in front of this server (WEB_TRUSTED_PROXIES):
+    # taken from their X-Forwarded-For, for the access log and the API's per-address limits.
+    ${DSP_REAL_IP}
+
     # ENS baseline security headers, on the client's pages and (replacing the API's) on /api. The
     # CSP is only reported with ENS_CSP_REPORT_ONLY=true (see entrypoint.sh). The client has no
     # inline scripts.
@@ -94,6 +98,13 @@ server {
     # Other files (favicon, ...) are served as-is; missing ones are a real 404.
     location ~ \.[A-Za-z0-9]+$ {
         try_files $uri =404;
+    }
+
+    # The app shell, also where the routes below land: never cached, so a browser picks up the
+    # hashed assets of a new version. Exact, so it wins over the regex location above. No
+    # add_header here: one would drop the server's security headers in this location.
+    location = /index.html {
+        expires -1;
     }
 
     # Client-side routes (/d/staff, /admin/forms, ...) all load the app shell, which is never cached.

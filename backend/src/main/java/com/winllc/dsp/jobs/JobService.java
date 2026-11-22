@@ -343,7 +343,8 @@ public class JobService implements DisposableBean {
     Job j = get(user, id);
     if (j.isRemote()) {
       if (j.status().finished()) mirror.delete(id);
-      else mirror.requestCancel(id);
+      // A job whose replica stopped can't be cancelled: it is removed.
+      else if (!mirror.deleteStopped(id)) mirror.requestCancel(id);
       return;
     }
     j.cancel();
@@ -360,8 +361,9 @@ public class JobService implements DisposableBean {
   }
 
   /**
-   * With the shared database, every 2 seconds: writes the progress of this replica's jobs, acts on
-   * cancel requests made on other replicas, and drops expired jobs.
+   * With the shared database, every 2 seconds: writes the progress of this replica's jobs (and
+   * the heartbeat of the unfinished ones), acts on cancel requests made on other replicas, fails
+   * the jobs of replicas that stopped, and drops expired jobs.
    */
   @Scheduled(fixedDelay = 2_000, initialDelay = 2_000)
   void syncShared() {
@@ -372,6 +374,7 @@ public class JobService implements DisposableBean {
         local = new ArrayList<>(jobs.values());
       }
       for (Job j : local) publish(j);
+      mirror.heartbeat();
       for (String id : mirror.cancelRequests()) {
         Job j;
         synchronized (this) {
@@ -395,6 +398,16 @@ public class JobService implements DisposableBean {
 
   @Override
   public void destroy() {
+    // Unfinished jobs end with this process: say so in the shared copy before the threads stop.
+    List<Job> local;
+    synchronized (this) {
+      local = new ArrayList<>(jobs.values());
+    }
+    for (Job j : local) {
+      if (!j.fail(JobMirror.STOPPED, null)) continue;
+      publish(j);
+      j.done.complete(null);
+    }
     metrics.shutdownNow();
     analysis.shutdownNow();
   }

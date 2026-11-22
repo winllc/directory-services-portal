@@ -147,21 +147,6 @@ public class AuthService {
     return directories.find(user.directory()).filter(directories::enabled).orElse(null);
   }
 
-  /**
-   * The signed-in user as the directory has them now (groups and administrator status read again),
-   * or null when their entry no longer exists.
-   *
-   * @throws RuntimeException when the directory can't be read: the caller keeps the user as they are
-   */
-  public SessionUser refresh(SessionUser user) {
-    // A directory no longer configured or enabled (license) has no users: as if the entry were gone.
-    Directories.Directory dir = directoryOf(user);
-    if (dir == null) return null;
-    DirectoryEntry entry = dir.ldap().get(user.dn(), userAttributes(dir));
-    if (entry == null) return null;
-    return toUser(dir, entry, user.dn(), user.username(), user.authMethod(), user.certificateSubject(), true);
-  }
-
   /** Account-lock attributes: 389-DS/Red Hat DS, Active Directory, and the password policy overlay. */
   static final List<String> LOCK_ATTRIBUTES = List.of("nsAccountLock", "userAccountControl", "pwdAccountLockedTime");
   private static final int ACCOUNTDISABLE = 0x2;
@@ -170,11 +155,15 @@ public class AuthService {
   public record Checked(SessionUser user, String locked) {}
 
   /**
-   * As {@link #refresh}, and also refuses an account the directory marks disabled or locked
+   * The signed-in user as the directory has them now (groups and administrator status read again),
+   * or why the account may not be used: the directory marks it disabled or locked
    * ({@code nsAccountLock: true}, Active Directory's ACCOUNTDISABLE flag in userAccountControl,
    * or a {@code pwdAccountLockedTime}). Null when the entry no longer exists.
+   *
+   * @throws RuntimeException when the directory can't be read: the caller keeps the user as they are
    */
   public Checked refreshActive(SessionUser user) {
+    // A directory no longer configured or enabled (license) has no users: as if the entry were gone.
     Directories.Directory dir = directoryOf(user);
     if (dir == null) return null;
     List<String> attrs = new java.util.ArrayList<>(userAttributes(dir));

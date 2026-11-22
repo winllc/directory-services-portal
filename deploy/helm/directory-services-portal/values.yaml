@@ -194,6 +194,13 @@ web:
     timeoutSeconds: 5
     failureThreshold: 3
 
+  # Proxies in front of the web pods whose X-Forwarded-For names the client: the ingress
+  # controller's pod CIDR, a load balancer's addresses (WEB_TRUSTED_PROXIES). Empty: every user
+  # has the ingress controller's address, and the per-address limits (single sign-on starts,
+  # failed API tokens, the sign-in lockout) count them together. List only proxies: X-Forwarded-For
+  # from a listed address is believed.
+  trustedProxies: []
+
   extraEnv: []
   extraEnvFrom: []
   extraVolumes: []
@@ -297,6 +304,9 @@ sso:
     adminGroups: []
     label: ""
     clockSkew: 2m
+    # How long the IdP's metadata (its signing certificates) is used before it is read again
+    # (SSO_SAML_METADATA_REFRESH); 0: once.
+    metadataRefresh: 1h
     # SSO_SAML_SINGLE_LOGOUT: signing out of the portal sends a signed LogoutRequest to the IdP
     # (needs signing below, and an IdP whose metadata offers a SingleLogoutService by
     # HTTP-Redirect; this SP's metadata then lists <publicUrl>/api/auth/sso/saml/logout). Empty:
@@ -680,7 +690,8 @@ integrations:
     # API_TOKEN_MAX_DAYS: the longest lifetime an administrator may give a token.
     maxTokenDays: 365
   webhooks:
-    # WEBHOOKS_ENABLED: false stops sending (deliveries stay queued) and creating webhooks.
+    # WEBHOOKS_ENABLED: false stops sending and creating webhooks; queued deliveries stay queued,
+    # changes made meanwhile are not queued.
     enabled: true
     # WEBHOOK_ALLOWED_HOSTS: host names (or *.example.com) whose webhooks may reach private, loopback
     # or link-local addresses, e.g. an in-cluster receiver. Cloud metadata addresses are refused

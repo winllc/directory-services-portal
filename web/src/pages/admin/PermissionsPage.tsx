@@ -5,7 +5,7 @@ import type { DirectoryDefinition, LdapDirectoryStatus, PermissionGrant, Subject
 import { rdnValue } from '@dsp/shared';
 import { useAdminDefinitions, useGrantMutations, useGrants, useLdapDirectories, useSubjects } from '../../api/hooks';
 import { DefinitionIcon } from '../../components/Layout';
-import { Alert, Badge, Button, Card, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, cx, useDebounced, useToast } from '../../components/ui';
+import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, cx, useDebounced, useToast } from '../../components/ui';
 
 function SubjectIcon({ type }: { type: SubjectType }) {
   return type === 'user' ? <User size={16} aria-label="User" /> : <UsersRound size={16} aria-label="Group" />;
@@ -151,6 +151,8 @@ function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; defini
   };
   const { create, remove } = useGrantMutations();
   const toast = useToast();
+  const [revoking, setRevoking] = useState<PermissionGrant | null>(null);
+  const subjectName = (g: PermissionGrant) => g.subjectLabel ?? (g.subjectType === 'group' ? rdnValue(g.subject) : g.subject);
   if (!grants.length) return <p className="muted">No explicit grants. {definition.everyoneCanRead ? 'Every signed-in user can read.' : 'Only administrators can access this directory.'}</p>;
   return (
     <div className="table-wrap">
@@ -169,7 +171,7 @@ function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; defini
                 <div className="cell-with-icon">
                   <SubjectIcon type={g.subjectType} />
                   <div>
-                    <strong>{g.subjectLabel ?? (g.subjectType === 'group' ? rdnValue(g.subject) : g.subject)}</strong>
+                    <strong>{subjectName(g)}</strong>
                     <div className="muted small">{g.subject}</div>
                     {directories.length > 0 && <div className="muted small">Directory: {directoryName(g)}</div>}
                   </div>
@@ -204,7 +206,7 @@ function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; defini
                   size="sm"
                   variant="ghost"
                   icon={<Trash2 size={14} />}
-                  onClick={() => remove.mutate(g.id, { onSuccess: () => toast.success('Access revoked'), onError: (err) => toast.error(err) })}
+                  onClick={() => setRevoking(g)}
                 >
                   Revoke
                 </Button>
@@ -213,6 +215,34 @@ function GrantsTable({ grants, definition }: { grants: PermissionGrant[]; defini
           ))}
         </tbody>
       </table>
+      <ConfirmDialog
+        open={!!revoking}
+        title="Revoke access"
+        message={
+          revoking && (
+            <>
+              Revoke the access of <strong>{subjectName(revoking)}</strong> ({revoking.subjectType}) to <strong>{definition.name}</strong>
+              {directories.length > 0 && <> in directory {directoryName(revoking)}</>}? It takes effect at once.
+            </>
+          )
+        }
+        confirmLabel="Revoke"
+        loading={remove.isPending}
+        onCancel={() => setRevoking(null)}
+        onConfirm={() =>
+          revoking &&
+          remove.mutate(revoking.id, {
+            onSuccess: () => {
+              setRevoking(null);
+              toast.success('Access revoked');
+            },
+            onError: (err) => {
+              setRevoking(null);
+              toast.error(err);
+            },
+          })
+        }
+      />
     </div>
   );
 }

@@ -253,7 +253,7 @@ public class MetricEngine {
   private Map<String, String> labelsFor(DataSources.Source source, DropdownSource.Ldap src, List<String> values) {
     try {
       Map<String, String> out = new HashMap<>();
-      for (OptionItem o : directoryOptions.lookup(sources.ldap(source), src, values)) {
+      for (OptionItem o : directoryOptions.labels(sources.ldap(source), src, values)) {
         if (o.label() != null && !o.label().isBlank()) out.put(o.value(), o.label());
       }
       return out;

@@ -10,6 +10,9 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -24,7 +27,10 @@ import java.util.TreeMap;
  *       written whole and moved into place;</li>
  *   <li>{@code <state dir>/installation-id}: the id and a newline;</li>
  *   <li>{@code <state dir>/revisions.properties}: {@code <license id>=<highest revision>}, as
- *       {@link Properties#store} writes it.</li>
+ *       {@link Properties#store} writes it;</li>
+ *   <li>added after 1.2.0, {@code <state dir>/latest-time-seen}: an ISO-8601 instant and a newline. Earlier
+ *       releases ignore it; without it (or if it can't be read) licenses are checked against the
+ *       clock alone, as before.</li>
  * </ul>
  *
  * <p>For one replica (or one process) at a time. Changes to the license file are noticed by its
@@ -33,6 +39,7 @@ import java.util.TreeMap;
 public final class FileLicenseStore implements LicenseStore {
     static final String INSTALLATION_ID = "installation-id";
     static final String REVISIONS = "revisions.properties";
+    static final String LATEST_TIME_SEEN = "latest-time-seen";
 
     private final Path licenseFile;
     private final Path stateDir;
@@ -171,6 +178,28 @@ public final class FileLicenseStore implements LicenseStore {
         }
         Files.move(tmp, revisionsFile(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         return revision;
+    }
+
+    /* ---- Latest time seen ------------------------------------------------------- */
+
+    @Override
+    public synchronized Optional<Instant> raiseLatestTimeSeen(Instant time) throws IOException {
+        Path file = stateDir.resolve(LATEST_TIME_SEEN);
+        Optional<Instant> stored;
+        try {
+            stored = Optional.of(Instant.parse(Files.readString(file, StandardCharsets.UTF_8).trim()));
+        } catch (NoSuchFileException e) {
+            stored = Optional.empty();
+        } catch (DateTimeParseException e) {
+            stored = Optional.empty(); // unreadable: start again from now
+        }
+        if (stored.isPresent() && !stored.get().isBefore(time)) return stored;
+        Instant t = time.truncatedTo(ChronoUnit.MILLIS);
+        Files.createDirectories(stateDir);
+        Path tmp = Files.createTempFile(stateDir, LATEST_TIME_SEEN, ".tmp");
+        Files.writeString(tmp, t + "\n", StandardCharsets.UTF_8);
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        return Optional.of(t);
     }
 
     @Override

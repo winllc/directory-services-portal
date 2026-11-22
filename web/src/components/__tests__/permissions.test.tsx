@@ -125,6 +125,11 @@ describe('permissions page', () => {
 
     const hrRow = (await within(screen.getByRole('table')).findByText(HR)).closest('tr')!;
     await u.click(within(hrRow).getByRole('button', { name: 'Revoke' }));
+    // Asked first, naming the subject and the directory; nothing is sent until confirmed.
+    const confirm = await screen.findByRole('dialog', { name: 'Revoke access' });
+    expect(confirm).toHaveTextContent('Revoke the access of hr (group) to');
+    expect(api.sent).toHaveLength(2);
+    await u.click(within(confirm).getByRole('button', { name: 'Revoke' }));
     expect(await screen.findByText('Access revoked')).toBeInTheDocument();
     expect(api.sent[2]).toEqual({ method: 'DELETE', url: '/api/admin/grants/g-2', body: undefined });
     expect(api.grants.map((g) => g.subject)).toEqual(['bob']);

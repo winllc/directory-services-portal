@@ -71,6 +71,11 @@ spec:
             - name: PUBLIC_HOST
               value: {{ regexReplaceAll "^[a-zA-Z]+://([^/]+).*$" $v.server.publicUrl "${1}" | quote }}
             {{- end }}
+            {{- with $v.web.trustedProxies }}
+            # Proxies whose X-Forwarded-For names the client (web.trustedProxies).
+            - name: WEB_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- if $v.tls.enabled }}
             # HTTPS on 8443 with optional client certificates; 8080 redirects to HTTPS.
             - name: NGINX_ENVSUBST_TEMPLATE_DIR

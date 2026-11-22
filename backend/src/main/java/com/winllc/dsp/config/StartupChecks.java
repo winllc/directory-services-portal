@@ -80,6 +80,13 @@ public class StartupChecks {
               + " LogoutRequest must be signed, so single logout stays off and signing out ends the portal's session only.");
         }
       }
+      if ((single.getOidc().enabled() || single.getSaml().enabled()) && env.getProperty("WEB_TRUSTED_PROXIES", "").isBlank()) {
+        log.warn("Single sign-on starts are limited to {} a minute per client address (SSO_START_LIMIT_PER_MINUTE), and"
+            + " WEB_TRUSTED_PROXIES is not set: if a proxy is in front of the web tier (an ingress controller, a load balancer,"
+            + " a TLS proxy on the host), every user has its address and all share that limit. Set WEB_TRUSTED_PROXIES (Helm:"
+            + " web.trustedProxies) to its address, for the web tier and the API, so the web tier takes the client's address"
+            + " from X-Forwarded-For.", single.getStartLimitPerMinute());
+      }
     }
     EnsProperties shared = ens.getIfAvailable();
     if (shared != null) checkRevocation(shared.getX509());

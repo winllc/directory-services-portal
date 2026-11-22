@@ -30,15 +30,15 @@ public final class FormValidator {
 
   /** Trim, drop blanks and duplicates. Accepts a string, a list or null. */
   public static List<String> normalize(Object raw) {
-    List<String> out = new ArrayList<>();
-    if (raw == null) return out;
+    if (raw == null) return new ArrayList<>();
+    java.util.Set<String> out = new java.util.LinkedHashSet<>();
     List<?> list = raw instanceof List<?> l ? l : List.of(raw);
     for (Object v : list) {
       if (v == null) continue;
       String s = String.valueOf(v).trim();
-      if (!s.isEmpty() && !out.contains(s)) out.add(s);
+      if (!s.isEmpty()) out.add(s);
     }
-    return out;
+    return new ArrayList<>(out);
   }
 
   public static boolean isWritable(FormDefinition form, FormField field, Mode mode) {
@@ -54,15 +54,17 @@ public final class FormValidator {
     String label = field.label();
     if (field.required() && values.isEmpty()) return label + " is required";
     if (!field.multiValued() && values.size() > 1) return label + " accepts a single value";
+    java.util.Set<String> allowed = null;
+    if (field.dropdownWidget() && !field.allowsCustomValues()) {
+      List<OptionItem> options = field.dropdown() instanceof DropdownSource.Static s ? s.options() : resolvedOptions;
+      if (options != null) allowed = options.stream().map(OptionItem::value).collect(java.util.stream.Collectors.toSet());
+    }
     for (String v : values) {
       if (field.maxLength() != null && v.length() > field.maxLength()) {
         return label + " must be at most " + field.maxLength() + " characters";
       }
       if (field.dropdownWidget()) {
-        List<OptionItem> options = field.dropdown() instanceof DropdownSource.Static s ? s.options() : resolvedOptions;
-        if (options != null && !field.allowsCustomValues() && options.stream().noneMatch(o -> o.value().equals(v))) {
-          return "\"" + v + "\" is not an allowed value for " + label;
-        }
+        if (allowed != null && !allowed.contains(v)) return "\"" + v + "\" is not an allowed value for " + label;
         continue;
       }
       String format = field.format() == null ? "plain" : field.format();

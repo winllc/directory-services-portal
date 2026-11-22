@@ -96,6 +96,8 @@ function server(opts: { who: ReturnType<typeof user>; staffAccess: 'read' | 'wri
   const staff = definition('def-staff', 'staff', 'Staff', 'form-person', opts.staffAccess);
   const groups = definition('def-groups', 'groups', 'Groups', 'form-group', 'write');
   const sent: Sent[] = [];
+  /** failEntryReads: reading an entry answers 502 (a replica restarting). partialSave: an update answers partially_saved. */
+  const state = { failEntryReads: false, partialSave: '' };
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
   vi.stubGlobal(
@@ -121,11 +123,13 @@ function server(opts: { who: ReturnType<typeof user>; staffAccess: 'read' | 'wri
       if (m && dn) {
         const current = entries.get(dn);
         if (!current) return json({ error: 'Entry not found' }, 404);
+        if (method === 'GET' && state.failEntryReads) return json({ error: 'Bad gateway' }, 502);
         if (method === 'GET') return json(current);
         if (method === 'DELETE') {
           entries.delete(dn);
           return new Response(null, { status: 204 });
         }
+        if (method === 'PUT' && state.partialSave) return json({ error: state.partialSave, code: 'partially_saved' }, 400);
         if (method === 'PUT') {
           const values = (body as { values: Record<string, string[]> }).values;
           const attributes = { ...current.attributes };
@@ -150,7 +154,7 @@ function server(opts: { who: ReturnType<typeof user>; staffAccess: 'read' | 'wri
       return json([]);
     }),
   );
-  return { sent, entries };
+  return { sent, entries, state };
 }
 
 function Where() {
@@ -159,8 +163,9 @@ function Where() {
 }
 
 function renderAt(path: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <ToastProvider>
           <AuthProvider>
@@ -171,6 +176,7 @@ function renderAt(path: string) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 const entryUrl = (slug: string, dn: string) => `/d/${slug}/entry?dn=${encodeURIComponent(dn)}`;
@@ -225,6 +231,45 @@ describe('editing a directory entry', () => {
     const renamed = `uid=bob.brown,ou=people,${B}`;
     await waitFor(() => expect(where()).toBe(`/d/staff/entry?dn=${renamed}`));
     expect(await screen.findByTitle(renamed)).toBeInTheDocument();
+  });
+
+  it('keeps the open form across a refetch: someone else’s change is not sent back, a failed read loses no edits', async () => {
+    const u = userEvent.setup();
+    const api = server({ who: user('erin', `uid=erin,ou=people,${B}`, 'Erin Evans'), staffAccess: 'write' });
+    const client = renderAt(entryUrl('staff', BOB) + '&edit=1');
+
+    await u.clear(await screen.findByLabelText('Title'));
+    await u.type(screen.getByLabelText('Title'), 'Head of Partners');
+    // Another administrator renames Bob meanwhile, and the entry is read again (reconnect, invalidation).
+    api.entries.get(BOB)!.attributes.cn = ['Robert Brown'];
+    await client.invalidateQueries({ queryKey: ['entry'] });
+    expect(await screen.findByText('This entry changed since you opened it')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Full name/)).toHaveValue('Bob Brown');
+    // A read that fails keeps the form, and what was typed.
+    api.state.failEntryReads = true;
+    await client.invalidateQueries({ queryKey: ['entry'] });
+    expect(screen.getByLabelText('Title')).toHaveValue('Head of Partners');
+    api.state.failEntryReads = false;
+
+    await u.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Changes saved')).toBeInTheDocument();
+    expect(api.sent.map((s) => s.body)).toEqual([{ values: { title: ['Head of Partners'] } }]);
+    expect(api.entries.get(BOB)?.attributes.cn).toEqual(['Robert Brown']);
+  });
+
+  it('shows why an update was only partly saved', async () => {
+    const u = userEvent.setup();
+    const api = server({ who: user('erin', `uid=erin,ou=people,${B}`, 'Erin Evans'), staffAccess: 'write' });
+    api.state.partialSave = `The other changes were saved, but the entry was not renamed: Entry already exists. The entry is now ${BOB}.`;
+    renderAt(entryUrl('staff', BOB) + '&edit=1');
+
+    await u.clear(await screen.findByLabelText(/^Username/));
+    await u.type(screen.getByLabelText(/^Username/), 'bob.brown');
+    await u.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByText(api.state.partialSave)).toBeInTheDocument();
+    expect(screen.queryByText('Please correct the highlighted fields.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Changes saved')).not.toBeInTheDocument();
   });
 
   it('offers no edit or delete to someone who may only read, even with ?edit=1', async () => {

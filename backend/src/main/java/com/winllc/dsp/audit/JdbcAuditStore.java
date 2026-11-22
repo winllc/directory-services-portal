@@ -51,6 +51,9 @@ public class JdbcAuditStore extends AuditStore {
   /** The {@code dsp_document} row recording which local audit chain was imported (its head). */
   static final String IMPORT_MARKER = "import/audit";
 
+  /** The {@code dsp_document} row where retention records how far it pruned: {@code seq:hash}. */
+  static final String PRUNED_MARKER = "audit/pruned";
+
   /**
    * Copies the file store's events in when the table is still empty (first start with the
    * database) and records which chain it was (the import marker). Returns how many were imported.
@@ -88,6 +91,8 @@ public class JdbcAuditStore extends AuditStore {
       if (!batch.isEmpty()) jdbc.batchUpdate("INSERT INTO dsp_audit_event (seq, event_month, line) VALUES (?, ?, ?)", batch);
       jdbc.update("INSERT INTO dsp_document (name, version, content) VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET content = EXCLUDED.content,"
           + " version = dsp_document.version + 1, updated_at = now()", IMPORT_MARKER, localHead);
+      PrunedThrough pruned = files.prunedThrough();
+      if (pruned != null) recordPrunedThrough(pruned);
       return count[0];
     });
     long n = imported == null ? 0 : imported;
@@ -215,22 +220,43 @@ public class JdbcAuditStore extends AuditStore {
   public Pruned prune(Predicate<Stored> prunable) throws IOException {
     try {
       long head = headSeq();
-      List<Stored> doomed = new ArrayList<>();
+      // Only the first and last prunable events and how many: never the whole range in memory.
+      Stored[] first = {null};
+      Stored[] last = {null};
+      long[] count = {0};
       scanOldestFirst(s -> {
         if (s.seq() < 0) return true;
         if (s.seq() >= head || !prunable.test(s)) return false;
-        doomed.add(s);
+        if (first[0] == null) first[0] = s;
+        last[0] = s;
+        count[0]++;
         return true;
       });
-      if (doomed.isEmpty()) return new Pruned(0, null, null, null, null);
-      long upTo = doomed.get(doomed.size() - 1).seq();
-      jdbc.update("DELETE FROM dsp_audit_event WHERE seq <= ? AND seq < ?", upTo, head);
-      Stored a = doomed.get(0);
-      Stored b = doomed.get(doomed.size() - 1);
-      return new Pruned(doomed.size(), a.seq(), b.seq(), a.time(), b.time());
+      if (count[0] == 0) return new Pruned(0, null, null, null, null);
+      long upTo = last[0].seq();
+      PrunedThrough through = new PrunedThrough(upTo, AuditJson.hashOf(last[0].line()));
+      tx.executeWithoutResult(status -> {
+        jdbc.update("DELETE FROM dsp_audit_event WHERE seq <= ? AND seq < ?", upTo, head);
+        recordPrunedThrough(through);
+      });
+      return new Pruned(count[0], first[0].seq(), last[0].seq(), first[0].time(), last[0].time());
     } catch (DataAccessException e) {
       throw new IOException(e.getMessage(), e);
     }
+  }
+
+  @Override
+  public PrunedThrough prunedThrough() {
+    List<String> rows = jdbc.queryForList("SELECT content FROM dsp_document WHERE name = ?", String.class, PRUNED_MARKER);
+    return rows.isEmpty() ? null : PrunedThrough.parse(rows.get(0));
+  }
+
+  /** In the caller's transaction; only ever forward. */
+  private void recordPrunedThrough(PrunedThrough pruned) {
+    PrunedThrough before = prunedThrough();
+    if (before != null && before.seq() >= pruned.seq()) return;
+    jdbc.update("INSERT INTO dsp_document (name, version, content) VALUES (?, 1, ?) ON CONFLICT (name) DO UPDATE SET content = EXCLUDED.content,"
+        + " version = dsp_document.version + 1, updated_at = now()", PRUNED_MARKER, pruned.text());
   }
 
   /** The month an event is filed under (for month filters), from its time. */

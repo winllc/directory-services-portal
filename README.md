@@ -67,6 +67,26 @@ Each package has its own README (`deploy/package/docker/README.md`,
 installers verify. Building from source, the demo compose stack in this repository and
 `docker build` are for development only (see [Development](#development)).
 
+### Upgrade notes: sign-in, web tier and deployment fixes
+
+- **Client addresses behind a proxy in front of the web tier**: new `WEB_TRUSTED_PROXIES` (Helm
+  `web.trustedProxies`), the addresses or CIDRs of an ingress controller, load balancer or TLS
+  proxy whose `X-Forwarded-For` the web tier may believe. Unset, as on an upgrade, everyone behind
+  such a proxy still has its address; while single sign-on is on the API warns at startup. The
+  single sign-on start limit's default rises from 30 to 600 a minute per address, so one shared
+  address no longer turns users away at a morning peak; a release-package `.env` or `portal.env`
+  that sets `SSO_START_LIMIT_PER_MINUTE=30` keeps it: raise it, or set `WEB_TRUSTED_PROXIES`
+  ([Security headers and cookies](#security-headers-and-cookies)).
+- **Release package backups**: `./portal.sh backup` writes `<file>.part` and renames it when
+  complete, so a failed backup leaves no truncated archive. `./portal.sh restore` checks the
+  archive before stopping the API and extracts it next to the data before replacing it; on a
+  failure the data is left as it was and the API started again. With `DSP_DATABASE_URL`,
+  `upgrade.sh` warns that the database is not in its backup (and asks before going on when run
+  from a terminal).
+- **SAML metadata is read again** every `SSO_SAML_METADATA_REFRESH` (default `1h`; Helm
+  `sso.saml.metadataRefresh`), and at once when a response's signature fails, so an IdP's new
+  signing certificate is used without restarting the API. Nothing to configure.
+
 ### Upgrade notes: multiple directories and failover
 
 Nothing changes on upgrade: the `LDAP_*` settings still describe one directory, now called
@@ -402,7 +422,8 @@ counted or enforced: counting directory users would mean scanning the whole dire
 maintenance), every feature ticked or not, the size, this **installation id** (copy it into the
 ENS portal to bind a license to this installation) and an upload. The upload accepts the file as
 the request body (`text/plain`) or as the multipart field `file`, and says why a file is refused
-(not signed by ENS, another product, bound to another installation, an older revision).
+(not signed by ENS, another product, bound to another installation, an older revision, or not yet
+valid or already expired while the installed license is in full effect: `"state": "NOT_IN_EFFECT"`).
 
 **Files**: the license and the installation's state are environment settings, not Spring
 properties:
@@ -627,8 +648,9 @@ doesn't take the portal out of service. It is DOWN when none answers.
 
 ### End users
 - Directory list with search, sorting and paging. Entries can be viewed, created, edited
-  (only changed attributes are sent, and changing the naming attribute renames the entry) and
-  deleted.
+  (only changed attributes are sent, and changing the naming attribute renames the entry, after
+  the other changes were made) and deleted. A create or change after which the entry would no
+  longer match the definition's filter is refused (400).
 - **My profile** shows every definition that can locate the user, and lets them edit their own
   self-service fields. A definition locates the user's entry by its DN, or by an attribute
   (*entry attribute equals the user's attribute*). Matching by an attribute is refused while users
@@ -830,6 +852,8 @@ curl -H "Authorization: Bearer $DSP_TOKEN" "https://portal.example.com/api/v1/di
   (every package and the chart set it): with `none` every request seems to come from the proxy, and
   one client's bad tokens make every caller behind it get 429. The API warns at startup when it
   is evidently behind a proxy (`X509_SOURCE=header`, or `SERVER_ADDRESS` on loopback) with `none`.
+  A proxy in front of the web tier (an ingress controller, a TLS proxy) hides the client the same
+  way unless it is listed in `WEB_TRUSTED_PROXIES` ([Security headers and cookies](#security-headers-and-cookies)).
   With the shared database these per-address counts (and the single sign-on start limit) are kept
   in it (`dsp_rate_limit`), so they hold across replicas; should the database fail, a replica
   counts in its own memory meanwhile (a warning at most once a minute). The per-token limit is
@@ -913,7 +937,9 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   New release-package `.env` files and new Helm installations get a random key (see Upgrade notes).
   Secrets are never returned by the API again, logged or audited. Changes to webhooks are audited
   (`webhook.created`, `.updated`, `.secret-rotated`, `.deleted`) with the URL's host only.
-- `WEBHOOKS_ENABLED=false` stops sending (deliveries stay queued) and creating webhooks.
+- `WEBHOOKS_ENABLED=false` stops sending and creating webhooks. Deliveries already queued stay
+  queued; changes made while it is off are not queued (so the outbox can't grow unattended), and
+  finished deliveries are still forgotten after the retention.
 
 ### Import and export
 - **Export**: on a directory page, *Export CSV* or *Export LDIF* downloads the entries matching the
@@ -950,7 +976,7 @@ ok = hmac.compare_digest(expected, v1) and abs(time.time() - int(t)) < 300
   group in the entry form, an API update and an import row also change member, uniqueMember and
   memberUid by their difference (value-level adds and deletes), and refuse (409 `ranged_values`)
   to edit a member list the directory returned in ranges, which only the bulk change can add to
-  or remove from.
+  or remove from. Reading and exporting the members of such a group reads every range.
 - Not yet (Wave 4): import as an unattended scheduled job, LDIF modify and delete records,
   multi-select bulk edit and delete in the list, clearing attributes by import, and lifting the
   1,000-entry cap of the list view.
@@ -976,10 +1002,10 @@ Splunk or any SIEM.
 
 | Category | Actions |
 |---|---|
-| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent` or `account-removed`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
+| authentication | `auth.login` (success or failure; `details.method` `password` or `x509`, the attempted user name or certificate subject, serial and issuer, and the reason on failure), `auth.logout`, `auth.lockout` (`LOGIN_MAX_FAILURES` failures within `LOGIN_LOCKOUT_WINDOW`, by default 8 in 15 minutes; severity alert), `auth.session-expired` (reason `idle`, `absolute`, `concurrent`, `account-removed` or `account-disabled`, see [Sessions](#sessions)), `auth.consent-acknowledged` (see [Notice and consent banner](#notice-and-consent-banner)), `auth.password-changed` / `auth.password-reset` (a password attribute changed through *My profile* / by an administrator) |
 | authorization | `access.denied` for every 403: role refused, `license_required`, `license_read_only`, `feature_not_licensed`, CSRF header missing, the portal's own permission checks (method, path, reason code). Identical denials (same actor, path, reason) within 60 s are folded into one more event with `details.count` |
 | account | `grant.save`, `grant.revoke`: permissions on directories for users and groups |
-| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps every attribute the entry held, on its form or not, with secrets as `[redacted]` and binary values such as `jpegPhoto` in base64; a rename records `previousDn`; like every detail, each attribute's values are cut at 1,000 characters), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
+| data | `entry.create`, `entry.update`, `entry.self_update`, `entry.delete` (each changed attribute as `<attribute>.old` / `.new`; a delete keeps every attribute the entry held, on its form or not, with secrets as `[redacted]` and binary values such as `jpegPhoto` in base64; a rename records `previousDn`; an update whose rename the directory refused after its other changes were made is recorded as what was done, with `partial`; like every detail, each attribute's values are cut at 1,000 characters), `form.*`, `definition.*`, `schema.import`, `schema.attribute_type.*`, `schema.object_class.*`, `analysis.export` and `data.exported` (findings CSV, schema export) |
 | configuration | `dashboard.*`, `analysis.create` / `update` / `delete` |
 | license | `license.installed`, `license.rejected` (with the reason), `license.mode-changed` (old and new mode; checked at startup, every minute and after an upload). Older history keeps the original `license.install` |
 | system | `system.started` (version), `system.stopped`, `job.completed` / `job.failed` (the retention job) |
@@ -1016,7 +1042,9 @@ nor is a save that changes nothing.
   filtered to that entry, including events from before a rename. **Export** writes the current
   filter (up to 100,000 events) as CSV or NDJSON (`audit.exported`). **Verify integrity**
   recomputes the chain: intact, or the first broken seq; after pruning, the first retained
-  event is the anchor and its `prevHash` is accepted as given. **Delivery** shows each output's
+  event is the anchor, and it must be the event right after the last one retention deleted
+  (recorded in `audit-pruned` next to the files, or in the shared database), chained to its
+  hash, so events deleted by other means are reported. **Delivery** shows each output's
   state, and **API tokens** manages the pull API's tokens. The page and its API work whatever
   the license says.
 
@@ -1046,6 +1074,12 @@ backoff up to 5 minutes, never slowing requests. An output failing for over 15 m
 output at startup. The rename of the log category from `audit` to `ens.audit` keeps routing
 working: the lines go to stdout (and the file) as before, now without the log prefix; set
 `LOGGING_LEVEL_ENS_AUDIT=OFF` (instead of `LOGGING_LEVEL_AUDIT`) to silence them.
+
+Syslog over `tcp` and `tls` has no delivery acknowledgement, so it is best effort. Before each
+batch the forwarder checks that the collector has not closed the connection, and it opens a new
+one after 30 seconds unused; when a connection turns out broken, the batch last written on it is
+sent again (a collector restart can repeat up to one batch). A batch the collector does not take
+within 10 seconds fails and is retried. Where no event may be missing, use HEC or the pull API.
 
 **Getting it into Splunk** (any one of):
 
@@ -1202,7 +1236,7 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 |---|---|---|
 | `PORTAL_PUBLIC_URL` | | the address users open, e.g. `https://portal.example.com`: redirect URI, SAML entity id and ACS are built from it, never from the request's `Host`. **Required for SAML** (unless `SSO_SAML_ENTITY_ID` is set), recommended for OIDC. Give the web tier `PUBLIC_HOST` (its host[:port]) too |
 | `SSO_IDP_ADMIN_SESSION_LIFETIME` | `1h` | a session whose administrator rights come only from the provider's groups ends this long after sign-in (the provider is asked again then) |
-| `SSO_START_LIMIT_PER_MINUTE` | `30` | sign-ons one client address may start per minute (across replicas with the shared database, else per API replica; the address as resolved with `SERVER_FORWARD_HEADERS_STRATEGY`). Each start keeps a sign-in request for 10 minutes; more are sent back to `/login?sso_error=busy` with `Retry-After` |
+| `SSO_START_LIMIT_PER_MINUTE` | `600` | sign-ons one client address may start per minute (across replicas with the shared database, else per API replica; the address as resolved with `SERVER_FORWARD_HEADERS_STRATEGY`). Each start keeps a sign-in request for 10 minutes; more are sent back to `/login?sso_error=busy` with `Retry-After`. Behind a proxy in front of the web tier that is not in `WEB_TRUSTED_PROXIES`, every user has the proxy's address and all share this limit (a startup WARN while single sign-on is on and `WEB_TRUSTED_PROXIES` is unset) |
 | `SSO_MAX_PENDING_REQUESTS` | `10000` | sign-in requests in flight kept in memory at most (without the shared database, where expired rows are deleted every minute); when full, new starts get `sso_error=busy` |
 | `SSO_OIDC_ISSUER_URI` | | the issuer; `https://` (http only for localhost). Its discovery document must name the same issuer |
 | `SSO_OIDC_CLIENT_ID` | | with the issuer, turns OpenID Connect on |
@@ -1218,6 +1252,7 @@ make a user an administrator **only** when one of them is listed in `SSO_*_ADMIN
 | `SSO_SAML_USERNAME_ATTRIBUTE` | empty: the NameID | the attribute mapped through the user filter |
 | `SSO_SAML_USER_FILTER`, `SSO_SAML_GROUPS_ATTRIBUTE`, `SSO_SAML_ADMIN_GROUPS`, `SSO_SAML_LABEL` | as OIDC | |
 | `SSO_SAML_CLOCK_SKEW` | `2m` | tolerated clock difference (at most `10m`) |
+| `SSO_SAML_METADATA_REFRESH` | `1h` | how long the IdP's metadata (its signing certificates, endpoints) is used before it is read again; `0`: once, until the API restarts. A response whose signature fails also has it read again at once (at most once a minute), so a rolled IdP certificate is picked up without a restart. A failed read keeps the last good copy |
 | `SSO_SAML_SIGNING_KEY_FILE` / `SSO_SAML_SIGNING_CERT_FILE` | | PKCS#8 PEM key and certificate, for IdPs that require signed AuthnRequests, and for single logout |
 | `SSO_SAML_SINGLE_LOGOUT` | `false` (new release-package `.env` and new Helm installs: `true`) | SAML single logout when signing out (see *Signing out* below); needs the signing key and certificate |
 
@@ -1371,7 +1406,9 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
   takes over within seconds when it stops); retention and the license-mode check run under a
   cluster lock (ShedLock).
 - **Background tasks** run on the instance that started them; their progress and results are
-  shared, so the task list, results, cancelling and dismissing work from any instance.
+  shared, so the task list, results, cancelling and dismissing work from any instance. Tasks of
+  an instance that stops (an upgrade, a crash) are marked failed about 30 seconds later and no
+  longer count against `JOBS_MAX_ACTIVE_PER_USER`.
 - **Single sign-on** requests in flight and used SAML assertion ids are shared, so the provider's
   answer may reach any instance.
 - **Per-address limits** (failed API tokens, single sign-on starts) are counted in
@@ -1442,7 +1479,7 @@ Session controls (DISA STIG; the ENS platform baseline):
 | `ENS_SESSION_ADMIN_IDLE_TIMEOUT` | the idle timeout | a shorter idle timeout for administrators (STIG suggests `15m`) |
 | `ENS_SESSION_ABSOLUTE_TIMEOUT` | `12h` | a session ends this long after sign-in, whatever its activity |
 | `ENS_SESSION_MAX_PER_USER` | `0` (no limit) | concurrent sessions per user; signing in once more ends the **oldest** (STIG suggests `3`) |
-| `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists ends its sessions |
+| `GROUP_REFRESH_INTERVAL` | `5m` | how often a signed-in user's groups and administrator status are read again from the directory, checked on their next request (`0`: only at sign-in). An account that no longer exists, or that the directory marks disabled or locked (as for API tokens), ends its sessions |
 | `LOGIN_MAX_FAILURES` | `8` | failed password sign-ins for one user name from one address before further attempts are refused (`429`, `auth.lockout`) (STIG suggests `3`). Each attempt is counted, atomically, before its password is tried (a success clears the count), so parallel requests can't try more |
 | `LOGIN_LOCKOUT_WINDOW` | `15m` | the window the failures are counted in, from the first; the refusal lasts until it ends. Failures are kept in the API's memory (a restart clears them), or in the shared database (see [High availability](#high-availability-several-api-instances)) |
 
@@ -1450,7 +1487,7 @@ Idle time counts what the user does: the web client marks its background polling
 license and audit status) with `X-DSP-Background: 1`, which keeps nothing alive, so an open but
 unattended tab still times out. An expired session answers `401` with `"code": "session_expired"`
 and the browser shows the sign-in page with the reason; each expiry is audited as
-`auth.session-expired` with the reason `idle`, `absolute`, `concurrent` or `account-removed`.
+`auth.session-expired` with the reason `idle`, `absolute`, `concurrent`, `account-removed` or `account-disabled`.
 
 ### Health and metrics
 The API uses Spring Boot's probes, which need no sign-in or license:
@@ -1529,6 +1566,7 @@ responses for anyone who reaches it directly:
 | `ENS_CSP_REPORT_ONLY` | `false` | `true` sends `Content-Security-Policy-Report-Only` instead (API and web image): an escape hatch for a page the policy breaks. Report it, and turn this off again |
 | `ENS_COOKIE_SECURE` | `false` | Always mark the session cookie (`DSP_SESSION`) `Secure`, for TLS terminated at a proxy. Over direct TLS it is `Secure` anyway. `COOKIE_SECURE` is the older name and still works |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `none` | Spring Boot's own setting: `framework` behind a proxy that overwrites `X-Forwarded-*` (the web tier does; every package sets it). `FORWARD_HEADERS_STRATEGY` is the older name and still works |
+| `WEB_TRUSTED_PROXIES` | | web tier (and the API, which only warns without it): addresses or CIDRs, comma-separated, of proxies in front of the web tier (an ingress controller's pod CIDR, a load balancer, a TLS proxy on the Docker host as the web container sees it) whose `X-Forwarded-For` names the client. nginx then takes the client's address from it (`set_real_ip_from`, `real_ip_recursive`) and forwards that to the API. Unset, everyone behind such a proxy has its address, for the per-address limits and the audit trail alike. List only proxies; `0.0.0.0/0` is refused. Helm: `web.trustedProxies`; native package: in `portal.env`, then run `install.sh` again |
 
 The session cookie is `HttpOnly` and `SameSite=Strict` (stricter than the baseline's `Lax`; the
 browser only ever reaches the API through the same origin).
@@ -1585,7 +1623,7 @@ either signature or both:
   (`X-DSP-Proxy-Secret`, compared in constant time); without the secret and a trusted CA file
   the API does not start in header mode.
 - The web proxy overwrites `X-Forwarded-For` (clients can't spoof their address, which login
-  throttling relies on) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
+  throttling relies on; only the proxies in `WEB_TRUSTED_PROXIES` may name the client) and `X-DSP-Proxy-Secret`, and always replaces or removes the client
   certificate header. The API is not published in Docker Compose, so only the proxy can reach it.
 - Sessions are Spring Security `HttpSession`s in a `DSP_SESSION` cookie (`HttpOnly`,
   `SameSite=Strict`, `Secure` over TLS or when `ENS_COOKIE_SECURE=true`). The session ID is rotated at login,

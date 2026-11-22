@@ -10,6 +10,7 @@ import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -88,53 +89,120 @@ final class SsoRegistrations {
     }
   }
 
-  /** SAML 2.0 from the IdP's metadata. */
+  /**
+   * SAML 2.0 from the IdP's metadata, read again every SSO_SAML_METADATA_REFRESH (an IdP rolls its
+   * signing certificate) and, at most once a minute, when a response fails signature validation. A
+   * failed read keeps the last good registration.
+   */
   static final class Saml implements RelyingPartyRegistrationRepository, Iterable<RelyingPartyRegistration> {
     private final SsoProperties.Saml cfg;
     private final String base;
+    private final Clock clock;
     private volatile RelyingPartyRegistration registration;
+    private volatile Instant loadedAt;
     private volatile Instant failedAt;
+    private Instant reloadedForSignatureAt;
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
 
     Saml(SsoProperties props) {
+      this(props, Clock.systemUTC());
+    }
+
+    Saml(SsoProperties props, Clock clock) {
       this.cfg = props.getSaml();
       this.base = props.base();
+      this.clock = clock;
     }
 
     @Override
     public RelyingPartyRegistration findByRegistrationId(String registrationId) {
       if (!SAML.equals(registrationId) || !cfg.enabled()) return null;
       RelyingPartyRegistration r = registration;
-      if (r != null) return r;
-      synchronized (this) {
-        if (registration != null) return registration;
-        if (failedAt != null && failedAt.plus(RETRY).isAfter(Instant.now())) return null;
-        try {
-          RelyingPartyRegistration.Builder b = RelyingPartyRegistrations.fromMetadataLocation(cfg.resourceLocation())
-              .registrationId(SAML)
-              .entityId(cfg.getEntityId().isBlank() ? base + "/api/auth/sso/saml/metadata" : cfg.getEntityId())
-              .assertionConsumerServiceLocation(base + "/api/auth/sso/saml/acs/{registrationId}")
-              .assertionConsumerServiceBinding(Saml2MessageBinding.POST);
-          if (cfg.signing()) {
-            Saml2X509Credential signing = Saml2X509Credential.signing(privateKey(Path.of(cfg.getSigningKeyFile())),
-                certificate(Path.of(cfg.getSigningCertificateFile())));
-            b.signingX509Credentials(c -> c.add(signing));
-          }
-          RelyingPartyRegistration built = b.build();
-          if (built.getAssertingPartyMetadata().getSingleSignOnServiceBinding() != Saml2MessageBinding.REDIRECT) {
+      if (r != null && !stale()) return r;
+      // While another request reads the metadata again, the copy in use answers.
+      if (r != null) {
+        if (!lock.tryLock()) return r;
+      } else {
+        lock.lock();
+      }
+      try {
+        r = registration;
+        if (r != null && !stale()) return r;
+        if (failedAt != null && failedAt.plus(RETRY).isAfter(clock.instant())) return r;
+        RelyingPartyRegistration loaded = load();
+        return loaded != null ? loaded : r;
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    private boolean stale() {
+      Duration refresh = cfg.getMetadataRefresh();
+      return refresh != null && refresh.isPositive() && !loadedAt.plus(refresh).isAfter(clock.instant());
+    }
+
+    /**
+     * After a response failed signature validation: the metadata read again now (at most once a
+     * minute, whatever the responses), when its signing certificates differ from those in use;
+     * else null.
+     */
+    RelyingPartyRegistration reloadAfterSignatureFailure() {
+      if (!cfg.enabled()) return null;
+      lock.lock();
+      try {
+        Instant now = clock.instant();
+        if (reloadedForSignatureAt != null && reloadedForSignatureAt.plus(RETRY).isAfter(now)) return null;
+        reloadedForSignatureAt = now;
+        RelyingPartyRegistration before = registration;
+        RelyingPartyRegistration loaded = load();
+        return loaded != null && (before == null || !sameVerification(before, loaded)) ? loaded : null;
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    private static boolean sameVerification(RelyingPartyRegistration a, RelyingPartyRegistration b) {
+      return java.util.Set.copyOf(a.getAssertingPartyMetadata().getVerificationX509Credentials())
+          .equals(java.util.Set.copyOf(b.getAssertingPartyMetadata().getVerificationX509Credentials()));
+    }
+
+    /** Reads the metadata and makes it the registration in use; null (logged) when it can't be read. */
+    private RelyingPartyRegistration load() {
+      RelyingPartyRegistration before = registration;
+      try {
+        RelyingPartyRegistration.Builder b = RelyingPartyRegistrations.fromMetadataLocation(cfg.resourceLocation())
+            .registrationId(SAML)
+            .entityId(cfg.getEntityId().isBlank() ? base + "/api/auth/sso/saml/metadata" : cfg.getEntityId())
+            .assertionConsumerServiceLocation(base + "/api/auth/sso/saml/acs/{registrationId}")
+            .assertionConsumerServiceBinding(Saml2MessageBinding.POST);
+        if (cfg.signing()) {
+          Saml2X509Credential signing = Saml2X509Credential.signing(privateKey(Path.of(cfg.getSigningKeyFile())),
+              certificate(Path.of(cfg.getSigningCertificateFile())));
+          b.signingX509Credentials(c -> c.add(signing));
+        }
+        RelyingPartyRegistration built = b.build();
+        if (built.getAssertingPartyMetadata().getSingleSignOnServiceBinding() != Saml2MessageBinding.REDIRECT) {
+          if (before == null) {
             log.warn("Single sign-on: the SAML IdP's metadata offers sign-in by HTTP-POST only; the portal sends AuthnRequests by"
                 + " HTTP-Redirect, which the IdP must accept at {}", built.getAssertingPartyMetadata().getSingleSignOnServiceLocation());
-            built = built.mutate().assertingPartyMetadata(p -> p.singleSignOnServiceBinding(Saml2MessageBinding.REDIRECT)).build();
           }
-          built = withSingleLogout(built);
-          registration = built;
-          failedAt = null;
-          log.info("Single sign-on: SAML IdP {} ready", LogSafe.of(built.getAssertingPartyMetadata().getEntityId()));
-          return registration;
-        } catch (RuntimeException | IOException | java.security.GeneralSecurityException e) {
-          failedAt = Instant.now();
-          log.error("Single sign-on: cannot read the SAML IdP metadata {}: {}", cfg.getMetadataLocation(), LogSafe.of(e.getMessage()));
-          return null;
+          built = built.mutate().assertingPartyMetadata(p -> p.singleSignOnServiceBinding(Saml2MessageBinding.REDIRECT)).build();
         }
+        built = withSingleLogout(built, before == null);
+        registration = built;
+        loadedAt = clock.instant();
+        failedAt = null;
+        if (before == null) {
+          log.info("Single sign-on: SAML IdP {} ready", LogSafe.of(built.getAssertingPartyMetadata().getEntityId()));
+        } else if (!sameVerification(before, built)) {
+          log.info("Single sign-on: the SAML IdP's metadata has new signing certificates; using them");
+        }
+        return built;
+      } catch (RuntimeException | IOException | java.security.GeneralSecurityException e) {
+        failedAt = clock.instant();
+        log.error("Single sign-on: cannot read the SAML IdP metadata {}{}: {}", cfg.getMetadataLocation(),
+            before == null ? "" : " (the copy read before stays in use)", LogSafe.of(e.getMessage()));
+        return null;
       }
     }
 
@@ -144,21 +212,21 @@ final class SsoRegistrations {
      * HTTP-Redirect. The browser goes there by navigation: an HTTP-POST form to the IdP would be
      * refused by the CSP's form-action 'self', so an IdP offering HTTP-POST first gets none.
      */
-    private RelyingPartyRegistration withSingleLogout(RelyingPartyRegistration built) {
+    private RelyingPartyRegistration withSingleLogout(RelyingPartyRegistration built, boolean first) {
       if (!cfg.singleLogoutConfigured()) return built;
       var idp = built.getAssertingPartyMetadata();
       if (idp.getSingleLogoutServiceLocation() == null) {
-        log.warn("Single sign-on: SSO_SAML_SINGLE_LOGOUT is on, but the SAML IdP's metadata offers no SingleLogoutService; signing"
+        if (first) log.warn("Single sign-on: SSO_SAML_SINGLE_LOGOUT is on, but the SAML IdP's metadata offers no SingleLogoutService; signing"
             + " out ends the portal's session only");
         return built;
       }
       if (idp.getSingleLogoutServiceBinding() != Saml2MessageBinding.REDIRECT) {
-        log.warn("Single sign-on: the SAML IdP's metadata offers single logout by HTTP-POST first ({}); the portal sends"
+        if (first) log.warn("Single sign-on: the SAML IdP's metadata offers single logout by HTTP-POST first ({}); the portal sends"
             + " LogoutRequests by HTTP-Redirect only, so signing out ends the portal's session only", LogSafe.of(idp.getSingleLogoutServiceLocation()));
         return built;
       }
       String location = base + SsoSecurity.SAML_LOGOUT;
-      log.info("Single sign-on: SAML single logout through {}", LogSafe.of(idp.getSingleLogoutServiceLocation()));
+      if (first) log.info("Single sign-on: SAML single logout through {}", LogSafe.of(idp.getSingleLogoutServiceLocation()));
       return built.mutate().singleLogoutServiceLocation(location).singleLogoutServiceResponseLocation(location)
           .singleLogoutServiceBinding(Saml2MessageBinding.REDIRECT).build();
     }
