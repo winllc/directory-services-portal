@@ -404,8 +404,7 @@ public class JobService implements DisposableBean {
       local = new ArrayList<>(jobs.values());
     }
     for (Job j : local) {
-      if (j.status().finished()) continue;
-      j.fail(JobMirror.STOPPED, null);
+      if (!j.fail(JobMirror.STOPPED, null)) continue;
       publish(j);
       j.done.complete(null);
     }
