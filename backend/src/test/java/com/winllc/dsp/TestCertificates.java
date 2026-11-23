@@ -56,6 +56,11 @@ final class TestCertificates {
     }
   }
 
+  /** The key pair every test certificate is issued for (servers in tests need the private key). */
+  static KeyPair keys() {
+    return KEYS;
+  }
+
   static Ca ca(String subject) {
     try {
       Instant now = Instant.now();
