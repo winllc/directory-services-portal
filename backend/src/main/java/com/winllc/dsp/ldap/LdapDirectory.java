@@ -33,7 +33,6 @@ import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
 import com.unboundid.ldap.sdk.schema.Schema;
 import com.unboundid.util.ssl.HostNameSSLSocketVerifier;
-import com.unboundid.util.ssl.JVMDefaultTrustManager;
 import com.unboundid.util.ssl.SSLUtil;
 import com.unboundid.util.ssl.TrustAllTrustManager;
 import com.winllc.dsp.model.DirectoryEntry;
@@ -54,6 +53,9 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -139,7 +141,7 @@ public class LdapDirectory implements AutoCloseable {
     try {
       List<LDAPURL> urls = new ArrayList<>();
       for (String u : settings.urls()) urls.add(new LDAPURL(u.trim()));
-      SSLUtil ssl = new SSLUtil(settings.tlsRejectUnauthorized() ? JVMDefaultTrustManager.getInstance() : new TrustAllTrustManager());
+      SSLUtil ssl = new SSLUtil(settings.tlsRejectUnauthorized() ? platformTrustManager() : new TrustAllTrustManager());
       LDAPConnectionOptions options = new LDAPConnectionOptions();
       options.setConnectTimeoutMillis(settings.timeoutMs());
       options.setResponseTimeoutMillis(settings.timeoutMs());
@@ -176,6 +178,20 @@ public class LdapDirectory implements AutoCloseable {
       throw new IllegalArgumentException("Invalid LDAP connection settings for directory " + settings.id() + " (" + settings.urls() + "): "
           + e.getMessage(), e);
     }
+  }
+
+  /**
+   * The JVM's default trust manager: the trust store given with -Djavax.net.ssl.trustStore (the Helm
+   * chart's ldap.truststore, the package's JAVA_OPTS), or the JDK's cacerts when none is given.
+   * UnboundID's JVMDefaultTrustManager reads only the JDK's cacerts and so ignored the given store.
+   */
+  static X509TrustManager platformTrustManager() throws GeneralSecurityException {
+    TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    factory.init((java.security.KeyStore) null);
+    for (TrustManager tm : factory.getTrustManagers()) {
+      if (tm instanceof X509TrustManager x509) return x509;
+    }
+    throw new GeneralSecurityException("The JVM has no X.509 trust manager");
   }
 
   public String id() {
