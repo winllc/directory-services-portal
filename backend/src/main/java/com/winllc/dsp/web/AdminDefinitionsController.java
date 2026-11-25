@@ -66,7 +66,9 @@ public class AdminDefinitionsController {
 
   /**
    * Group access needs a writable definition whose form has the member field, and an owner attribute
-   * other than it (a field of the form too, when owners may change owners).
+   * other than it (a field of the form too, when owners may change owners). The attribute naming
+   * the owners of organizational units is on those entries, not on the form: only password
+   * attributes are refused.
    */
   private void checkGroups(DefinitionInput in) {
     if (in.groups() == null || !in.groups().enabled()) return;
@@ -87,6 +89,10 @@ public class AdminDefinitionsController {
     if (in.groups().ownersManage() && form.fields().stream().noneMatch(f -> f.multiValued() && f.attribute().equalsIgnoreCase(owner))) {
       throw ApiException.badRequest("Owners can only change owners the form holds",
           Map.of("groups.ownersManageOwners", "The form needs a multi-valued field for the owner attribute (" + owner + ")"));
+    }
+    String containerOwner = in.groups().containerOwner();
+    if (containerOwner != null && EntryService.isHidden(containerOwner)) {
+      throw ApiException.badRequest("A password attribute can't name owners", Map.of("groups.containerOwnerAttribute", "Not a password attribute"));
     }
   }
 

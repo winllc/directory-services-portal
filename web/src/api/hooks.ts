@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useRef } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type {
   AnalysisDefinition,
@@ -29,6 +29,8 @@ import type {
   AccessDecisions,
   AccessRequest,
   AccessRequestView,
+  CreatedGroup,
+  GroupContainer,
   GroupDetail,
   GroupDirectory,
   GroupList,
@@ -38,6 +40,7 @@ import type {
   GroupPerson,
   GroupRequestHistory,
   GroupRequestSummary,
+  NewGroupForm,
   Webhook,
   WebhookDelivery,
   WebhookInput,
@@ -169,41 +172,60 @@ export const useEntry = (id: string | undefined, dn: string | null) =>
     enabled: !!id && !!dn,
   });
 
-const optionsUrl = (definitionId: string, fieldId: string) =>
-  `/api/directories/${encodeURIComponent(definitionId)}/options/${encodeURIComponent(fieldId)}`;
+/**
+ * Where the drop downs of a form get their options: the directory's own endpoint, which needs
+ * access to the directory, or (`new-group`) group access's, for the owner of an organizational unit
+ * filling in the form of a new group.
+ */
+export type OptionsSource = 'directory' | 'new-group';
+export const OptionsSourceContext = createContext<OptionsSource>('directory');
+
+const optionsUrl = (source: OptionsSource, definitionId: string, fieldId: string) =>
+  source === 'new-group'
+    ? `/api/groups/${encodeURIComponent(definitionId)}/group/options/${encodeURIComponent(fieldId)}`
+    : `/api/directories/${encodeURIComponent(definitionId)}/options/${encodeURIComponent(fieldId)}`;
+
+const optionsKey = (source: OptionsSource, definitionId: string, fieldId: string): QueryKey =>
+  source === 'new-group' ? [...keys.groups, 'options', definitionId, fieldId] : keys.options(definitionId, fieldId);
 
 /** A drop down's options (directory-search drop downs in list mode: up to their limit). */
-export const useFieldOptions = (definitionId: string, fieldId: string, enabled: boolean) =>
-  useQuery({
-    queryKey: keys.options(definitionId, fieldId),
-    queryFn: () => api.get<OptionPage>(optionsUrl(definitionId, fieldId)),
+export const useFieldOptions = (definitionId: string, fieldId: string, enabled: boolean) => {
+  const source = useContext(OptionsSourceContext);
+  return useQuery({
+    queryKey: optionsKey(source, definitionId, fieldId),
+    queryFn: () => api.get<OptionPage>(optionsUrl(source, definitionId, fieldId)),
     enabled,
     staleTime: 30_000,
   });
+};
 
 /** Options matching typed text, searched in the directory. Keeps the previous results while typing. */
-export const useOptionSearch = (definitionId: string, fieldId: string, q: string, enabled: boolean) =>
-  useQuery({
-    queryKey: [...keys.options(definitionId, fieldId), 'q', q],
-    queryFn: () => api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}${qs({ q })}`),
+export const useOptionSearch = (definitionId: string, fieldId: string, q: string, enabled: boolean) => {
+  const source = useContext(OptionsSourceContext);
+  return useQuery({
+    queryKey: [...optionsKey(source, definitionId, fieldId), 'q', q],
+    queryFn: () => api.get<OptionPage>(`${optionsUrl(source, definitionId, fieldId)}${qs({ q })}`),
     enabled,
     staleTime: 30_000,
     placeholderData: (prev) => prev,
   });
+};
 
 /** Labels (and descriptions) of stored values, looked up without loading every option. */
-const optionLabelsQuery = (definitionId: string, fieldId: string, values: string[]) => ({
-  queryKey: [...keys.options(definitionId, fieldId), 'values', [...values].sort()],
+const optionLabelsQuery = (source: OptionsSource, definitionId: string, fieldId: string, values: string[]) => ({
+  queryKey: [...optionsKey(source, definitionId, fieldId), 'values', [...values].sort()],
   queryFn: () => {
     const p = new URLSearchParams();
     values.forEach((v) => p.append('value', v));
-    return api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}?${p.toString()}`);
+    return api.get<OptionPage>(`${optionsUrl(source, definitionId, fieldId)}?${p.toString()}`);
   },
   staleTime: 60_000,
 });
 
-export const useOptionLabels = (definitionId: string, fieldId: string, values: string[], enabled: boolean) =>
-  useQuery({ ...optionLabelsQuery(definitionId, fieldId, values), enabled: enabled && values.length > 0 });
+export const useOptionLabels = (definitionId: string, fieldId: string, values: string[], enabled: boolean) => {
+  const source = useContext(OptionsSourceContext);
+  return useQuery({ ...optionLabelsQuery(source, definitionId, fieldId, values), enabled: enabled && values.length > 0 });
+};
 
 /** Values per label request in useFieldLabels (keeps the query string short). */
 const LABELS_PER_REQUEST = 50;
@@ -221,7 +243,7 @@ export function useFieldLabels(definitionId: string, wanted: { fieldId: string; 
     return out;
   });
   const results = useQueries({
-    queries: chunks.map((c) => ({ ...optionLabelsQuery(definitionId, c.fieldId, c.values), enabled: !!definitionId })),
+    queries: chunks.map((c) => ({ ...optionLabelsQuery('directory', definitionId, c.fieldId, c.values), enabled: !!definitionId })),
   });
   const labels: Record<string, OptionItem[] | undefined> = {};
   chunks.forEach((c, i) => {
@@ -1044,6 +1066,23 @@ export const useGroupRequestsFor = (definitionId: string, dn: string, enabled: b
     enabled,
   });
 
+/** The organizational units the user owns, where they may create groups (needs the directory editor's license). */
+export const useGroupContainers = (enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'containers'],
+    queryFn: () => api.get<GroupContainer[]>('/api/groups/containers'),
+    enabled,
+    staleTime: 30_000,
+  });
+
+/** The form of a new group in a directory, for those who own one of its organizational units. */
+export const useNewGroupForm = (definitionId: string | undefined) =>
+  useQuery({
+    queryKey: [...keys.groups, 'new-group-form', definitionId],
+    queryFn: () => api.get<NewGroupForm>(`/api/groups/${encodeURIComponent(definitionId!)}/group/form`),
+    enabled: !!definitionId,
+  });
+
 /** A page of the group's past requests, for those who manage it. */
 export const useGroupHistory = (definitionId: string, dn: string, page: number, enabled: boolean) =>
   useQuery({
@@ -1073,7 +1112,23 @@ export function useGroupMutations() {
     // Entry pages of the group show its members too.
     qc.invalidateQueries({ queryKey: ['entry'] });
   };
+  // A group that is new or gone: the directory's own lists show it too.
+  const listsChanged = () => {
+    refresh();
+    qc.invalidateQueries({ queryKey: ['entries'] });
+  };
   return {
+    /** Creates a group directly in an organizational unit the user owns, from the directory's form. */
+    create: useMutation({
+      mutationFn: (v: { definitionId: string; container: string; values: Values }) =>
+        api.post<CreatedGroup>(`/api/groups/${encodeURIComponent(v.definitionId)}/group`, { container: v.container, values: v.values }),
+      onSuccess: listsChanged,
+    }),
+    /** Deletes a group, for an owner of the organizational unit it is directly in. */
+    remove: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string }) => api.del(groupUrl(v.definitionId, 'group', v.dn)),
+      onSuccess: listsChanged,
+    }),
     request: useMutation({
       mutationFn: (v: { definitionId: string; dn: string; reason?: string; until?: string }) =>
         api.post<AccessRequest>(groupUrl(v.definitionId, 'requests', v.dn), { reason: v.reason || undefined, until: v.until || undefined }),

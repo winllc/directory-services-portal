@@ -6,6 +6,7 @@ import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.ReadOnlyAllowed;
 import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.SessionUser;
+import com.winllc.dsp.service.DirectoryOptions;
 import com.winllc.dsp.service.Memberships;
 import com.winllc.dsp.transfer.EntryTransfer;
 import com.winllc.dsp.web.ApiException;
@@ -16,9 +17,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,7 +33,9 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Self-service group access for every signed-in user: look groups up, see one's own, ask to join
  * or leave; and, for a group's owners, its members and the requests to decide (see
- * {@link GroupService}). Groups are named by their definition and DN ({@code ?dn=}).
+ * {@link GroupService}). Groups are named by their definition and DN ({@code ?dn=}). The owners of
+ * an organizational unit also create and delete the groups directly in it: like creating and
+ * deleting entries in the directory editor, that needs its license and a license that isn't read-only.
  */
 @RestController
 @RequestMapping("/api/groups")
@@ -69,6 +74,9 @@ public class GroupsController {
 
   public record OwnersInput(@NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> add,
       @NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> remove) {}
+
+  /** A new group: the organizational unit to create it in (one the user owns) and the form's values, by attribute. */
+  public record NewGroupInput(@NotBlank @Size(max = 1024) String container, @NotNull Map<String, Object> values) {}
 
   private static String dn(String dn) {
     if (dn == null || dn.isBlank() || dn.length() > 1024) throw ApiException.badRequest("Name the group with ?dn=");
@@ -185,6 +193,50 @@ public class GroupsController {
   public GroupService.RequestHistory groupHistory(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId,
       @RequestParam String dn, @RequestParam(required = false) Integer page) {
     return groups.groupHistory(user, definitionId, dn(dn), page == null ? 1 : page);
+  }
+
+  // Owners of organizational units -------------------------------------------
+
+  /** The organizational units the user owns (none without the setting): where they may create groups. */
+  @GetMapping("/containers")
+  @RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
+  public List<GroupService.Container> containers(@AuthenticationPrincipal SessionUser user) {
+    return groups.containers(user);
+  }
+
+  /** The form of a new group, for those who own an organizational unit of the definition. */
+  @GetMapping("/{definitionId}/group/form")
+  @RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
+  public GroupService.NewGroupForm newGroupForm(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId) {
+    return groups.newGroupForm(user, definitionId);
+  }
+
+  /** A drop down's options in that form: all, those matching {@code q}, or those of the given values ({@code value}, repeatable). */
+  @GetMapping("/{definitionId}/group/options/{fieldId}")
+  @RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
+  public DirectoryOptions.Page newGroupOptions(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId,
+      @PathVariable String fieldId, @RequestParam(required = false) String q, HttpServletRequest request) {
+    // Raw parameter values: binding to a List would split DNs on their commas.
+    String[] raw = request.getParameterValues("value");
+    List<String> values = raw == null ? null : List.of(raw);
+    if (values != null && (values.size() > 200 || values.stream().anyMatch(v -> v.length() > 1024))) throw ApiException.badRequest("Too many values");
+    return groups.newGroupOptions(user, definitionId, fieldId, query(q), values);
+  }
+
+  /** Creates a group directly in an organizational unit the user owns. */
+  @PostMapping("/{definitionId}/group")
+  @RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
+  public ResponseEntity<GroupService.CreatedGroup> createGroup(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId,
+      @Valid @RequestBody NewGroupInput in) {
+    return ResponseEntity.status(HttpStatus.CREATED).body(groups.createGroup(user, definitionId, in.container(), in.values()));
+  }
+
+  /** Deletes a group, for an owner of the organizational unit it is directly in. */
+  @DeleteMapping("/{definitionId}/group")
+  @RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
+  public ResponseEntity<Void> deleteGroup(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn) {
+    groups.deleteGroup(user, definitionId, dn(dn));
+    return ResponseEntity.noContent().build();
   }
 
   // Requests -----------------------------------------------------------------

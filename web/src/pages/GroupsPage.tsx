@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Check, LogOut, Search, UserPlus, Users, X } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Check, LogOut, Plus, Search, UserPlus, Users, X } from 'lucide-react';
 import type { AccessRequest, GroupDirectory, GroupSummary } from '@dsp/shared';
 import {
   useAccessRequests,
+  useGroupContainers,
   useGroupDirectories,
   useGroupMutations,
   useGroupRequestSummary,
@@ -11,6 +12,7 @@ import {
   useMyGroups,
 } from '../api/hooks';
 import { Alert, Button, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, useDebounced, useToast } from '../components/ui';
+import { useFeature } from '../lib/license';
 import { BulkDecisionDialog, day, DecisionDialog, expiredText, GroupBadges, GroupLink, JoinButton, RequestAccessDialog, RequestStatus, MAX_DECISIONS, when } from '../components/groups/GroupParts';
 
 type Tab = 'find' | 'mine' | 'requests' | 'review';
@@ -21,6 +23,10 @@ export function GroupsPage() {
   const [params, setParams] = useSearchParams();
   const dirs = useGroupDirectories();
   const summary = useGroupRequestSummary(true);
+  // Owners of an organizational unit create groups in it: like creating entries, the directory editor's.
+  const editor = useFeature('directory-editor');
+  const containers = useGroupContainers(editor.enabled);
+  const navigate = useNavigate();
   const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'find') as Tab;
   const setTab = (t: Tab) => setParams(t === 'find' ? {} : { tab: t }, { replace: true });
 
@@ -41,6 +47,14 @@ export function GroupsPage() {
         icon={<Users size={22} />}
         title="Group access"
         subtitle="Find groups and ask to join them. Group owners approve requests."
+        actions={
+          editor.enabled &&
+          !!containers.data?.length && (
+            <Button variant="primary" icon={<Plus size={16} />} onClick={() => navigate('/groups/new')}>
+              New group
+            </Button>
+          )
+        }
       />
       <Tabs<Tab>
         value={tab}

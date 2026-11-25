@@ -145,6 +145,30 @@ test('group access dialogs: a member\'s end date, a pasted list, a request', asy
   await check(page, 'dialog-request-access');
 });
 
+test('group access as the owner of an organizational unit: a new group, deleting a group', async ({ page }) => {
+  // Carol owns ou=groups in the demo: she creates groups there and deletes its groups.
+  await signIn(page, 'carol');
+  await page.goto('/groups');
+  await page.getByRole('button', { name: 'New group' }).click();
+  await expect(page.locator('main h1')).toHaveText('New group');
+  // The form, with her filled in as owner and first member.
+  await expect(page.getByLabel('Group name')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Remove Carol Chen/ }).first()).toBeVisible();
+  await check(page, 'group-access-new');
+  // With its errors shown.
+  await page.getByRole('button', { name: 'Create group' }).click();
+  await expect(page.getByText('Please correct the highlighted fields.')).toBeVisible();
+  await check(page, 'group-access-new-errors');
+
+  await page.goto(`/groups/def-groups/group?dn=${encodeURIComponent(SALES)}`);
+  await page.getByRole('button', { name: 'Delete group' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await check(page, 'dialog-delete-group');
+  // Nothing is deleted: the other tests use the group.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
 test('group access: several requests ticked to decide together', async ({ page }) => {
   // Two people ask to join sales (again in the second colour scheme's run: then they have asked already).
   for (const who of ['alice', 'dave']) {

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import type { AccessRequest, GroupDetail, GroupMember, GroupPerson, GroupSummary } from '@dsp/shared';
+import type { AccessRequest, FormDefinition, FormField, GroupContainer, GroupDetail, GroupMember, GroupPerson, GroupSummary } from '@dsp/shared';
 import { App } from '../../App';
 import { AuthProvider } from '../../lib/auth';
 import { ToastProvider } from '../ui';
@@ -55,8 +55,42 @@ const summary = (dn: string, name: string, patch: Partial<GroupSummary>): GroupS
   ...patch,
 });
 
+const GROUPS_OU = `ou=groups,${B}`;
+const TEAMS_OU = `ou=teams,ou=groups,${B}`;
+const unit = (dn: string, name: string): GroupContainer => ({ definitionId: 'def-groups', definitionName: 'Groups', dn, name });
+const people = { type: 'ldap' as const, baseDn: `ou=people,${B}`, scope: 'one' as const, filter: '(objectClass=inetOrgPerson)', valueAttribute: 'dn', labelAttribute: 'cn' };
+const formField = (id: string, attribute: string, label: string, extra: Partial<FormField> = {}): FormField => ({
+  id,
+  attribute,
+  label,
+  widget: 'text',
+  multiValued: false,
+  required: false,
+  readOnly: false,
+  selfEditable: false,
+  ...extra,
+});
+/** The directory's form for a group: members searched as you type, owners picked from a list. */
+const groupForm: FormDefinition = {
+  id: 'form-group',
+  name: 'Group',
+  objectClasses: ['top', 'groupOfNames'],
+  rdnAttribute: 'cn',
+  createdAt: '',
+  updatedAt: '',
+  fields: [
+    formField('f-cn', 'cn', 'Group name', { required: true }),
+    formField('f-member', 'member', 'Members', { widget: 'dropdown', multiValued: true, required: true, dropdown: { ...people, mode: 'search', minChars: 2 } }),
+    formField('f-owner', 'owner', 'Owners', { widget: 'dropdown', multiValued: true, dropdown: people }),
+  ],
+};
+
 function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-editor', 'self-service-profile']) {
   const state = {
+    /** The organizational units the user owns. */
+    containers: [] as GroupContainer[],
+    /** What creating a group answers instead of creating it. */
+    createFails: null as { status: number; body: unknown } | null,
     owners: [ADA, CAROL],
     mine: [] as AccessRequest[],
     review: [] as AccessRequest[],
@@ -65,6 +99,8 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
     groups: [summary(SOCIAL, 'social-club', { open: true }), summary(`cn=sales,ou=groups,${B}`, 'sales', {})],
   };
   const sent: { method: string; path: string; body: unknown }[] = [];
+  /** The paths read (GET), to see which endpoints a page asks. */
+  const read: string[] = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
   const detail = (): GroupDetail => ({
     group: {
@@ -87,6 +123,7 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
     allowLeave: true,
     pendingRequests: 0,
     canManageOwners: true,
+    canDelete: false,
     ...overrides,
   });
   vi.stubGlobal(
@@ -96,6 +133,7 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
       const path = url.split('?')[0];
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       if (method !== 'GET') sent.push({ method, path, body });
+      else read.push(path);
       if (path === '/api/auth/me') return json({ user: carol, consentRequired: false });
       if (path === '/api/info') return json({ mode: 'memory', connected: true, version: '1' });
       if (path === '/api/license') {
@@ -160,6 +198,17 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
         const items = state.history.slice((page - 1) * 20, page * 20).map((r) => ({ request: r, definitionName: 'Groups', canDecide: false }));
         return json({ items, total: state.history.length, page, pageSize: 20 });
       }
+      if (path === '/api/groups/containers') return json(state.containers);
+      if (path === '/api/groups/def-groups/group/form') return json({ form: groupForm, prefill: { owner: [CAROL.value], member: [CAROL.value] } });
+      if (path.startsWith('/api/groups/def-groups/group/options/')) {
+        return json({ options: [CAROL, ADA, GEORGE].map((p) => ({ value: p.value, label: p.name })), truncated: false });
+      }
+      if (path === '/api/groups/def-groups/group' && method === 'POST') {
+        if (state.createFails) return json(state.createFails.body, state.createFails.status);
+        const made = body as { container: string; values: Record<string, string[]> };
+        return json({ definitionId: 'def-groups', dn: `cn=${made.values.cn[0]},${made.container}`, name: made.values.cn[0] }, 201);
+      }
+      if (path === '/api/groups/def-groups/group' && method === 'DELETE') return new Response(null, { status: 204 });
       if (path === '/api/groups/def-groups/group') return json(detail());
       if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: state.members, total: state.members.length, page: 1, pageSize: 25, partial: false });
       if (path === '/api/groups/def-groups/people') return json([GEORGE]);
@@ -171,7 +220,7 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
       return json([]);
     }),
   );
-  return { sent, state };
+  return { sent, read, state };
 }
 
 function renderAt(path: string) {
@@ -588,5 +637,131 @@ describe('group page: past requests', () => {
     renderAt(GROUP_PAGE);
     await screen.findByRole('heading', { name: 'Past requests (0)' });
     expect(within(card(/^Past requests/)).getByText('No past requests.')).toBeInTheDocument();
+  });
+});
+
+describe('organizational unit owners: creating a group', () => {
+  it('offers New group to someone who owns a unit, and creates it there with the directory\'s form', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.containers = [unit(GROUPS_OU, 'groups')];
+    renderAt('/groups');
+
+    await u.click(await screen.findByRole('button', { name: 'New group' }));
+    expect(await screen.findByRole('heading', { name: 'New group' })).toBeInTheDocument();
+    // One unit: nothing to choose, the page says where the group goes.
+    expect(await screen.findByText(`cn=…,${GROUPS_OU}`)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Create in')).not.toBeInTheDocument();
+    // The creator is filled in as owner and first member, named by group access's own options.
+    expect(await screen.findAllByRole('button', { name: 'Remove Carol Chen' })).toHaveLength(2);
+
+    // The form's own rules: a group needs its name.
+    await u.click(screen.getByRole('button', { name: 'Create group' }));
+    expect(await screen.findByText('Please correct the highlighted fields.')).toBeInTheDocument();
+    expect(api.sent).toEqual([]);
+
+    await u.type(screen.getByLabelText(/Group name/), 'project-x');
+    await u.click(screen.getByRole('button', { name: 'Create group' }));
+    expect(await screen.findByText('project-x was created.')).toBeInTheDocument();
+    expect(api.sent).toEqual([
+      { method: 'POST', path: '/api/groups/def-groups/group', body: { container: GROUPS_OU, values: { cn: ['project-x'], member: [CAROL.value], owner: [CAROL.value] } } },
+    ]);
+    // On to the new group's page.
+    expect(await screen.findByRole('heading', { name: 'Your membership' })).toBeInTheDocument();
+    // An owner of a unit needs no access to the directory itself: its form and options aren't asked of the directory's endpoints.
+    expect(api.read).toContain('/api/groups/def-groups/group/form');
+    expect(api.read).toContain('/api/groups/def-groups/group/options/f-owner');
+    expect(api.read.filter((p) => p.startsWith('/api/directories/') || p.startsWith('/api/definitions/'))).toEqual([]);
+  });
+
+  it('asks which unit when the user owns several, and sends the owners and members they name', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.containers = [unit(GROUPS_OU, 'groups'), unit(TEAMS_OU, 'teams')];
+    renderAt('/groups/new');
+
+    const where = await screen.findByLabelText('Create in');
+    expect(within(where).getAllByRole('option').map((o) => o.textContent)).toEqual([GROUPS_OU, TEAMS_OU]);
+    await u.selectOptions(where, TEAMS_OU);
+    expect(await screen.findByText(`cn=…,${TEAMS_OU}`)).toBeInTheDocument();
+    await u.type(screen.getByLabelText(/Group name/), 'team-b');
+    // Not an owner herself this time.
+    const owners = screen.getByLabelText('Owners').closest('.form-row') as HTMLElement;
+    await u.click(await within(owners).findByRole('button', { name: 'Remove Carol Chen' }));
+    await u.click(screen.getByRole('button', { name: 'Create group' }));
+
+    expect(await screen.findByText('team-b was created.')).toBeInTheDocument();
+    expect(api.sent[0].body).toEqual({ container: TEAMS_OU, values: { cn: ['team-b'], member: [CAROL.value], owner: [] } });
+  });
+
+  it('shows why the server refused, and keeps what was typed', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.containers = [unit(GROUPS_OU, 'groups')];
+    api.state.createFails = { status: 409, body: { error: 'An entry with that name already exists' } };
+    renderAt('/groups/new');
+
+    await u.type(await screen.findByLabelText(/Group name/), 'sales');
+    await u.click(screen.getByRole('button', { name: 'Create group' }));
+    expect(await screen.findByText('An entry with that name already exists')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Group name/)).toHaveValue('sales');
+    expect(screen.getByRole('heading', { name: 'New group' })).toBeInTheDocument();
+  });
+
+  it('offers nothing to those who own no unit', async () => {
+    const api = server();
+    renderAt('/groups');
+
+    expect(await screen.findByRole('link', { name: 'sales' })).toBeInTheDocument();
+    await vi.waitFor(() => expect(api.read).toContain('/api/groups/containers'));
+    expect(screen.queryByRole('button', { name: 'New group' })).not.toBeInTheDocument();
+  });
+
+  it('is not offered without the directory editor\'s license, as creating entries is not', async () => {
+    const api = server({}, ['self-service-profile']);
+    api.state.containers = [unit(GROUPS_OU, 'groups')];
+    renderAt('/groups');
+
+    expect(await screen.findByRole('link', { name: 'sales' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New group' })).not.toBeInTheDocument();
+    expect(api.read).not.toContain('/api/groups/containers');
+  });
+});
+
+describe('organizational unit owners: deleting a group', () => {
+  it('names the group before deleting it, deletes it and returns to the groups', async () => {
+    const u = userEvent.setup();
+    const api = server({ canDelete: true });
+    renderAt(GROUP_PAGE);
+
+    await u.click(await screen.findByRole('button', { name: 'Delete group' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Delete engineering?' });
+    expect(confirm).toHaveTextContent(`This permanently removes the group engineering (${ENGINEERING}) from the directory.`);
+    expect(api.sent).toEqual([]);
+    // Changing one's mind sends nothing.
+    await u.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.sent).toEqual([]);
+
+    await u.click(screen.getByRole('button', { name: 'Delete group' }));
+    await u.click(within(await screen.findByRole('dialog', { name: 'Delete engineering?' })).getByRole('button', { name: 'Delete group' }));
+    expect(await screen.findByText('engineering was deleted.')).toBeInTheDocument();
+    expect(api.sent).toEqual([{ method: 'DELETE', path: '/api/groups/def-groups/group', body: undefined }]);
+    expect(await screen.findByRole('heading', { name: 'Group access' })).toBeInTheDocument();
+  });
+
+  it('is offered only to an owner of the group\'s unit, with the directory editor\'s license', async () => {
+    // The group's own owner, who manages its members, doesn't delete it.
+    server({ canDelete: false });
+    renderAt(GROUP_PAGE);
+    expect(await screen.findByRole('button', { name: 'Add from a list' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete group' })).not.toBeInTheDocument();
+  });
+
+  it('is not offered without the directory editor\'s license', async () => {
+    server({ canDelete: true }, ['self-service-profile']);
+    renderAt(GROUP_PAGE);
+    expect(await screen.findByRole('button', { name: 'Add from a list' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete group' })).not.toBeInTheDocument();
   });
 });

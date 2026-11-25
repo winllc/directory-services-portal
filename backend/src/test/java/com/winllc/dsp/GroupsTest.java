@@ -36,6 +36,7 @@ class GroupsTest extends ApiTestSupport {
   static final String HR = "cn=hr,ou=groups," + B;
   static final String ADMINS = "cn=directory-admins,ou=groups," + B;
   static final String SOCIAL = "cn=social-club,ou=groups," + B;
+  static final String GROUPS_OU = "ou=groups," + B;
 
   @Autowired AccessRequests requests;
   @Autowired GroupAccessJobs jobs;
@@ -902,6 +903,327 @@ class GroupsTest extends ApiTestSupport {
     assertThat(status(carol.get("/api/groups/def-groups/group/history" + q("cn=nope,ou=groups," + B)))).isEqualTo(404);
   }
 
+  /** Names the unit's owners in {@code seeAlso} (the one DN attribute the standard organizationalUnit class allows). */
+  void ownUnit(String unit, String... owners) {
+    directory.modify(unit, List.of(new Modification(ModificationType.REPLACE, "seeAlso", owners)));
+  }
+
+  JsonNode entry(String dn) throws Exception {
+    return body(login("admin").get("/api/directories/def-groups/entry" + q(dn))).get("attributes");
+  }
+
+  List<String> containers(Client c) throws Exception {
+    List<String> out = new ArrayList<>();
+    body(c.get("/api/groups/containers")).forEach(x -> out.add(x.get("dn").asString()));
+    return out;
+  }
+
+  @Test
+  void anOwnerOfAnOrganizationalUnitCreatesGroupsInIt() throws Exception {
+    String carolDn = "uid=carol,ou=people," + B;
+    String george = "uid=george,ou=people," + B;
+    String adminDn = "uid=admin,ou=people," + B;
+    Client carol = login("carol");
+    Client bob = login("bob");
+    ownUnit(GROUPS_OU, carolDn);
+    Map<String, Object> group = Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-x", "description", "Project X"));
+
+    // Without the setting (as stored before there was one) nobody owns a unit, whatever the directory holds.
+    setGroups(groups(Map.of()));
+    assertThat(containers(carol)).isEmpty();
+    assertThat(status(carol.get("/api/groups/def-groups/group/form"))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/group", group))).isEqualTo(403);
+    assertThat(body(carol.get("/api/groups/def-groups/group" + q(SALES))).get("canDelete").asBoolean()).isFalse();
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q(SALES)))).isEqualTo(403);
+
+    setGroups(groups(Map.of("containerOwnerAttribute", "seeAlso")));
+    JsonNode mine = body(carol.get("/api/groups/containers"));
+    assertThat(mine).hasSize(1);
+    assertThat(mine.get(0).get("definitionId").asString()).isEqualTo("def-groups");
+    assertThat(mine.get(0).get("definitionName").asString()).isEqualTo("Groups");
+    assertThat(mine.get(0).get("dn").asString()).isEqualTo(GROUPS_OU);
+    assertThat(mine.get(0).get("name").asString()).isEqualTo("groups");
+    // Others learn nothing: no units, no form, no options.
+    assertThat(containers(bob)).isEmpty();
+    assertThat(status(bob.get("/api/groups/def-groups/group/form"))).isEqualTo(403);
+    assertThat(status(bob.get("/api/groups/def-groups/group/options/f-member?q=george"))).isEqualTo(403);
+
+    // The definition's own form, with the creator as owner and (groupOfNames requires a member) first member.
+    JsonNode form = body(carol.get("/api/groups/def-groups/group/form"));
+    assertThat(form.get("form").get("id").asString()).isEqualTo("form-group");
+    assertThat(form.get("prefill").get("owner").get(0).asString()).isEqualTo(carolDn);
+    assertThat(form.get("prefill").get("member").get(0).asString()).isEqualTo(carolDn);
+    JsonNode options = body(carol.get("/api/groups/def-groups/group/options/f-member?q=george"));
+    assertThat(options.get("options").get(0).get("value").asString()).isEqualTo(george);
+    assertThat(status(carol.get("/api/groups/def-groups/group/options/nope"))).isEqualTo(404);
+
+    MvcResult[] created = new MvcResult[1];
+    List<EntryChanged> changes = changesDuring(() -> created[0] = carol.post("/api/groups/def-groups/group", group));
+    assertThat(status(created[0])).as(created[0].getResponse().getContentAsString()).isEqualTo(201);
+    String dn = "cn=project-x,ou=groups," + B;
+    assertThat(body(created[0]).get("dn").asString()).isEqualTo(dn);
+    assertThat(body(created[0]).get("name").asString()).isEqualTo("project-x");
+    assertThat(body(created[0]).get("definitionId").asString()).isEqualTo("def-groups");
+    assertThat(entry(dn).get("owner").get(0).asString()).isEqualTo(carolDn);
+    assertThat(entry(dn).get("member").get(0).asString()).isEqualTo(carolDn);
+    assertThat(entry(dn).get("description").get(0).asString()).isEqualTo("Project X");
+    JsonNode detail = body(carol.get("/api/groups/def-groups/group" + q(dn)));
+    assertThat(detail.get("group").get("owner").asBoolean()).isTrue();
+    assertThat(detail.get("group").get("member").asBoolean()).isTrue();
+    assertThat(detail.get("canDelete").asBoolean()).isTrue();
+    assertThat(body(bob.get("/api/groups/def-groups/group" + q(dn))).get("canDelete").asBoolean()).isFalse();
+
+    // The usual entry.create, saying why someone without write access could make it, and the editors' webhook.
+    JsonNode event = events("entry.create", "via", "group-container-owner").get(0);
+    assertThat(event.get("actor").get("id").asString()).isEqualTo("carol");
+    assertThat(event.get("target").get("id").asString()).isEqualTo(dn);
+    assertThat(event.get("outcome").asString()).isEqualTo("success");
+    assertThat(event.get("details").get("owner.new").asString()).isEqualTo(carolDn);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).operation()).isEqualTo(EntryChanged.CREATE);
+    assertThat(changes.get(0).dn()).isEqualTo(dn);
+
+    // Owners and members the creator names are kept as given.
+    MvcResult named = carol.post("/api/groups/def-groups/group",
+        Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-y", "owner", List.of(adminDn), "member", List.of(george))));
+    assertThat(status(named)).as(named.getResponse().getContentAsString()).isEqualTo(201);
+    JsonNode y = entry("cn=project-y,ou=groups," + B);
+    assertThat(y.get("owner")).hasSize(1);
+    assertThat(y.get("owner").get(0).asString()).isEqualTo(adminDn);
+    assertThat(y.get("member")).hasSize(1);
+    assertThat(y.get("member").get(0).asString()).isEqualTo(george);
+
+    // The form's rules hold: a name is required, members are people of the directory, and names are taken once.
+    MvcResult unnamed = carol.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("description", "x")));
+    assertThat(status(unnamed)).isEqualTo(400);
+    assertThat(body(unnamed).get("details").has("cn")).isTrue();
+    MvcResult stranger = carol.post("/api/groups/def-groups/group",
+        Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-z", "member", List.of("uid=nobody,ou=people," + B))));
+    assertThat(status(stranger)).isEqualTo(400);
+    assertThat(body(stranger).get("details").has("member")).isTrue();
+    assertThat(status(carol.post("/api/groups/def-groups/group", group))).isEqualTo(409);
+    assertThat(status(carol.post("/api/groups/def-groups/group", Map.of("values", Map.of("cn", "project-z"))))).isEqualTo(400);
+
+    // Any other parent is refused alike: not hers, outside the directory, not a unit, not there, not a DN.
+    for (String parent : List.of("ou=people," + B, B, ENGINEERING, "ou=nope,ou=groups," + B, "ou=groups", "not a dn")) {
+      MvcResult refused = carol.post("/api/groups/def-groups/group", Map.of("container", parent, "values", Map.of("cn", "project-z")));
+      assertThat(status(refused)).as(parent).isEqualTo(403);
+      assertThat(body(refused).get("error").asString()).isEqualTo("Only an owner of an organizational unit can create groups in it");
+    }
+    // Refusals are audited like the module's other ones.
+    assertThat(events("access.denied", "path", "/api/groups/def-groups/group")).isNotEmpty();
+    assertThat(status(bob.post("/api/groups/def-groups/group", group))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-staff/group", group))).isEqualTo(404);
+    assertThat(status(login("admin").get("/api/directories/def-groups/entry" + q("cn=project-z,ou=groups," + B)))).isEqualTo(404);
+
+    // Editors who own no unit keep creating in the directory editor, as before (no via).
+    Client admin = login("admin");
+    assertThat(containers(admin)).isEmpty();
+    assertThat(status(admin.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-z"))))).isEqualTo(403);
+    MvcResult edited = admin.post("/api/directories/def-groups/entries", Map.of("values", Map.of("cn", "project-z", "member", List.of(adminDn))));
+    assertThat(status(edited)).as(edited.getResponse().getContentAsString()).isEqualTo(201);
+    assertThat(body(admin.get("/api/admin/audit?action=entry.create")).get("events").get(0).get("details").has("via")).isFalse();
+    // ... and carol, who owns the unit, still has no write access to the directory itself.
+    assertThat(status(carol.post("/api/directories/def-groups/entries", Map.of("values", Map.of("cn", "project-w", "member", List.of(carolDn)))))).isEqualTo(403);
+    assertThat(status(carol.del("/api/directories/def-groups/entry" + q(dn)))).isEqualTo(403);
+
+    // Creating and deleting need the directory editor's license, and one that isn't read-only.
+    TestLicensing.use(TestLicenses.license().features("self-service-profile").sign());
+    MvcResult unlicensed = carol.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-v")));
+    assertThat(status(unlicensed)).isEqualTo(403);
+    assertThat(body(unlicensed).get("code").asString()).isEqualTo("feature_not_licensed");
+    assertThat(body(carol.del("/api/groups/def-groups/group" + q(dn))).get("code").asString()).isEqualTo("feature_not_licensed");
+    assertThat(status(carol.get("/api/groups/containers"))).isEqualTo(403);
+    TestLicensing.use(TestLicenses.license().expired().sign());
+    assertThat(containers(carol)).containsExactly(GROUPS_OU);
+    MvcResult readOnly = carol.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-v")));
+    assertThat(body(readOnly).get("code").asString()).isEqualTo("license_read_only");
+    assertThat(body(carol.del("/api/groups/def-groups/group" + q(dn))).get("code").asString()).isEqualTo("license_read_only");
+    TestLicensing.use(TestLicenses.full());
+    assertThat(status(admin.get("/api/directories/def-groups/entry" + q(dn)))).isEqualTo(200);
+  }
+
+  @Test
+  void theCreatorOwnsTheNewGroupAlsoWhereTheFormHasNoOwnerField() throws Exception {
+    String carolDn = "uid=carol,ou=people," + B;
+    ownUnit(GROUPS_OU, carolDn);
+    Client carol = login("carol");
+    // The form holds no owners: the owner attribute is set all the same, as groupOfNames allows it.
+    store.update(d -> {
+      for (int i = 0; i < d.forms.size(); i++) {
+        com.winllc.dsp.model.FormDefinition f = d.forms.get(i);
+        if (!f.id().equals("form-group")) continue;
+        d.forms.set(i, new com.winllc.dsp.model.FormDefinition(f.id(), f.name(), f.description(), f.objectClasses(), f.rdnAttribute(),
+            f.fields().stream().filter(x -> !x.attribute().equalsIgnoreCase("owner")).toList(), f.createdAt(), f.updatedAt()));
+      }
+      return null;
+    });
+    setGroups(groups(Map.of("containerOwnerAttribute", "seeAlso")));
+    MvcResult made = carol.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-x")));
+    assertThat(status(made)).as(made.getResponse().getContentAsString()).isEqualTo(201);
+    String dn = "cn=project-x,ou=groups," + B;
+    assertThat(directory.get(dn, List.of("owner")).values("owner")).containsExactly(carolDn);
+    assertThat(body(carol.get("/api/groups/def-groups/group" + q(dn))).get("group").get("owner").asBoolean()).isTrue();
+    assertThat(events("entry.create", "via", "group-container-owner").get(0).get("details").get("owner.new").asString()).isEqualTo(carolDn);
+
+    // An owner attribute the group's object classes don't take is left out: the group is created without an owner.
+    setGroups(groups(Map.of("containerOwnerAttribute", "seeAlso", "ownerAttribute", "manager")));
+    MvcResult plain = carol.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "project-y")));
+    assertThat(status(plain)).as(plain.getResponse().getContentAsString()).isEqualTo(201);
+    JsonNode detail = body(carol.get("/api/groups/def-groups/group" + q("cn=project-y,ou=groups," + B)));
+    assertThat(detail.get("group").get("owner").asBoolean()).isFalse();
+    assertThat(detail.get("group").get("member").asBoolean()).isTrue();
+    assertThat(detail.get("canDelete").asBoolean()).isTrue();
+  }
+
+  @Test
+  void anOwnerOfAUnitDeletesOnlyTheGroupsDirectlyInIt() throws Exception {
+    String carolDn = "uid=carol,ou=people," + B;
+    String daveDn = "uid=dave,ou=people," + B;
+    String teams = "ou=teams,ou=groups," + B;
+    String other = "ou=other,ou=groups," + B;
+    String teamA = "cn=team-a," + teams;
+    String otherA = "cn=other-a," + other;
+    for (String unit : List.of(teams, other)) {
+      directory.add(unit, Map.of("objectClass", List.of("top", "organizationalUnit"), "ou", List.of(unit.substring(3, unit.indexOf(',')))));
+    }
+    for (String g : List.of(teamA, otherA)) {
+      directory.add(g, Map.of("objectClass", List.of("top", "groupOfNames"), "cn", List.of(g.substring(3, g.indexOf(','))),
+          "member", List.of(ALICE), "owner", List.of("uid=admin,ou=people," + B)));
+    }
+    // The whole subtree: the units below the base DN are containers too.
+    Map<String, Object> def = definitionInput();
+    def.put("scope", "sub");
+    def.put("groups", groups(Map.of("containerOwnerAttribute", "seeAlso")));
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(200);
+    ownUnit(GROUPS_OU, carolDn);
+    ownUnit(teams, daveDn);
+    // An owner attribute on anything but a container gives nothing.
+    directory.modify(SALES, List.of(new Modification(ModificationType.ADD, "seeAlso", "uid=bob,ou=people," + B)));
+
+    Client carol = login("carol");
+    Client dave = login("dave");
+    Client bob = login("bob");
+    assertThat(containers(carol)).containsExactly(GROUPS_OU);
+    assertThat(containers(dave)).containsExactly(teams);
+    assertThat(containers(bob)).isEmpty();
+    assertThat(status(bob.post("/api/groups/def-groups/group", Map.of("container", SALES, "values", Map.of("cn", "nested"))))).isEqualTo(403);
+
+    // Carol owns ou=groups: its groups are hers to delete, those of the units below are not.
+    assertThat(body(carol.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("canDelete").asBoolean()).isTrue();
+    assertThat(body(carol.get("/api/groups/def-groups/group" + q(teamA))).get("canDelete").asBoolean()).isFalse();
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q(teamA)))).isEqualTo(403);
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q(otherA)))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/group", Map.of("container", teams, "values", Map.of("cn", "team-b"))))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/group", Map.of("container", other, "values", Map.of("cn", "other-b"))))).isEqualTo(403);
+    // Dave owns ou=teams only.
+    assertThat(body(dave.get("/api/groups/def-groups/group" + q(teamA))).get("canDelete").asBoolean()).isTrue();
+    assertThat(body(dave.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("canDelete").asBoolean()).isFalse();
+    assertThat(status(dave.del("/api/groups/def-groups/group" + q(ENGINEERING)))).isEqualTo(403);
+    assertThat(status(dave.del("/api/groups/def-groups/group" + q(otherA)))).isEqualTo(403);
+    assertThat(status(dave.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "top-b"))))).isEqualTo(403);
+    MvcResult made = dave.post("/api/groups/def-groups/group", Map.of("container", teams, "values", Map.of("cn", "team-b")));
+    assertThat(status(made)).as(made.getResponse().getContentAsString()).isEqualTo(201);
+    assertThat(body(made).get("dn").asString()).isEqualTo("cn=team-b," + teams);
+    // Missing groups and those who own nothing get the answers they got before.
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q("cn=nope,ou=groups," + B)))).isEqualTo(404);
+    assertThat(status(bob.del("/api/groups/def-groups/group" + q(ENGINEERING)))).isEqualTo(403);
+    assertThat(status(login("alice").del("/api/groups/def-groups/group" + q(ENGINEERING)))).isEqualTo(403);
+    assertThat(status(carol.del("/api/groups/def-groups/group"))).isEqualTo(400);
+    for (String kept : List.of(ENGINEERING, teamA, otherA)) assertThat(status(login("admin").get("/api/directories/def-groups/entry" + q(kept)))).as(kept).isEqualTo(200);
+
+    MvcResult[] deleted = new MvcResult[1];
+    List<EntryChanged> changes = changesDuring(() -> deleted[0] = dave.del("/api/groups/def-groups/group" + q(teamA)));
+    assertThat(status(deleted[0])).as(deleted[0].getResponse().getContentAsString()).isEqualTo(204);
+    assertThat(status(login("admin").get("/api/directories/def-groups/entry" + q(teamA)))).isEqualTo(404);
+    assertThat(status(dave.get("/api/groups/def-groups/group" + q(teamA)))).isEqualTo(404);
+    // The usual entry.delete (what the group held, so it can be put back), with the reason and the webhook.
+    JsonNode event = events("entry.delete", "via", "group-container-owner").get(0);
+    assertThat(event.get("actor").get("id").asString()).isEqualTo("dave");
+    assertThat(event.get("target").get("id").asString()).isEqualTo(teamA);
+    assertThat(event.get("details").get("member.old").asString()).isEqualTo(ALICE);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).operation()).isEqualTo(EntryChanged.DELETE);
+    assertThat(changes.get(0).dn()).isEqualTo(teamA);
+
+    // The directory is asked at the time of the request: an owner who was removed deletes nothing more.
+    ownUnit(teams, carolDn);
+    assertThat(status(dave.del("/api/groups/def-groups/group" + q("cn=team-b," + teams)))).isEqualTo(403);
+    assertThat(containers(dave)).isEmpty();
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q("cn=team-b," + teams)))).isEqualTo(204);
+
+    // With one level only the base DN's entry is a container, as only its children are groups of the directory.
+    def.put("scope", "one");
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(200);
+    assertThat(containers(carol)).containsExactly(GROUPS_OU);
+    assertThat(status(carol.post("/api/groups/def-groups/group", Map.of("container", teams, "values", Map.of("cn", "team-c"))))).isEqualTo(403);
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q(ENGINEERING)))).isEqualTo(204);
+    assertThat(status(login("admin").del("/api/directories/def-groups/entry" + q(SALES)))).isEqualTo(204);
+    assertThat(body(login("admin").get("/api/admin/audit?action=entry.delete")).get("events").get(0).get("details").has("via")).isFalse();
+  }
+
+  @Test
+  void aUnitIsOwnedThroughAGroupToo() throws Exception {
+    setGroups(groups(Map.of("containerOwnerAttribute", "seeAlso")));
+    // The members of hr all count as owners (erin is one, bob is not), as with a group's owner attribute.
+    ownUnit(GROUPS_OU, HR);
+    Client erin = login("erin");
+    Client bob = login("bob");
+    assertThat(containers(erin)).containsExactly(GROUPS_OU);
+    assertThat(containers(bob)).isEmpty();
+    assertThat(containers(login("carol"))).isEmpty();
+    MvcResult made = erin.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "hr-projects")));
+    assertThat(status(made)).as(made.getResponse().getContentAsString()).isEqualTo(201);
+    String dn = "cn=hr-projects,ou=groups," + B;
+    // The creator herself owns the new group, not the group she owns the unit through.
+    assertThat(entry(dn).get("owner").get(0).asString()).isEqualTo("uid=erin,ou=people," + B);
+    assertThat(status(bob.post("/api/groups/def-groups/group", Map.of("container", GROUPS_OU, "values", Map.of("cn", "bobs"))))).isEqualTo(403);
+    assertThat(status(bob.del("/api/groups/def-groups/group" + q(dn)))).isEqualTo(403);
+    assertThat(body(erin.get("/api/groups/def-groups/group" + q(SALES))).get("canDelete").asBoolean()).isTrue();
+    assertThat(status(erin.del("/api/groups/def-groups/group" + q(dn)))).isEqualTo(204);
+  }
+
+  @Test
+  void deletingAGroupClosesItsOpenRequestsAndDropsItsEndDates() throws Exception {
+    String carolDn = "uid=carol,ou=people," + B;
+    String bobDn = "uid=bob,ou=people," + B;
+    setGroups(groups(Map.of("containerOwnerAttribute", "seeAlso")));
+    ownUnit(GROUPS_OU, carolDn);
+    Client carol = login("carol");
+    Client admin = login("admin");
+    Client dave = login("dave");
+    String open = ask(dave, SALES, "Demo support");
+    String decided = ask(login("erin"), SALES, "Curious");
+    assertThat(status(admin.post("/api/groups/requests/" + decided + "/reject", Map.of("note", "Not for HR")))).isEqualTo(200);
+    String elsewhere = ask(dave, HR, "Benefits");
+    LocalDate last = LocalDate.now(ZoneOffset.UTC).plusDays(9);
+    assertThat(status(admin.post("/api/groups/def-groups/members/until" + q(SALES), Map.of("member", bobDn, "until", last.toString())))).isEqualTo(200);
+    assertThat(status(admin.post("/api/groups/def-groups/members/until" + q(HR), Map.of("member", "uid=erin,ou=people," + B, "until", last.toString()))))
+        .isEqualTo(200);
+    assertThat(expiries.ofGroup("def-groups", SALES)).hasSize(1);
+
+    assertThat(status(carol.del("/api/groups/def-groups/group" + q(SALES)))).isEqualTo(204);
+
+    // The open request is answered, so it doesn't wait for a group that is gone; the requester sees why.
+    AccessRequests.Request closed = requests.find(open);
+    assertThat(closed.status()).isEqualTo(AccessRequests.REJECTED);
+    assertThat(closed.note()).isEqualTo("The group was deleted.");
+    assertThat(closed.decidedBy()).isEqualTo("carol");
+    JsonNode shown = body(dave.get("/api/groups/requests")).valueStream().filter(v -> v.get("request").get("id").asString().equals(open)).findFirst()
+        .orElseThrow().get("request");
+    assertThat(shown.get("decidedByName").asString()).isEqualTo("Carol Chen");
+    assertThat(shown.get("note").asString()).isEqualTo("The group was deleted.");
+    JsonNode event = events("group.access-rejected", "request", open).get(0);
+    assertThat(event.get("actor").get("id").asString()).isEqualTo("carol");
+    assertThat(event.get("details").get("via").asString()).isEqualTo("group-container-owner");
+    assertThat(body(admin.get("/api/groups/requests/summary")).get("toReview").asInt()).isEqualTo(1);
+    // What was decided before, and other groups' requests and end dates, stay as they are.
+    assertThat(requests.find(decided).note()).isEqualTo("Not for HR");
+    assertThat(requests.find(elsewhere).pending()).isTrue();
+    assertThat(expiries.ofGroup("def-groups", SALES)).isEmpty();
+    assertThat(expiries.ofGroup("def-groups", HR)).hasSize(1);
+  }
+
   @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
@@ -915,6 +1237,13 @@ class GroupsTest extends ApiTestSupport {
     assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("details").has("groups.ownersManageOwners")).isTrue();
     def.put("groups", groups(Map.of("requestFilter", "(oops")));
     assertThat(status(admin.put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+    // The attribute naming a unit's owners: an attribute name, and never a password.
+    def.put("groups", groups(Map.of("containerOwnerAttribute", "managed by")));
+    assertThat(status(admin.put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+    def.put("groups", groups(Map.of("containerOwnerAttribute", "userPassword")));
+    assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("details").has("groups.containerOwnerAttribute")).isTrue();
+    def.put("groups", groups(Map.of("containerOwnerAttribute", "managedBy")));
+    assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("groups").get("containerOwnerAttribute").asString()).isEqualTo("managedBy");
     def.put("groups", groups(Map.of()));
     def.put("mode", "readonly");
     assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("details").has("groups.enabled")).isTrue();
@@ -950,6 +1279,8 @@ class GroupsTest extends ApiTestSupport {
     assertThat(settings.requestExpiry()).isZero();
     assertThat(settings.openFilter()).isNull();
     assertThat(settings.maxMembership()).isZero();
+    assertThat(settings.containerOwner()).isNull();
+    assertThat(settings.cleaned().containerOwnerAttribute()).isNull();
   }
 
   /** Enabled group access with the given settings (the booleans are always sent, as by the editor). */

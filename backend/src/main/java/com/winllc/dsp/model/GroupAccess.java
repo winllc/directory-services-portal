@@ -31,6 +31,11 @@ import java.util.Locale;
  *   <li>{@code maxMembershipDays}: the longest membership the portal grants (requests, joins,
  *       members added by owners), in days: every such membership then gets an end date. None or 0:
  *       no limit, and an end date is optional. At most {@value #MAX_MEMBERSHIP_DAYS}.</li>
+ *   <li>{@code containerOwnerAttribute}: the DN-valued attribute of an organizational unit (or
+ *       other container) of the namespace naming its owners (people, or groups whose members all
+ *       count): they create groups directly in it and delete the groups directly in it, without
+ *       write access to the definition. None: nobody does. There is no default: the standard
+ *       organizationalUnit class has no owner attribute (Active Directory has managedBy).</li>
  * </ul>
  *
  * <p>Settings added after the first release are objects, not primitives: definitions stored (and
@@ -47,7 +52,8 @@ public record GroupAccess(
     Boolean ownersManageOwners,
     @Min(0) @Max(GroupAccess.MAX_REQUEST_EXPIRY_DAYS) Integer requestExpiryDays,
     @Size(max = 1000) @LdapFilter String openFilter,
-    @Min(0) @Max(GroupAccess.MAX_MEMBERSHIP_DAYS) Integer maxMembershipDays) {
+    @Min(0) @Max(GroupAccess.MAX_MEMBERSHIP_DAYS) Integer maxMembershipDays,
+    @Size(max = 64) @Pattern(regexp = Patterns.ATTRIBUTE) String containerOwnerAttribute) {
 
   public static final String DEFAULT_OWNER_ATTRIBUTE = "owner";
   /** Closed requests are kept for a year, so an open one waits no longer than that. */
@@ -74,11 +80,16 @@ public record GroupAccess(
     return maxMembershipDays == null ? 0 : Math.max(0, maxMembershipDays);
   }
 
+  /** The attribute naming a container's owners, in lower case; null: containers have no owners here. */
+  public String containerOwner() {
+    return containerOwnerAttribute == null || containerOwnerAttribute.isBlank() ? null : containerOwnerAttribute.trim().toLowerCase(Locale.ROOT);
+  }
+
   /** As stored: blanks and settings that are off dropped. */
   public GroupAccess cleaned() {
     return new GroupAccess(enabled, blank(memberAttribute), blank(ownerAttribute), blank(requestFilter), requireReason, allowLeave,
         ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null, blank(openFilter),
-        maxMembership() > 0 ? maxMembership() : null);
+        maxMembership() > 0 ? maxMembership() : null, blank(containerOwnerAttribute));
   }
 
   private static String blank(String s) {
