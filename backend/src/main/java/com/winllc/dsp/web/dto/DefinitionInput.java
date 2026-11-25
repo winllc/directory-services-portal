@@ -32,4 +32,6 @@ public record DefinitionInput(
     /** The LDAP directory's id; none: the primary directory. */
     @Size(max = 64) String directory,
     /** Self-service group access; none: off. */
-    @Valid GroupAccess groups) {}
+    @Valid GroupAccess groups,
+    /** Entries that end on a date their sponsor can extend; none: off. */
+    @Valid com.winllc.dsp.model.EntryExpiry expiry) {}

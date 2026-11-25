@@ -29,6 +29,8 @@ public final class AuditCatalog {
     ACTIONS.put("api.token-created", "account");
     ACTIONS.put("api.token-revoked", "account");
     // Self-service group access (the membership change itself is an entry.update).
+    // Entry expiry: the daily notice to an entry's sponsor (the extension itself is an entry.update).
+    ACTIONS.put("entry.expiring", "data");
     for (String a : List.of("group.access-requested", "group.access-cancelled", "group.access-approved", "group.access-rejected")) {
       ACTIONS.put(a, "account");
     }

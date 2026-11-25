@@ -62,6 +62,29 @@ public class AdminDefinitionsController {
     // A directory the license doesn't enable can't be given new definitions (403, multi-directory).
     directories.require(in.directory());
     checkGroups(in);
+    checkExpiry(in);
+  }
+
+  /** Entry expiry needs a date field and a DN field (the sponsor) in the form. */
+  private void checkExpiry(DefinitionInput in) {
+    if (in.expiry() == null || in.expiry().cleaned() == null) return;
+    com.winllc.dsp.model.EntryExpiry x = in.expiry().cleaned();
+    com.winllc.dsp.model.FormDefinition form = store.snapshot().forms.stream().filter(f -> f.id().equals(in.formId())).findFirst().orElseThrow();
+    java.util.function.Function<String, com.winllc.dsp.model.FormField> field = a -> form.fields().stream()
+        .filter(f -> f.attribute().equalsIgnoreCase(a)).findFirst().orElse(null);
+    com.winllc.dsp.model.FormField date = field.apply(x.dateAttribute());
+    if (date == null || !"date".equals(date.format())) {
+      throw ApiException.badRequest("The end date must be a date field of the form", Map.of("expiry.dateAttribute", "Pick a field with the format date"));
+    }
+    com.winllc.dsp.model.FormField sponsor = field.apply(x.sponsorAttribute());
+    boolean dnValued = sponsor != null && ("dn".equals(sponsor.format())
+        || (sponsor.dropdown() instanceof com.winllc.dsp.model.DropdownSource.Ldap l && "dn".equalsIgnoreCase(l.valueAttribute())));
+    if (!dnValued) {
+      throw ApiException.badRequest("The sponsor must be a DN field of the form", Map.of("expiry.sponsorAttribute", "Pick a field holding a DN (format dn, or a directory drop down of DNs)"));
+    }
+    if ("readonly".equals(in.mode())) {
+      throw ApiException.badRequest("Sponsors extend entries, so the directory can't be read only", Map.of("expiry.dateAttribute", "Needs a read/write directory"));
+    }
   }
 
   /** Group access needs a writable definition whose form has the member field, and an owner attribute other than it. */
@@ -87,7 +110,7 @@ public class AdminDefinitionsController {
     return new DirectoryDefinition(id, in.name().trim(), in.slug(), blank(in.description()), in.formId(), in.baseDn().trim(), in.scope(),
         blank(in.filter()), in.mode(), in.everyoneCanRead(), in.listAttributes(), in.searchAttributes(), in.titleAttribute(),
         in.createContainers(), in.selfMatch(), blank(in.icon()), createdAt, updatedAt, directories.canonicalId(in.directory()),
-        in.groups() == null ? null : in.groups().cleaned());
+        in.groups() == null ? null : in.groups().cleaned(), in.expiry() == null ? null : in.expiry().cleaned());
   }
 
   private static String blank(String s) {

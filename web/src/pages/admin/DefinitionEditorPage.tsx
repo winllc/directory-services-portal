@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, FolderTree, Pencil, Play } from 'lucide-react';
-import type { DirectoryDefinition, DirectoryEntry, GroupAccess, SelfMatch } from '@dsp/shared';
+import type { DirectoryDefinition, DirectoryEntry, EntryExpiry, GroupAccess, SelfMatch } from '@dsp/shared';
 import { escapeFilterValue, firstAttr, isDnUnder, isValidDn, rdnValue, SchemaIndex, slugify } from '@dsp/shared';
 import {
   previewSearch,
@@ -110,6 +110,14 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
   const setGroups = (patch: Partial<GroupAccess>) => set('groups', { ...groups, ...patch });
   if (groups.enabled && d.mode === 'readonly') problems.push('Group access needs a read/write directory');
   if (groups.enabled && form && !memberFields.length) problems.push('Group access needs a multi-valued member field in the form');
+  // Entry expiry: a date field (the end) and a DN field (the sponsor).
+  const dateFields = form?.fields.filter((f) => f.format === 'date') ?? [];
+  const sponsorFields =
+    form?.fields.filter((f) => f.format === 'dn' || (f.dropdown?.type === 'ldap' && f.dropdown.valueAttribute.toLowerCase() === 'dn')) ?? [];
+  const expiry: EntryExpiry = d.expiry ?? {};
+  const setExpiry = (patch: Partial<EntryExpiry>) => set('expiry', { ...expiry, ...patch });
+  const expiryOn = !!(expiry.dateAttribute || expiry.sponsorAttribute);
+  if (expiryOn && (!expiry.dateAttribute || !expiry.sponsorAttribute)) problems.push('Entry expiry needs both the end date and the sponsor field');
 
   const runPreview = async () => {
     setPreviewing(true);
@@ -515,6 +523,42 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
               />
             </>
           )}
+        </div>
+      </Card>
+
+      <Card
+        title="Entry expiry"
+        subtitle="For entries that end on a date, such as contractors: each day the sponsor of every entry ending soon is mailed and the entry.expiring webhook event is sent. Sponsors can move the end date out without write access to this directory."
+      >
+        <div className="form-grid">
+          <FormRow label="End date field" htmlFor="ex-date" hint="A field of the form with the format Date. None: expiry is off.">
+            <select id="ex-date" className="input select" value={expiry.dateAttribute ?? ''} onChange={(e) => setExpiry({ dateAttribute: e.target.value || undefined })}>
+              <option value="">Off</option>
+              {dateFields.map((f) => (
+                <option key={f.attribute} value={f.attribute}>
+                  {f.label} ({f.attribute})
+                </option>
+              ))}
+            </select>
+          </FormRow>
+          <FormRow label="Sponsor field" htmlFor="ex-sponsor" hint="A field holding the sponsor's DN.">
+            <select id="ex-sponsor" className="input select" value={expiry.sponsorAttribute ?? ''} onChange={(e) => setExpiry({ sponsorAttribute: e.target.value || undefined })}>
+              <option value="">Choose</option>
+              {sponsorFields.map((f) => (
+                <option key={f.attribute} value={f.attribute}>
+                  {f.label} ({f.attribute})
+                </option>
+              ))}
+            </select>
+          </FormRow>
+          <FormRow label="Days of warning" htmlFor="ex-warn" hint="The sponsor is told daily from this many days before the end. Default 14.">
+            <input id="ex-warn" className="input" type="number" min={1} max={365} value={expiry.warnDays ?? ''} placeholder="14"
+              onChange={(e) => setExpiry({ warnDays: e.target.value ? Number(e.target.value) : undefined })} />
+          </FormRow>
+          <FormRow label="Longest extension (days)" htmlFor="ex-max" hint="A sponsor may set the end date at most this far from today. Default 180.">
+            <input id="ex-max" className="input" type="number" min={1} max={3650} value={expiry.maxExtensionDays ?? ''} placeholder="180"
+              onChange={(e) => setExpiry({ maxExtensionDays: e.target.value ? Number(e.target.value) : undefined })} />
+          </FormRow>
         </div>
       </Card>
 

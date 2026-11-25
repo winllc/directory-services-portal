@@ -731,6 +731,29 @@ What changes for a governed directory:
   `/api/v1/governance/ingest/dsp`, with the signing secret the console shows when you add the
   portal under *Governance → Workflows → Portals reporting group changes*.
 
+### Entry expiry (contractors, guests)
+
+Entries that end on a date: a contractor container, guest accounts. In the form, give the end
+date field the format **Date** (`yyyy-mm-dd`; a generalized time such as `20261231000000Z` is
+read too, and kept in that form when changed), and have a field holding the sponsor's DN (the
+format **Distinguished name**, or a directory drop down of DNs). Then on the directory
+definition, under **Entry expiry**, pick the two fields, the days of warning (default 14) and
+the longest extension (default 180 days from today).
+
+- **Each day** (06:07 UTC, on one replica) the sponsor of every entry ending within the days of
+  warning is mailed, the `entry.expiring` webhook event is sent (`definitionId`, `dn`, `name`,
+  `endDate`, `daysLeft`, `sponsors`), and the notice is audited as `entry.expiring`.
+- **Sponsors** see their entries under **Sponsored entries** (shown once they sponsor
+  something) and move the end date out, never in, and at most the longest extension from
+  today, without write access to the definition. The change is an `entry.update` with
+  `details.via = "sponsor-renewal"`.
+- **Mail**: `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS`
+  (true) and `MAIL_FROM`; with the Helm chart, in `api.extraEnv`. Without `SMTP_HOST` nothing is
+  mailed; the notices are still audited and sent as webhook events. The mail server is not part
+  of the health checks.
+- syncd can read the container as a source and end each person's accounts on the date
+  (`effective_until`): see `examples/contractors-from-ldap.yaml` in syncd.
+
 ### Metrics
 *Metrics* (every signed-in user)
 

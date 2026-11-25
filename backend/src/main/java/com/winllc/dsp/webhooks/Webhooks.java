@@ -42,7 +42,7 @@ public class Webhooks {
   private static final SecureRandom RANDOM = new SecureRandom();
 
   /** The event types a webhook can subscribe to. */
-  public static final List<String> EVENT_TYPES = List.of("entry.changed", "group.membership_changed", "form.submitted");
+  public static final List<String> EVENT_TYPES = List.of("entry.changed", "group.membership_changed", "form.submitted", "entry.expiring");
   /** Sent only by "Send test event". */
   public static final String PING = "ping";
 

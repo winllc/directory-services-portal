@@ -66,7 +66,7 @@ export interface CustomSchema {
 /** Free text (single line or multi-line) or drop down. */
 export type FieldWidget = 'text' | 'textarea' | 'dropdown';
 
-export type TextFormat = 'plain' | 'email' | 'phone' | 'url' | 'number' | 'dn';
+export type TextFormat = 'plain' | 'email' | 'phone' | 'url' | 'number' | 'dn' | 'date';
 
 export interface OptionItem {
   value: string;
@@ -212,6 +212,30 @@ export interface DirectoryDefinition {
   directory?: string;
   /** Self-service group access, for definitions of groups. */
   groups?: GroupAccess;
+  /** Entries that end on a date their sponsor can extend (contractors, guests). */
+  expiry?: EntryExpiry;
+}
+
+/** The form's date field holding the end date, and its DN field naming the sponsor. */
+export interface EntryExpiry {
+  dateAttribute?: string;
+  sponsorAttribute?: string;
+  /** Days before the end date the sponsor is told, daily (default 14). */
+  warnDays?: number;
+  /** The latest a sponsor may move the end date, in days from today (default 180). */
+  maxExtensionDays?: number;
+}
+
+/** An entry with an end date the signed-in user sponsors. */
+export interface SponsoredEntry {
+  definitionId: string;
+  definitionName: string;
+  dn: string;
+  name: string;
+  endDate?: string;
+  daysLeft: number;
+  /** The latest date the sponsor may set. */
+  latestDate: string;
 }
 
 /**
