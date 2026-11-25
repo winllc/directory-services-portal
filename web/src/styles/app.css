@@ -3436,6 +3436,10 @@ main.content:focus {
   white-space: nowrap;
   width: 1%;
 }
+.check-col {
+  width: 1%;
+  white-space: nowrap;
+}
 .actions-col .toolbar-actions {
   flex-wrap: nowrap;
   justify-content: flex-end;

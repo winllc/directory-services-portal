@@ -18,6 +18,12 @@ import { DEFINITION_ICONS } from '../../components/Layout';
 import { TagSelect } from '../../components/TagSelect';
 import { Alert, Button, Card, ErrorAlert, FormRow, PageHeader, Spinner, Toggle, cx, useToast } from '../../components/ui';
 
+/** A number-of-days setting as typed: a whole number from 1 to `max`, or none. */
+const wholeDays = (text: string, max: number) => {
+  const n = Math.floor(Number(text));
+  return text.trim() && Number.isFinite(n) && n >= 1 ? Math.min(n, max) : undefined;
+};
+
 function blank(formId: string, baseDn: string): DefinitionInput {
   return {
     name: '',
@@ -141,6 +147,7 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
             memberAttribute: d.groups.memberAttribute || undefined,
             ownerAttribute: d.groups.ownerAttribute?.trim() || undefined,
             requestFilter: d.groups.requestFilter?.trim() || undefined,
+            openFilter: d.groups.openFilter?.trim() || undefined,
           }
         : undefined,
       filter: d.filter?.trim() || undefined,
@@ -500,6 +507,53 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                     />
                   </FormRow>
                 </div>
+                <div className="span-2">
+                  <FormRow
+                    label="Open groups"
+                    htmlFor="ga-open"
+                    hint="An LDAP filter, e.g. (cn=social-*). Among the groups that take requests, those that match are joined at once, without approval: use it only for groups that give no access worth guarding. Empty: no group is open."
+                  >
+                    <input
+                      id="ga-open"
+                      className="input mono"
+                      placeholder="None"
+                      value={groups.openFilter ?? ''}
+                      onChange={(e) => setGroups({ openFilter: e.target.value })}
+                    />
+                  </FormRow>
+                </div>
+                <FormRow
+                  label="Requests expire after (days)"
+                  htmlFor="ga-expiry"
+                  hint="An open request nobody answered is closed as expired, and the requester can ask again. Empty: never. At most 365."
+                >
+                  <input
+                    id="ga-expiry"
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="Never"
+                    value={groups.requestExpiryDays || ''}
+                    onChange={(e) => setGroups({ requestExpiryDays: wholeDays(e.target.value, 365) })}
+                  />
+                </FormRow>
+                <FormRow
+                  label="Longest membership (days)"
+                  htmlFor="ga-max"
+                  hint="Requests, joins and members added by owners get an end date no later than this, and the portal removes the member when it has passed. Empty: no limit, and an end date is optional. At most 3650."
+                >
+                  <input
+                    id="ga-max"
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={3650}
+                    placeholder="No limit"
+                    value={groups.maxMembershipDays || ''}
+                    onChange={(e) => setGroups({ maxMembershipDays: wholeDays(e.target.value, 3650) })}
+                  />
+                </FormRow>
               </div>
               <Toggle
                 checked={groups.requireReason}
@@ -512,6 +566,12 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                 onChange={(v) => setGroups({ allowLeave: v })}
                 label="Members may leave on their own"
                 description="Otherwise they ask the owners to remove them."
+              />
+              <Toggle
+                checked={groups.ownersManageOwners ?? false}
+                onChange={(v) => setGroups({ ownersManageOwners: v })}
+                label="Owners may add and remove owners"
+                description="On the group's page, without write access to this directory. The owner attribute must be a multi-valued field of the form. A group always keeps one owner."
               />
             </>
           )}

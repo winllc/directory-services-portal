@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, Compass, LayoutDashboard, Plus, Share2 } from 'lucide-react';
-import { useDashboards, useMetricSummary } from '../../api/hooks';
+import { BarChart3, Compass, LayoutDashboard, Plus, RefreshCw, Share2 } from 'lucide-react';
+import { fetchSummary, useDashboards, useMetricSummary } from '../../api/hooks';
 import { useUser } from '../../lib/auth';
 import { DefinitionIcon } from '../../components/Layout';
-import { Badge, Card, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorAlert, PageHeader, Spinner } from '../../components/ui';
 import { BarChart, compact } from '../../components/charts';
 import { JobProgress } from '../../components/jobs/JobProgress';
 
@@ -13,13 +14,27 @@ export function MetricsHomePage() {
   const dashboards = useDashboards();
   const rows = (summary.data ?? []).filter((r) => r.count !== undefined && r.count !== null);
   const total = rows.reduce((a, r) => a + (r.count ?? 0), 0);
+  // The counts stay as they are until asked for again: opening this page does not recount.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<unknown>(null);
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await summary.refresh(() => fetchSummary(true));
+    } catch (e) {
+      setRefreshError(e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
     <div className="page page-wide">
       <PageHeader
         icon={<BarChart3 size={22} />}
         title="Metrics"
-        subtitle="Statistics and charts computed live from the directories you can see."
+        subtitle="Statistics and charts computed from the directories you can see. Results stay as they are until you refresh them."
         actions={
           <>
             <Link to="/metrics/explore" className="btn btn-secondary">
@@ -78,7 +93,17 @@ export function MetricsHomePage() {
       <section className="stack">
         <h2 className="section-title">Directory overviews</h2>
         <p className="muted small">A ready-made dashboard for each directory, built from its form: size, growth, breakdowns and completeness.</p>
-        <ErrorAlert error={summary.error} />
+        <div className="row-gap">
+          <Button size="sm" icon={<RefreshCw size={14} />} loading={refreshing || !!summary.job} onClick={refresh}>
+            Refresh counts
+          </Button>
+          {summary.updatedAt > 0 && (
+            <span className="muted small">
+              Counted at {new Date(summary.updatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
+        <ErrorAlert error={summary.error ?? refreshError} />
         {summary.job && <JobProgress job={summary.job} label="Counting entries" />}
         {summary.isLoading ? (
           <Spinner />

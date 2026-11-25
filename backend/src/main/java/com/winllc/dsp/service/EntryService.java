@@ -815,12 +815,15 @@ public class EntryService {
    * As above, for a change the caller has already authorized ({@code reason} non-null: a group's
    * owner approving an access request, a member leaving a group): the user's write access to the
    * definition isn't required, the rest applies, and the audit event says why
-   * ({@code details.via}).
+   * ({@code details.via}). {@code user} is null for a change the portal makes itself (a membership
+   * whose end date has passed): the event's actor is then the system.
    */
   public ValueChange changeValues(SessionUser user, DirectoryDefinition def, String dn, FormField field, List<String> add, List<String> remove,
       boolean dnValued, String reason) {
     AuditLog.Draft event = audit.event("entry.update").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
     if (reason != null) event.detail("via", reason);
+    // Without a user the portal itself makes the change (a scheduled job).
+    if (reason != null && user == null) event.system();
     return audited("update", event, () -> {
       if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
       if (reason == null) require(user, def, AccessLevel.WRITE);

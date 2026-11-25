@@ -64,7 +64,10 @@ public class AdminDefinitionsController {
     checkGroups(in);
   }
 
-  /** Group access needs a writable definition whose form has the member field, and an owner attribute other than it. */
+  /**
+   * Group access needs a writable definition whose form has the member field, and an owner attribute
+   * other than it (a field of the form too, when owners may change owners).
+   */
   private void checkGroups(DefinitionInput in) {
     if (in.groups() == null || !in.groups().enabled()) return;
     if ("readonly".equals(in.mode())) {
@@ -80,6 +83,10 @@ public class AdminDefinitionsController {
     String owner = in.groups().cleaned().ownerAttributeOrDefault();
     if (owner.equalsIgnoreCase(member.attribute())) {
       throw ApiException.badRequest("The owner attribute can't be the member attribute", Map.of("groups.ownerAttribute", "Must differ from the member attribute"));
+    }
+    if (in.groups().ownersManage() && form.fields().stream().noneMatch(f -> f.multiValued() && f.attribute().equalsIgnoreCase(owner))) {
+      throw ApiException.badRequest("Owners can only change owners the form holds",
+          Map.of("groups.ownersManageOwners", "The form needs a multi-valued field for the owner attribute (" + owner + ")"));
     }
   }
 

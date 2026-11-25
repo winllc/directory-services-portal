@@ -58,7 +58,8 @@ public class TransferController {
     this.props = props;
   }
 
-  private static ResponseEntity<String> file(String content, EntryTransfer.Format format, String name, int count, boolean truncated) {
+  /** An export as a download: the file named after {@code name} and today, with its count and whether it was cut short. */
+  public static ResponseEntity<String> file(String content, EntryTransfer.Format format, String name, int count, boolean truncated) {
     String ext = format == EntryTransfer.Format.CSV ? "csv" : "ldif";
     MediaType type = format == EntryTransfer.Format.CSV ? new MediaType("text", "csv", StandardCharsets.UTF_8)
         : new MediaType("text", "plain", StandardCharsets.UTF_8);
