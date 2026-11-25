@@ -1,12 +1,15 @@
 package com.winllc.dsp.groups;
 
 import com.winllc.dsp.audit.AccessDenials;
+import com.winllc.dsp.integration.IntegrationProperties;
 import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.ReadOnlyAllowed;
 import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.Memberships;
+import com.winllc.dsp.transfer.EntryTransfer;
 import com.winllc.dsp.web.ApiException;
+import com.winllc.dsp.web.TransferController;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -35,10 +38,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class GroupsController {
   private final GroupService groups;
   private final AccessDenials denials;
+  private final IntegrationProperties props;
 
-  public GroupsController(GroupService groups, AccessDenials denials) {
+  public GroupsController(GroupService groups, AccessDenials denials, IntegrationProperties props) {
     this.groups = groups;
     this.denials = denials;
+    this.props = props;
   }
 
   /** {@code until}: the last day of the access asked for ({@code yyyy-MM-dd}, UTC); none: no end asked. */
@@ -126,6 +131,19 @@ public class GroupsController {
   public Memberships.Change changeMembers(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn,
       @Valid @RequestBody MembersInput in) {
     return groups.changeMembers(user, definitionId, dn(dn), in.add(), in.remove(), in.until());
+  }
+
+  /**
+   * The group's members as a CSV file (name, login, e-mail, DN, end date), for those who manage it.
+   * Like the directory's member export it needs the directory editor's license, is a POST so that
+   * it carries the CSRF header, and works while the license is read-only.
+   */
+  @PostMapping("/{definitionId}/members/export")
+  @RequiresFeature(LicensedFeature.DIRECTORY_EDITOR)
+  @ReadOnlyAllowed
+  public ResponseEntity<String> exportMembers(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn) {
+    GroupService.MemberExport e = groups.exportMembers(user, definitionId, dn(dn), props.getTransfer().getExportMaxEntries());
+    return TransferController.file(e.content(), EntryTransfer.Format.CSV, e.groupName() + "-members", e.count(), e.truncated());
   }
 
   /** Sets, changes or (without {@code until}) clears a member's end date. */

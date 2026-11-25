@@ -1,9 +1,10 @@
 import { useId, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, ListPlus, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, Download, ListPlus, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
 import type { GroupDetail, GroupMember, GroupPeopleResolved, GroupPerson, GroupSummary } from '@dsp/shared';
-import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
+import { downloadGroupMembers, useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
 import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
+import { useFeature } from '../lib/license';
 import { day, EndDateField, GroupBadges, JoinButton, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
@@ -236,6 +237,8 @@ function Members({ detail }: { detail: GroupDetail }) {
   const [until, setUntil] = useState('');
   const [dating, setDating] = useState<GroupMember | null>(null);
   const [pasting, setPasting] = useState(false);
+  // The member export is the directory editor's, as on the directory's own pages.
+  const exports = useFeature('directory-editor');
   const id = useId();
   const max = detail.maxMembershipDays;
   const data = members.data;
@@ -261,6 +264,19 @@ function Members({ detail }: { detail: GroupDetail }) {
       subtitle="As an owner you can add and remove members directly."
       actions={
         <div className="toolbar-actions">
+          {exports.enabled && (
+            <Button
+              size="sm"
+              icon={<Download size={14} />}
+              onClick={() =>
+                downloadGroupMembers(g.definitionId, g.dn)
+                  .then((r) => r.truncated && toast.success(`Only the first ${r.count} members were exported.`))
+                  .catch((e) => toast.error(e))
+              }
+            >
+              Export CSV
+            </Button>
+          )}
           <Button size="sm" icon={<ListPlus size={14} />} onClick={() => setPasting(true)}>
             Add from a list
           </Button>

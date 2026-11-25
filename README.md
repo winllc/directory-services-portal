@@ -692,7 +692,10 @@ doesn't take the portal out of service. It is DOWN when none answers.
   them, and remove members. They don't need write access to the whole definition for this.
   **Add from a list** takes pasted logins, e-mail addresses or DNs, one per line (at most 200):
   the owner sees who was found, who was not and which lines several people match, then adds the
-  people found in one step, with an end date if they want.
+  people found in one step, with an end date if they want. **Export CSV** downloads the group's
+  members (name, login, e-mail, DN, end date). Like the directory's member export it needs the
+  directory editor's license, guards cells against spreadsheet formulas, holds at most
+  `EXPORT_MAX_ENTRIES` members and is recorded as `data.exported`.
 - **Time-limited membership.** A request may ask for access until a date; the approver may
   shorten it, not extend it. Owners can give the members they add an end date, and change or
   remove it later in the member list. Dates are whole days in UTC: the member belongs to the

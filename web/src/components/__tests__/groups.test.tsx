@@ -55,7 +55,7 @@ const summary = (dn: string, name: string, patch: Partial<GroupSummary>): GroupS
   ...patch,
 });
 
-function server(overrides: Partial<GroupDetail> = {}) {
+function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-editor', 'self-service-profile']) {
   const state = {
     owners: [ADA, CAROL],
     mine: [] as AccessRequest[],
@@ -97,7 +97,15 @@ function server(overrides: Partial<GroupDetail> = {}) {
       if (method !== 'GET') sent.push({ method, path, body });
       if (path === '/api/auth/me') return json({ user: carol, consentRequired: false });
       if (path === '/api/info') return json({ mode: 'memory', connected: true, version: '1' });
-      if (path === '/api/license') return json({ mode: 'FULL', state: 'VALID', message: '', evaluation: false, features });
+      if (path === '/api/license') {
+        return json({ mode: 'FULL', state: 'VALID', message: '', evaluation: false, features: features.map((f) => ({ ...f, enabled: licensed.includes(f.id) })) });
+      }
+      if (path === '/api/groups/def-groups/members/export') {
+        return new Response('name,login,mail,dn,until\r\n', {
+          status: 200,
+          headers: { 'Content-Disposition': 'attachment; filename="engineering-members-2026-11-25.csv"', 'X-DSP-Export-Count': '1' },
+        });
+      }
       if (path === '/api/groups/directories') return json([{ id: 'def-groups', name: 'Groups', slug: 'groups', requireReason: true, allowLeave: true }]);
       if (path === '/api/groups/requests/summary') return json({ toReview: 0, myPending: 0 });
       if (path === '/api/groups/requests' && url.includes('scope=mine')) return json(state.mine.map((r) => ({ request: r, definitionName: 'Groups', canDecide: false })));
@@ -487,5 +495,31 @@ describe('to review: deciding several requests at once', () => {
     expect(api.sent[0].body).toEqual({ ids: ['req-1', 'req-3'], approve: false });
     await u.click(within(done).getByRole('button', { name: 'Done' }));
     expect(await screen.findByText('Nothing to review')).toBeInTheDocument();
+  });
+});
+
+describe('group page: exporting the members', () => {
+  it('downloads the members as CSV with a recorded POST', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() }));
+    const saved: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
+    renderAt(GROUP_PAGE);
+
+    await u.click(await screen.findByRole('button', { name: 'Export CSV' }));
+    await vi.waitFor(() => expect(saved).toEqual(['engineering-members-2026-11-25.csv']));
+    expect(api.sent.map((x) => `${x.method} ${x.path}`)).toEqual(['POST /api/groups/def-groups/members/export']);
+    click.mockRestore();
+  });
+
+  it('is not offered without the directory editor\'s license', async () => {
+    server({}, ['self-service-profile']);
+    renderAt(GROUP_PAGE);
+
+    expect(await screen.findByRole('button', { name: 'Add from a list' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Export CSV' })).not.toBeInTheDocument();
   });
 });

@@ -873,6 +873,10 @@ export const downloadMembers = (definitionId: string, dn: string, format: 'csv' 
   download(`/api/directories/${encodeURIComponent(definitionId)}/members/export?${dnParam(dn)}${attribute ? `&attribute=${encodeURIComponent(attribute)}` : ''}&format=${format}`,
     `members.${format}`);
 
+/** Download a group's members (name, login, e-mail, DN, end date) as CSV, for the group's owners. The server records the export. */
+export const downloadGroupMembers = (definitionId: string, dn: string) =>
+  download(`/api/groups/${encodeURIComponent(definitionId)}/members/export?${dnParam(dn)}`, 'members.csv');
+
 /** Failed polls in a row (a replica restarting, a proxy's 502) jobResult rides out before giving up. */
 const JOB_POLL_FAILURES = 10;
 

@@ -42,6 +42,7 @@ class GroupsTest extends ApiTestSupport {
   @Autowired ApplicationEventMulticaster multicaster;
   @Autowired MembershipExpiries expiries;
   @Autowired LdapDirectory directory;
+  @Autowired com.winllc.dsp.integration.IntegrationProperties integration;
   @Autowired LoginThrottle throttle;
 
   @BeforeEach
@@ -760,6 +761,72 @@ class GroupsTest extends ApiTestSupport {
     assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", List.of(), "approve", true)))).isEqualTo(400);
     assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", List.of(erins))))).isEqualTo(400);
     assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", List.of(erins), "approve", true, "note", "x".repeat(1001))))).isEqualTo(400);
+  }
+
+  @Test
+  void ownersExportTheirGroupsMembersAsCsv() throws Exception {
+    LocalDate last = LocalDate.now(ZoneOffset.UTC).plusDays(9);
+    String fatima = "uid=fatima,ou=people," + B;
+    Client carol = login("carol");
+    assertThat(status(carol.post("/api/groups/def-groups/members/until" + q(ENGINEERING), Map.of("member", fatima, "until", last.toString())))).isEqualTo(200);
+    // A name a spreadsheet would run as a formula.
+    directory.modify(fatima, List.of(new Modification(ModificationType.REPLACE, "displayName", "=HYPERLINK(\"http://x\",\"Fatima\")")));
+    String url = "/api/groups/def-groups/members/export" + q(ENGINEERING);
+
+    MvcResult export = carol.post(url, null);
+    assertThat(status(export)).as(export.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(export.getResponse().getContentType()).startsWith("text/csv");
+    assertThat(export.getResponse().getHeader("Content-Disposition")).contains("attachment").contains("engineering-members-").contains(".csv");
+    assertThat(export.getResponse().getHeader("X-DSP-Export-Count")).isEqualTo("3");
+    assertThat(export.getResponse().getHeader("X-DSP-Export-Truncated")).isEqualTo("false");
+    assertThat(export.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
+    String[] lines = export.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8).split("\r\n");
+    assertThat(lines[0]).isEqualTo("\uFEFFname,login,mail,dn,until");
+    assertThat(lines[1]).isEqualTo("Alice Anderson,alice,alice@example.com,\"" + ALICE + "\",");
+    assertThat(lines[2]).startsWith("Carol Chen,carol,carol@example.com,");
+    // Guarded with an apostrophe, quoted, and with the end date.
+    assertThat(lines[3]).isEqualTo("\"'=HYPERLINK(\"\"http://x\"\",\"\"Fatima\"\")\",fatima,fatima@example.com,\"" + fatima + "\"," + last);
+    assertThat(lines).hasSize(4);
+
+    // Recorded like the directory's member export, saying why an owner could make it.
+    JsonNode event = events("data.exported", "via", "group-owner").get(0);
+    assertThat(event.get("actor").get("id").asString()).isEqualTo("carol");
+    assertThat(event.get("target").get("id").asString()).isEqualTo(ENGINEERING);
+    assertThat(event.get("details").get("members").asInt()).isEqualTo(3);
+    assertThat(event.get("details").get("format").asString()).isEqualTo("csv");
+    int recorded = events("data.exported", "format", "csv").size();
+
+    // Only for those who manage the group, only with the request header, and only as a POST.
+    assertThat(status(login("alice").post(url, null))).isEqualTo(403);
+    assertThat(status(login("bob").post(url, null))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/members/export" + q(SALES), null))).isEqualTo(403);
+    assertThat(status(carol.get(url))).isEqualTo(405);
+    MvcResult forged = carol.send(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(java.net.URI.create(url))
+        .header("Origin", "https://attacker.example").header("Sec-Fetch-Site", "cross-site").contentType("application/x-www-form-urlencoded").content("x=1"));
+    assertThat(status(forged)).isEqualTo(403);
+    assertThat(forged.getResponse().getContentAsString()).doesNotContain("uid=");
+    assertThat(events("data.exported", "format", "csv")).hasSize(recorded);
+
+    // The directory editor's license gates it, as it gates the directory's member export; a read-only license doesn't.
+    TestLicensing.use(TestLicenses.license().features("self-service-profile").sign());
+    assertThat(status(carol.get("/api/groups/def-groups/members" + q(ENGINEERING)))).isEqualTo(200);
+    MvcResult unlicensed = carol.post(url, null);
+    assertThat(status(unlicensed)).isEqualTo(403);
+    assertThat(body(unlicensed).get("code").asString()).isEqualTo("feature_not_licensed");
+    TestLicensing.use(TestLicenses.license().expired().sign());
+    assertThat(status(carol.post(url, null))).isEqualTo(200);
+    assertThat(status(carol.post("/api/groups/def-groups/members" + q(ENGINEERING), Map.of("add", List.of(), "remove", List.of(fatima))))).isEqualTo(403);
+    TestLicensing.use(TestLicenses.full());
+
+    // More members than an export may hold: cut short, and said so.
+    integration.getTransfer().setExportMaxEntries(2);
+    try {
+      MvcResult cut = login("admin").post(url, null);
+      assertThat(cut.getResponse().getHeader("X-DSP-Export-Count")).isEqualTo("2");
+      assertThat(cut.getResponse().getHeader("X-DSP-Export-Truncated")).isEqualTo("true");
+    } finally {
+      integration.getTransfer().setExportMaxEntries(10_000);
+    }
   }
 
   @Test

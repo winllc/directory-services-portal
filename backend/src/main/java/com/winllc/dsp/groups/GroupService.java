@@ -18,6 +18,7 @@ import com.winllc.dsp.service.EntryService;
 import com.winllc.dsp.service.Memberships;
 import com.winllc.dsp.service.People;
 import com.winllc.dsp.store.ConfigStore;
+import com.winllc.dsp.transfer.Csv;
 import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.web.ApiException;
 import java.time.Duration;
@@ -139,6 +140,9 @@ public class GroupService {
    * the {@code error} and HTTP {@code code} deciding it alone would have answered.
    */
   public record DecisionOutcome(String id, boolean ok, String status, String error, Integer code) {}
+
+  /** A group's members as CSV; {@code truncated}: the group has more than the export's limit. */
+  public record MemberExport(String content, int count, boolean truncated, String groupName) {}
 
   /** A request as shown: {@code canDecide} when the viewer may approve or reject it. */
   public record RequestView(AccessRequests.Request request, String definitionName, boolean canDecide) {}
@@ -589,6 +593,51 @@ public class GroupService {
       out.add(new Person(dnValued ? r.dn() : r.id(), r.dn(), r.label()));
     }
     return out;
+  }
+
+  /**
+   * The group's members as CSV for those who manage it (at most {@code max}, by value): name, login,
+   * e-mail, DN and the membership's end date, read from the group's directory. Cells are guarded
+   * against spreadsheet formulas ({@link Csv}); the export is audited as {@code data.exported}.
+   */
+  public MemberExport exportMembers(SessionUser user, String definitionId, String dn, int max) {
+    DirectoryDefinition def = definition(user, definitionId);
+    DirectoryEntry group = managed(user, def, dn);
+    FormField member = memberField(def);
+    boolean dnValued = Memberships.dnValued(member);
+    Directories.Directory dir = directories.forDefinition(def);
+    List<String> values = dir.ldap().withAllValues(entries.readInNamespace(def, group.dn(), List.of(member.attribute())), member.attribute())
+        .values(member.attribute()).stream().sorted(String.CASE_INSENSITIVE_ORDER).toList();
+    List<String> exported = values.stream().limit(Math.max(1, max)).toList();
+    Map<String, String> until = new HashMap<>();
+    for (MembershipExpiries.Expiry x : expiries.ofGroup(def.id(), group.dn())) until.put(normal(x.member()), x.until());
+    String login = dir.config().getUsernameAttribute();
+    List<String> attributes = List.of("displayName", "cn", login, "mail");
+    StringBuilder out = new StringBuilder(Csv.BOM);
+    Csv.row(out, List.of("name", "login", "mail", "dn", "until"));
+    for (String v : exported) {
+      DirectoryEntry p = null;
+      try {
+        if (dnValued) {
+          if (Dns.isValid(v)) p = dir.ldap().get(v, attributes);
+        } else {
+          List<DirectoryEntry> found = dir.ldap().search(dir.config().effectiveUserSearchBase(), com.unboundid.ldap.sdk.SearchScope.SUB,
+              People.userFilter(dir.config(), Filter.encodeValue(v)), 1, attributes).entries();
+          if (!found.isEmpty()) p = found.get(0);
+        }
+      } catch (DirectoryException ignored) {
+        // Not readable or gone: exported by its value alone.
+      }
+      String name = p == null ? null : p.first("displayName") != null ? p.first("displayName") : p.first("cn");
+      String uid = p != null && p.first(login) != null ? p.first(login) : dnValued ? "" : v;
+      Csv.row(out, List.of(name != null ? name : dnValued ? Dns.rdnValue(v) : v, uid, p == null || p.first("mail") == null ? "" : p.first("mail"),
+          p != null ? p.dn() : dnValued ? v : "", until.getOrDefault(normal(v), "")));
+    }
+    boolean truncated = values.size() > exported.size();
+    audit.event("data.exported").by(user).definition(def.id()).directory(entries.directoryId(def)).target("entry", group.dn(), title(def, group))
+        .detail("format", "csv").detail("members", exported.size()).detail("attribute", member.attribute()).detail("truncated", truncated ? true : null)
+        .detail("via", canEdit(user, def) ? null : VIA_OWNER).success();
+    return new MemberExport(out.toString(), exported.size(), truncated, title(def, group));
   }
 
   /**
