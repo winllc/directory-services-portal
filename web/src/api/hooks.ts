@@ -31,6 +31,7 @@ import type {
   GroupDetail,
   GroupDirectory,
   GroupList,
+  GroupMember,
   GroupMemberPage,
   GroupPerson,
   GroupRequestSummary,
@@ -1035,14 +1036,17 @@ export function useGroupMutations() {
   };
   return {
     request: useMutation({
-      mutationFn: (v: { definitionId: string; dn: string; reason?: string }) =>
-        api.post<AccessRequest>(groupUrl(v.definitionId, 'requests', v.dn), { reason: v.reason || undefined }),
+      mutationFn: (v: { definitionId: string; dn: string; reason?: string; until?: string }) =>
+        api.post<AccessRequest>(groupUrl(v.definitionId, 'requests', v.dn), { reason: v.reason || undefined, until: v.until || undefined }),
       onSuccess: refresh,
     }),
     cancel: useMutation({ mutationFn: (id: string) => api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(id)}/cancel`), onSuccess: refresh }),
     decide: useMutation({
-      mutationFn: (v: { id: string; approve: boolean; note?: string }) =>
-        api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(v.id)}/${v.approve ? 'approve' : 'reject'}`, { note: v.note || undefined }),
+      mutationFn: (v: { id: string; approve: boolean; note?: string; until?: string }) =>
+        api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(v.id)}/${v.approve ? 'approve' : 'reject'}`, {
+          note: v.note || undefined,
+          until: (v.approve && v.until) || undefined,
+        }),
       onSuccess: refresh,
     }),
     join: useMutation({
@@ -1059,8 +1063,14 @@ export function useGroupMutations() {
       onSuccess: refresh,
     }),
     members: useMutation({
-      mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[] }) =>
-        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove }),
+      mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[]; until?: string }) =>
+        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove, until: v.until || undefined }),
+      onSuccess: refresh,
+    }),
+    /** Sets, changes or (without `until`) clears a member's end date. */
+    memberUntil: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; member: string; until?: string }) =>
+        api.post<GroupMember>(groupUrl(v.definitionId, 'members/until', v.dn), { member: v.member, until: v.until || undefined }),
       onSuccess: refresh,
     }),
   };

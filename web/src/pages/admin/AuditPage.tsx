@@ -89,6 +89,8 @@ export const ACTION_LABELS: Record<string, string> = {
   'group.access-approved': 'Approved a group request',
   'group.access-rejected': 'Rejected a group request',
   'group.access-expired': 'A group request expired',
+  'group.membership-end-date': 'Set the end date of a group membership',
+  'group.membership-expired': 'A group membership ended',
   'analysis.update': 'Updated analysis',
   'analysis.delete': 'Deleted analysis',
   'analysis.export': 'Downloaded analysis findings',

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
-import type { GroupDetail, GroupPerson } from '@dsp/shared';
+import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
+import type { GroupDetail, GroupMember, GroupPerson, GroupSummary } from '@dsp/shared';
 import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
-import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
-import { GroupBadges, JoinButton, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
+import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
+import { day, EndDateField, GroupBadges, JoinButton, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
 /** One group: what it is, who owns it, the user's membership; for its owners, members and requests. */
@@ -63,7 +63,7 @@ function Membership({ detail }: { detail: GroupDetail }) {
       <div className="stack">
         {g.member ? (
           <>
-            <p>You are a member of this group.</p>
+            <p>{g.memberUntil ? `You are a member of this group until ${day(g.memberUntil)}.` : 'You are a member of this group.'}</p>
             {detail.allowLeave && (
               <div>
                 <Button icon={<LogOut size={16} />} onClick={() => setLeaving(true)}>
@@ -102,7 +102,13 @@ function Membership({ detail }: { detail: GroupDetail }) {
         )}
         <p className="muted small">{detail.memberCount === null ? 'A large group.' : `${detail.memberCount} ${detail.memberCount === 1 ? 'member' : 'members'}.`}</p>
       </div>
-      <RequestAccessDialog group={g} requireReason={detail.requireReason} open={asking} onClose={() => setAsking(false)} />
+      <RequestAccessDialog
+        group={g}
+        requireReason={detail.requireReason}
+        maxMembershipDays={detail.maxMembershipDays}
+        open={asking}
+        onClose={() => setAsking(false)}
+      />
       <ConfirmDialog
         open={leaving}
         title={`Leave ${g.name}?`}
@@ -227,11 +233,15 @@ function Members({ detail }: { detail: GroupDetail }) {
   const q = useDebounced(search.trim(), 300);
   const members = useGroupAccessMembers(g.definitionId, g.dn, q, page, true);
   const [removing, setRemoving] = useState<{ value: string; name: string } | null>(null);
+  const [until, setUntil] = useState('');
+  const [dating, setDating] = useState<GroupMember | null>(null);
+  const id = useId();
+  const max = detail.maxMembershipDays;
   const data = members.data;
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const apply = (add: string[], remove: string[], done: string) =>
     change.mutate(
-      { definitionId: g.definitionId, dn: g.dn, add, remove },
+      { definitionId: g.definitionId, dn: g.dn, add, remove, until: add.length ? until : undefined },
       {
         onSuccess: (r) => {
           toast.success(r.added.length || r.removed.length ? done : 'Nothing changed: already so.');
@@ -255,6 +265,14 @@ function Members({ detail }: { detail: GroupDetail }) {
           actionLabel="Add"
           pending={change.isPending}
           onPick={(p) => apply([p.value], [], `${p.name} was added.`)}
+        />
+        <EndDateField
+          id={`${id}-until`}
+          label="End date for people you add (optional)"
+          value={until}
+          onChange={setUntil}
+          maxDays={max}
+          hint={max ? `Their last day in the group. Memberships here last at most ${max} days; empty: that long.` : 'Their last day in the group. Empty: no end date.'}
         />
 
         <div className="toolbar">
@@ -290,9 +308,15 @@ function Members({ detail }: { detail: GroupDetail }) {
                     </span>
                   )}
                 </span>
-                <Button size="sm" variant="ghost" icon={<UserMinus size={14} />} onClick={() => setRemoving({ value: m.value, name: m.name })}>
-                  Remove
-                </Button>
+                <div className="toolbar-actions">
+                  {m.until && <span className="muted small nowrap">until {day(m.until)}</span>}
+                  <Button size="sm" variant="ghost" icon={<CalendarClock size={14} />} aria-label={`End date for ${m.name}`} onClick={() => setDating(m)}>
+                    End date
+                  </Button>
+                  <Button size="sm" variant="ghost" icon={<UserMinus size={14} />} aria-label={`Remove ${m.name}`} onClick={() => setRemoving({ value: m.value, name: m.name })}>
+                    Remove
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -320,6 +344,68 @@ function Members({ detail }: { detail: GroupDetail }) {
         onCancel={() => setRemoving(null)}
         onConfirm={() => removing && apply([], [removing.value], `${removing.name} was removed.`)}
       />
+      <MemberEndDateDialog key={dating?.value ?? 'none'} group={g} member={dating} maxDays={max} onClose={() => setDating(null)} />
     </Card>
+  );
+}
+
+/** Sets, changes or removes a member's end date (it can't be removed where the directory limits memberships). */
+function MemberEndDateDialog({ group, member, maxDays, onClose }: { group: GroupSummary; member: GroupMember | null; maxDays?: number | null; onClose: () => void }) {
+  const id = useId();
+  const toast = useToast();
+  const { memberUntil } = useGroupMutations();
+  const [until, setUntil] = useState(member?.until ?? '');
+  if (!member) return null;
+  const details = (memberUntil.error as { details?: Record<string, string> } | null)?.details;
+  const close = () => {
+    memberUntil.reset();
+    onClose();
+  };
+  const save = (date: string) =>
+    memberUntil.mutate(
+      { definitionId: group.definitionId, dn: group.dn, member: member.value, until: date },
+      {
+        onSuccess: () => {
+          toast.success(date ? `${member.name} is a member until ${day(date)}.` : `${member.name}'s membership has no end date any more.`);
+          close();
+        },
+      },
+    );
+  return (
+    <Modal
+      open
+      onClose={close}
+      title={`End date for ${member.name}`}
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          {member.until && !maxDays && (
+            <Button loading={memberUntil.isPending} onClick={() => save('')}>
+              Remove end date
+            </Button>
+          )}
+          <Button variant="primary" loading={memberUntil.isPending} disabled={!until || until === member.until} onClick={() => save(until)}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        {!details?.until && <ErrorAlert error={memberUntil.error} />}
+        <EndDateField
+          id={`${id}-until`}
+          label="Member until"
+          value={until}
+          onChange={setUntil}
+          maxDays={maxDays}
+          error={details?.until}
+          hint={
+            maxDays
+              ? `Their last day in ${group.name}; the portal removes them the day after. At most ${maxDays} days from today.`
+              : `Their last day in ${group.name}; the portal removes them the day after.`
+          }
+        />
+      </div>
+    </Modal>
   );
 }

@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.winllc.dsp.groups.AccessRequests;
 import com.winllc.dsp.groups.GroupAccessJobs;
+import com.winllc.dsp.groups.MembershipExpiries;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.service.EntryChanged;
 import com.winllc.dsp.service.LoginThrottle;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,11 +37,13 @@ class GroupsTest extends ApiTestSupport {
   @Autowired AccessRequests requests;
   @Autowired GroupAccessJobs jobs;
   @Autowired ApplicationEventMulticaster multicaster;
+  @Autowired MembershipExpiries expiries;
   @Autowired LoginThrottle throttle;
 
   @BeforeEach
   void noRequests() {
     requests.clear();
+    expiries.clearAll();
     // Other tests lock users out on purpose (AuditLogTest: carol); a negative window drops every count.
     throttle.sweep(-1);
   }
@@ -330,7 +335,7 @@ class GroupsTest extends ApiTestSupport {
     assertThat(body(carol.get("/api/groups/requests?scope=decided"))).hasSize(1);
     assertThat(requests.find(answered).status()).isEqualTo(AccessRequests.REJECTED);
 
-    JsonNode events = body(login("admin").get("/api/admin/audit?action=group.access-expired")).get("events");
+    List<JsonNode> events = events("group.access-expired", "request", waiting);
     assertThat(events).hasSize(1);
     assertThat(events.get(0).get("actor").get("type").asString()).isEqualTo("system");
     assertThat(events.get(0).get("target").get("id").asString()).isEqualTo(ENGINEERING);
@@ -413,6 +418,234 @@ class GroupsTest extends ApiTestSupport {
     assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
   }
 
+  /** The audit events of an action whose {@code details[key]} is {@code value}, newest first (the trail spans the class's tests). */
+  List<JsonNode> events(String action, String key, String value) throws Exception {
+    List<JsonNode> out = new ArrayList<>();
+    for (JsonNode e : body(login("admin").get("/api/admin/audit?action=" + action)).get("events")) {
+      if (e.get("details").has(key) && e.get("details").get(key).asString().equals(value)) out.add(e);
+    }
+    return out;
+  }
+
+  /** The end date the member list shows for {@code value} (null: none), as the group's owners see it. */
+  String memberUntil(Client owner, String group, String value) throws Exception {
+    for (JsonNode m : body(owner.get("/api/groups/def-groups/members" + q(group))).get("items")) {
+      if (m.get("value").asString().equals(value)) return m.get("until").isNull() ? null : m.get("until").asString();
+    }
+    throw new AssertionError(value + " is not listed in " + group);
+  }
+
+  static Instant at(LocalDate day, int hour) {
+    return day.atTime(hour, 30).toInstant(ZoneOffset.UTC);
+  }
+
+  @Test
+  void aMembershipAskedForUntilADateEndsWhenItHasPassed() throws Exception {
+    LocalDate today = LocalDate.now(ZoneOffset.UTC);
+    String daveDn = "uid=dave,ou=people," + B;
+    Client dave = login("dave");
+    Client carol = login("carol");
+    // A day from today on, as a date, and not absurdly far away.
+    for (String bad : List.of(today.minusDays(1).toString(), "next week", today.plusDays(3651).toString())) {
+      MvcResult r = dave.post("/api/groups/def-groups/requests" + q(ENGINEERING), Map.of("reason", "On call", "until", bad));
+      assertThat(status(r)).as(bad).isEqualTo(400);
+      assertThat(body(r).get("details").has("until")).isTrue();
+    }
+    MvcResult asked = dave.post("/api/groups/def-groups/requests" + q(ENGINEERING), Map.of("reason", "On call", "until", today.plusDays(30).toString()));
+    assertThat(status(asked)).isEqualTo(201);
+    String id = body(asked).get("id").asString();
+    assertThat(body(carol.get("/api/groups/requests?scope=review")).get(0).get("request").get("until").asString()).isEqualTo(today.plusDays(30).toString());
+
+    // The approver may shorten the access, not extend it.
+    MvcResult longer = carol.post("/api/groups/requests/" + id + "/approve", Map.of("until", today.plusDays(31).toString()));
+    assertThat(status(longer)).isEqualTo(400);
+    assertThat(body(longer).get("details").get("until").asString()).contains(today.plusDays(30).toString());
+    assertThat(requests.find(id).pending()).isTrue();
+    LocalDate last = today.plusDays(10);
+    MvcResult approved = carol.post("/api/groups/requests/" + id + "/approve", Map.of("until", last.toString()));
+    assertThat(status(approved)).as(approved.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(approved).get("grantedUntil").asString()).isEqualTo(last.toString());
+    assertThat(body(approved).get("until").asString()).isEqualTo(today.plusDays(30).toString());
+
+    // Owners see the end date in the member list, the member under My groups and on the group's page.
+    assertThat(memberUntil(carol, ENGINEERING, daveDn)).isEqualTo(last.toString());
+    assertThat(memberUntil(carol, ENGINEERING, ALICE)).isNull();
+    assertThat(byName(body(dave.get("/api/groups/mine"))).get("engineering").get("memberUntil").asString()).isEqualTo(last.toString());
+    assertThat(body(dave.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("group").get("memberUntil").asString()).isEqualTo(last.toString());
+    assertThat(byName(body(login("alice").get("/api/groups/mine"))).get("engineering").get("memberUntil").isNull()).isTrue();
+    Client admin = login("admin");
+    assertThat(body(admin.get("/api/admin/audit?action=group.access-approved")).get("events").get(0).get("details").get("until").asString())
+        .isEqualTo(last.toString());
+
+    // The membership lasts through its last day (UTC); the job pauses while the license is read-only.
+    assertThat(jobs.expireMemberships(at(last, 23))).isZero();
+    assertThat(member(dave, ENGINEERING)).isTrue();
+    TestLicensing.use(TestLicenses.license().expired().sign());
+    assertThat(jobs.expireMemberships(at(last.plusDays(1), 0))).isZero();
+    TestLicensing.use(TestLicenses.full());
+    int[] removed = new int[1];
+    List<EntryChanged> changes = changesDuring(() -> removed[0] = jobs.expireMemberships(at(last.plusDays(1), 0)));
+    assertThat(removed[0]).isEqualTo(1);
+    assertThat(member(dave, ENGINEERING)).isFalse();
+    assertThat(member(login("alice"), ENGINEERING)).isTrue();
+    // Once: a later run (or another replica's) has nothing left to do.
+    assertThat(jobs.expireMemberships(at(last.plusDays(1), 1))).isZero();
+    assertThat(expiries.all()).isEmpty();
+
+    // The usual entry.update by the system, a group.membership-expired event, and the webhook's change.
+    JsonNode update = body(admin.get("/api/admin/audit?action=entry.update")).get("events").get(0);
+    assertThat(update.get("actor").get("type").asString()).isEqualTo("system");
+    assertThat(update.get("details").get("via").asString()).isEqualTo("group-membership-expired");
+    assertThat(update.get("details").get("member.old").asString()).isEqualTo(daveDn);
+    List<JsonNode> expired = events("group.membership-expired", "member", daveDn);
+    assertThat(expired).hasSize(1);
+    assertThat(expired.get(0).get("outcome").asString()).isEqualTo("success");
+    assertThat(expired.get(0).get("target").get("id").asString()).isEqualTo(ENGINEERING);
+    assertThat(expired.get(0).get("details").get("member").asString()).isEqualTo(daveDn);
+    assertThat(expired.get(0).get("details").get("until").asString()).isEqualTo(last.toString());
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).dn()).isEqualTo(ENGINEERING);
+    assertThat(changes.get(0).changes().get(0).before()).containsExactly(daveDn);
+    assertThat(changes.get(0).actor().username()).isNull();
+  }
+
+  @Test
+  void ownersSetChangeAndClearEndDates() throws Exception {
+    LocalDate today = LocalDate.now(ZoneOffset.UTC);
+    String george = "uid=george,ou=people," + B;
+    Client carol = login("carol");
+    String members = "/api/groups/def-groups/members" + q(ENGINEERING);
+    String until = "/api/groups/def-groups/members/until" + q(ENGINEERING);
+
+    // Added with an end date.
+    MvcResult added = carol.post(members, Map.of("add", List.of(george), "remove", List.of(), "until", today.plusDays(5).toString()));
+    assertThat(status(added)).as(added.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(memberUntil(carol, ENGINEERING, george)).isEqualTo(today.plusDays(5).toString());
+    assertThat(status(carol.post(members, Map.of("add", List.of("uid=erin,ou=people," + B), "remove", List.of(), "until", "soon")))).isEqualTo(400);
+    assertThat(member(login("erin"), ENGINEERING)).isFalse();
+
+    // Changed, set for a member who had none, and cleared; only by those who manage the group.
+    assertThat(status(carol.post(until, Map.of("member", george, "until", today.plusDays(7).toString())))).isEqualTo(200);
+    assertThat(memberUntil(carol, ENGINEERING, george)).isEqualTo(today.plusDays(7).toString());
+    JsonNode event = body(login("admin").get("/api/admin/audit?action=group.membership-end-date")).get("events").get(0);
+    assertThat(event.get("actor").get("id").asString()).isEqualTo("carol");
+    assertThat(event.get("details").get("member").asString()).isEqualTo(george);
+    assertThat(event.get("details").get("until.old").asString()).isEqualTo(today.plusDays(5).toString());
+    assertThat(event.get("details").get("until.new").asString()).isEqualTo(today.plusDays(7).toString());
+    assertThat(status(carol.post(until, Map.of("member", ALICE, "until", today.plusDays(20).toString())))).isEqualTo(200);
+    assertThat(memberUntil(carol, ENGINEERING, ALICE)).isEqualTo(today.plusDays(20).toString());
+    assertThat(status(carol.post(until, Map.of("member", george)))).isEqualTo(200);
+    assertThat(memberUntil(carol, ENGINEERING, george)).isNull();
+    assertThat(status(login("alice").post(until, Map.of("member", ALICE)))).isEqualTo(403);
+    assertThat(status(login("bob").post(until, Map.of("member", ALICE, "until", today.plusDays(900).toString())))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/members/until" + q(SALES), Map.of("member", "uid=bob,ou=people," + B)))).isEqualTo(403);
+    assertThat(memberUntil(carol, ENGINEERING, ALICE)).isEqualTo(today.plusDays(20).toString());
+    assertThat(status(carol.post(until, Map.of("member", "uid=dave,ou=people," + B, "until", today.plusDays(7).toString())))).isEqualTo(404);
+    assertThat(status(carol.post(until, Map.of("member", george, "until", today.minusDays(1).toString())))).isEqualTo(400);
+    assertThat(status(carol.post(until, Map.of("until", today.plusDays(7).toString())))).isEqualTo(400);
+
+    // Adding the person again without a date clears it; removing a member drops theirs.
+    assertThat(status(carol.post(members, Map.of("add", List.of(ALICE), "remove", List.of())))).isEqualTo(200);
+    assertThat(memberUntil(carol, ENGINEERING, ALICE)).isNull();
+    assertThat(status(carol.post(until, Map.of("member", george, "until", today.plusDays(3).toString())))).isEqualTo(200);
+    assertThat(status(carol.post(members, Map.of("add", List.of(), "remove", List.of(george))))).isEqualTo(200);
+    assertThat(expiries.all()).isEmpty();
+    // ... and so does leaving.
+    assertThat(status(carol.post(members, Map.of("add", List.of(george), "remove", List.of(), "until", today.plusDays(3).toString())))).isEqualTo(200);
+    assertThat(status(login("george").post("/api/groups/def-groups/leave" + q(ENGINEERING), null))).isEqualTo(200);
+    assertThat(expiries.all()).isEmpty();
+
+    // A member removed elsewhere takes the end date along: added again later, they stay.
+    assertThat(status(carol.post(members, Map.of("add", List.of(george), "remove", List.of(), "until", today.plusDays(3).toString())))).isEqualTo(200);
+    Client admin = login("admin");
+    List<String> without = List.of(ALICE, "uid=carol,ou=people," + B, "uid=fatima,ou=people," + B);
+    assertThat(status(admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", without))))).isEqualTo(200);
+    assertThat(expiries.all()).hasSize(1);
+    assertThat(jobs.expireMemberships(Instant.now().plus(1, ChronoUnit.HOURS))).isZero();
+    assertThat(expiries.all()).isEmpty();
+    List<String> with = new ArrayList<>(without);
+    with.add(george);
+    assertThat(status(admin.put("/api/directories/groups/entry" + q(ENGINEERING), Map.of("values", Map.of("member", with))))).isEqualTo(200);
+    assertThat(jobs.expireMemberships(at(today.plusDays(10), 0))).isZero();
+    assertThat(member(login("george"), ENGINEERING)).isTrue();
+  }
+
+  @Test
+  void theDirectoryLimitsHowLongMembershipsLast() throws Exception {
+    LocalDate today = LocalDate.now(ZoneOffset.UTC);
+    String george = "uid=george,ou=people," + B;
+    setGroups(groups(Map.of("maxMembershipDays", 30, "openFilter", "(cn=social-club)", "allowLeave", true)));
+    Client dave = login("dave");
+    Client carol = login("carol");
+    assertThat(body(dave.get("/api/groups/directories")).get(0).get("maxMembershipDays").asInt()).isEqualTo(30);
+    assertThat(body(dave.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("maxMembershipDays").asInt()).isEqualTo(30);
+
+    // No request, approval or added member gets more; without a date they get the longest.
+    MvcResult tooLong = dave.post("/api/groups/def-groups/requests" + q(ENGINEERING), Map.of("until", today.plusDays(31).toString()));
+    assertThat(status(tooLong)).isEqualTo(400);
+    assertThat(body(tooLong).get("details").get("until").asString()).contains("at most 30 days");
+    String id = ask(dave, ENGINEERING, null);
+    assertThat(status(carol.post("/api/groups/requests/" + id + "/approve", Map.of("until", today.plusDays(31).toString())))).isEqualTo(400);
+    assertThat(body(carol.post("/api/groups/requests/" + id + "/approve", Map.of())).get("grantedUntil").asString()).isEqualTo(today.plusDays(30).toString());
+    assertThat(memberUntil(carol, ENGINEERING, "uid=dave,ou=people," + B)).isEqualTo(today.plusDays(30).toString());
+
+    String members = "/api/groups/def-groups/members" + q(ENGINEERING);
+    assertThat(status(carol.post(members, Map.of("add", List.of(george), "remove", List.of(), "until", today.plusDays(40).toString())))).isEqualTo(400);
+    assertThat(member(login("george"), ENGINEERING)).isFalse();
+    assertThat(status(carol.post(members, Map.of("add", List.of(george), "remove", List.of())))).isEqualTo(200);
+    assertThat(memberUntil(carol, ENGINEERING, george)).isEqualTo(today.plusDays(30).toString());
+    // An end date can be moved within the limit, not cleared.
+    String until = "/api/groups/def-groups/members/until" + q(ENGINEERING);
+    assertThat(status(carol.post(until, Map.of("member", george, "until", today.plusDays(12).toString())))).isEqualTo(200);
+    MvcResult cleared = carol.post(until, Map.of("member", george));
+    assertThat(status(cleared)).isEqualTo(400);
+    assertThat(body(cleared).get("details").has("until")).isTrue();
+    assertThat(memberUntil(carol, ENGINEERING, george)).isEqualTo(today.plusDays(12).toString());
+
+    // Joining an open group is for the longest membership too.
+    assertThat(status(dave.post("/api/groups/def-groups/join" + q(SOCIAL), null))).isEqualTo(200);
+    assertThat(byName(body(dave.get("/api/groups/mine"))).get("social-club").get("memberUntil").asString()).isEqualTo(today.plusDays(30).toString());
+
+    // An approval after the limit was lowered follows the limit, not the date asked for.
+    String erins = body(login("erin").post("/api/groups/def-groups/requests" + q(ENGINEERING), Map.of("until", today.plusDays(25).toString())))
+        .get("id").asString();
+    setGroups(groups(Map.of("maxMembershipDays", 7)));
+    assertThat(body(carol.post("/api/groups/requests/" + erins + "/approve", Map.of())).get("grantedUntil").asString())
+        .isEqualTo(today.plusDays(7).toString());
+
+    Map<String, Object> def = definitionInput();
+    def.put("groups", groups(Map.of("maxMembershipDays", 3651)));
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+    def.put("groups", groups(Map.of("maxMembershipDays", -1)));
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+  }
+
+  @Test
+  void aMemberThatCannotBeRemovedIsReportedAndTriedAgainADayLater() throws Exception {
+    LocalDate today = LocalDate.now(ZoneOffset.UTC);
+    String erinDn = "uid=erin,ou=people," + B;
+    // Erin is social-club's owner and only member, and the form requires a member.
+    Client erin = login("erin");
+    assertThat(status(erin.post("/api/groups/def-groups/members/until" + q(SOCIAL), Map.of("member", erinDn, "until", today.toString())))).isEqualTo(200);
+    assertThat(jobs.expireMemberships(at(today.plusDays(1), 0))).isZero();
+    assertThat(member(erin, SOCIAL)).isTrue();
+    assertThat(jobs.expireMemberships(at(today.plusDays(1), 5))).isZero();
+    List<JsonNode> events = events("group.membership-expired", "member", erinDn);
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).get("outcome").asString()).isEqualTo("failure");
+    assertThat(events.get(0).get("actor").get("type").asString()).isEqualTo("system");
+    assertThat(expiries.all()).hasSize(1);
+    assertThat(jobs.expireMemberships(at(today.plusDays(2), 1))).isZero();
+    assertThat(events("group.membership-expired", "member", erinDn)).hasSize(2);
+
+    // Once someone else is in the group, the next try removes her.
+    assertThat(status(erin.post("/api/groups/def-groups/members" + q(SOCIAL), Map.of("add", List.of(ALICE), "remove", List.of())))).isEqualTo(200);
+    assertThat(jobs.expireMemberships(at(today.plusDays(3), 2))).isEqualTo(1);
+    assertThat(member(erin, SOCIAL)).isFalse();
+    assertThat(expiries.all()).isEmpty();
+    assertThat(events("group.membership-expired", "member", erinDn).get(0).get("outcome").asString()).isEqualTo("success");
+  }
+
   @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
@@ -460,6 +693,7 @@ class GroupsTest extends ApiTestSupport {
     assertThat(settings.ownersManage()).isFalse();
     assertThat(settings.requestExpiry()).isZero();
     assertThat(settings.openFilter()).isNull();
+    assertThat(settings.maxMembership()).isZero();
   }
 
   /** Enabled group access with the given settings (the booleans are always sent, as by the editor). */

@@ -687,6 +687,21 @@ doesn't take the portal out of service. It is DOWN when none answers.
   decision and the owner's note. Nobody decides their own request.
 - **Owners manage members** on the group's page: find people by name, login or e-mail to add
   them, and remove members. They don't need write access to the whole definition for this.
+- **Time-limited membership.** A request may ask for access until a date; the approver may
+  shorten it, not extend it. Owners can give the members they add an end date, and change or
+  remove it later in the member list. Dates are whole days in UTC: the member belongs to the
+  group through that day, and an hourly job removes them once it has passed (one instance runs
+  it; like other scheduled work it pauses while the license is read-only). The member list and
+  *My groups* show the end date.
+  - With a **longest membership** set for the directory (in days; empty by default: no limit),
+    every membership the portal grants ends within it: a request, an added member or a join
+    without a date gets the longest, and an end date can be moved but not removed.
+  - The portal keeps only the end dates it granted. Members added elsewhere have none. A record
+    whose member is no longer in the group is dropped, and adding the person again without a
+    date clears it.
+  - A member the directory won't let go (for example the last member of a group whose form
+    requires one) stays: `group.membership-expired` is recorded as failed, and the portal tries
+    again a day later.
 - **Owners manage owners**, where the directory allows it (off by default): on the group's page
   they add people as owners and remove any owner, person or group. The last owner can't be
   removed. Those who may edit the definition can do the same there.
@@ -697,18 +712,24 @@ doesn't take the portal out of service. It is DOWN when none answers.
   `(!(cn=domain admins))`; the others can be looked up but not requested), whether a reason is
   required, whether members may leave, whether owners may change owners (the owner attribute
   must then be a multi-valued field of the form), the days after which an unanswered request
-  expires (empty: never; at most 365), and an LDAP filter for open groups (for example
-  `(cn=social-*)`; empty: none). The definition must be read/write.
+  expires (empty: never; at most 365), an LDAP filter for open groups (for example
+  `(cn=social-*)`; empty: none), and the longest membership in days (empty: no limit; at most
+  3650). The definition must be read/write.
 - **Audit and webhooks.** Requests and decisions are audited (`group.access-requested`,
   `group.access-cancelled`, `group.access-approved`, `group.access-rejected`, and
   `group.access-expired` by the system). Every membership change is the usual `entry.update`
   event, and its `details.via` says why someone without write access could make it:
   `group-access-request`, `group-owner`, `group-leave` or `group-join` (an open group).
   Membership changes also send the `group.membership_changed` webhook. A change of owners by an
-  owner is an `entry.update` with `details.via` `group-owners`.
+  owner is an `entry.update` with `details.via` `group-owners`. An end date set, changed or
+  removed is `group.membership-end-date`. A member removed after their end date is an
+  `entry.update` by the system with `details.via` `group-membership-expired`, the webhook, and a
+  `group.membership-expired` event.
 - Requests are kept in `group-access-requests.json` in the data directory, or in the shared
   database when one is configured. Closed requests are kept for a year (at most 5,000); the
-  audit trail keeps them for good.
+  audit trail keeps them for good. End dates are kept in `group-membership-expiries.json`, or
+  in the shared database's `dsp_group_membership_expiry` table (Flyway V13; the file is imported
+  once).
 - The demo turns it on for *Groups*. Carol Chen co-owns *engineering* (and may change its
   owners), *directory-admins* doesn't take requests, *social-club* is open, and requests expire
   after 30 days.
@@ -1433,6 +1454,9 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
 - **Webhooks**: the webhooks (secrets encrypted with `DSP_SECRETS_KEY`, which every instance needs)
   and their outbox are shared; an entry change's deliveries are written in its audit event's
   transaction, so an instance stopping loses none.
+- **Group access**: requests and the end dates of memberships (`dsp_group_membership_expiry`,
+  Flyway V13) are shared. The jobs that expire requests and end memberships run under a cluster
+  lock, and each request or membership is closed by one instance only.
 
 - **The license state** (installation id, license, revisions seen) moves into the database
   (`ens_license_*`, ENS license library 1.2.0's database store): every instance has the same

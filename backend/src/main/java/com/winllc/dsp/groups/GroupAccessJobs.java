@@ -13,9 +13,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Group access's scheduled work: closing the requests nobody answered in time. With the shared
- * database one replica runs it at a time (a cluster lock), and each request is closed by one
- * caller only. Like the portal's other scheduled work it pauses while the license is not in full
+ * Group access's scheduled work: closing the requests nobody answered in time, and removing the
+ * members whose end date has passed. With the shared database one replica runs each at a time (a
+ * cluster lock), and each request or membership is closed by one caller only. Like the portal's other scheduled work it pauses while the license is not in full
  * effect or doesn't cover group access.
  */
 @Component
@@ -51,6 +51,24 @@ public class GroupAccessJobs {
         log.error("Could not expire group access requests: {}", LogSafe.of(e.getMessage()));
       }
     });
+  }
+
+  /** Hourly: end dates are whole days, so a membership ends within the hour after its last day (UTC). */
+  @Scheduled(fixedDelay = 60 * 60_000, initialDelay = 3 * 60_000)
+  void scheduledMembershipExpiry() {
+    cluster.runLocked("group-membership-expiry", Duration.ofMinutes(30), Duration.ofMinutes(1), () -> {
+      try {
+        int n = expireMemberships(Instant.now());
+        if (n > 0) log.info("Removed {} group member(s) whose end date had passed", n);
+      } catch (RuntimeException e) {
+        log.error("Could not end time-limited group memberships: {}", LogSafe.of(e.getMessage()));
+      }
+    });
+  }
+
+  /** Removes the members whose end date has passed at {@code now} (see {@link GroupService#expireMemberships}); nothing while the license pauses jobs. */
+  public int expireMemberships(Instant now) {
+    return licensed() ? groups.expireMemberships(now) : 0;
   }
 
   /** Expires the requests due at {@code now} (see {@link GroupService#expireRequests}); nothing while the license pauses jobs. */

@@ -234,6 +234,8 @@ export interface GroupAccess {
   requestExpiryDays?: number;
   /** Groups matching this LDAP filter (and taking requests) are joined at once, without approval. */
   openFilter?: string;
+  /** The longest membership the portal grants, in days (none: no limit, an end date is optional). */
+  maxMembershipDays?: number;
 }
 
 export interface GroupDirectory {
@@ -243,6 +245,8 @@ export interface GroupDirectory {
   icon?: string;
   requireReason: boolean;
   allowLeave: boolean;
+  /** The longest membership the portal grants here, in days (none: no limit). */
+  maxMembershipDays?: number | null;
 }
 
 export interface GroupSummary {
@@ -258,6 +262,8 @@ export interface GroupSummary {
   /** Can be joined at once, without approval. */
   open: boolean;
   pendingRequestId?: string;
+  /** The last day (`yyyy-MM-dd`, UTC) of the user's membership, when it was granted for a limited time. */
+  memberUntil?: string | null;
 }
 
 export interface GroupList {
@@ -285,10 +291,17 @@ export interface GroupDetail {
   pendingRequests: number;
   /** The viewer may add and remove the group's owners. */
   canManageOwners: boolean;
+  /** The longest membership the portal grants here, in days (none: no limit). */
+  maxMembershipDays?: number | null;
+}
+
+/** A member as the group's owners see it: `until` is the membership's last day (`yyyy-MM-dd`, UTC), if it has one. */
+export interface GroupMember extends GroupPerson {
+  until?: string | null;
 }
 
 export interface GroupMemberPage {
-  items: GroupPerson[];
+  items: GroupMember[];
   total: number;
   page: number;
   pageSize: number;
@@ -315,6 +328,10 @@ export interface AccessRequest {
   note?: string;
   /** For an expired request: the days it waited without an answer. */
   expiredAfterDays?: number;
+  /** The last day (`yyyy-MM-dd`, UTC) of the access asked for; none: no end asked. */
+  until?: string;
+  /** The end date an approval gave the membership; none: no end. */
+  grantedUntil?: string;
 }
 
 export interface AccessRequestView {

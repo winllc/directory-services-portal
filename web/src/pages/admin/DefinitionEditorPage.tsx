@@ -538,6 +538,22 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                     onChange={(e) => setGroups({ requestExpiryDays: wholeDays(e.target.value, 365) })}
                   />
                 </FormRow>
+                <FormRow
+                  label="Longest membership (days)"
+                  htmlFor="ga-max"
+                  hint="Requests, joins and members added by owners get an end date no later than this, and the portal removes the member when it has passed. Empty: no limit, and an end date is optional. At most 3650."
+                >
+                  <input
+                    id="ga-max"
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={3650}
+                    placeholder="No limit"
+                    value={groups.maxMembershipDays || ''}
+                    onChange={(e) => setGroups({ maxMembershipDays: wholeDays(e.target.value, 3650) })}
+                  />
+                </FormRow>
               </div>
               <Toggle
                 checked={groups.requireReason}

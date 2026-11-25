@@ -45,13 +45,15 @@ public class AccessRequests {
    * A request by {@code requester} (their {@code SessionUser.key()}; {@code requesterDn},
    * {@code requesterName} for display) to be added to {@code groupDn} of {@code definitionId} as
    * {@code member} (their DN, or their login name for memberUid groups). {@code expiredAfterDays}:
-   * for an expired request, how long it had waited. Fields added after the first release are
-   * objects, so requests stored without them are still read.
+   * for an expired request, how long it had waited. {@code until}: the last day of the access
+   * asked for (a day, UTC, as {@code yyyy-MM-dd}; none: no end asked); {@code grantedUntil}: the
+   * end date an approval gave the membership (none: no end). Fields added after the first release
+   * are objects, so requests stored without them are still read.
    */
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Request(String id, String definitionId, String groupDn, String groupName, String requester, String requesterDn,
       String requesterName, String member, String reason, String status, String createdAt, String decidedAt, String decidedBy,
-      String decidedByName, String note, Integer expiredAfterDays) {
+      String decidedByName, String note, Integer expiredAfterDays, String until, String grantedUntil) {
 
     public boolean pending() {
       return PENDING.equals(status);
@@ -59,17 +61,17 @@ public class AccessRequests {
 
     Request reopened() {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, PENDING, createdAt, null,
-          null, null, null, null);
+          null, null, null, null, until, null);
     }
 
-    Request closed(String newStatus, String at, String by, String byName, String withNote) {
+    Request closed(String newStatus, String at, String by, String byName, String withNote, String withGrantedUntil) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, newStatus, createdAt, at,
-          by, byName, withNote, null);
+          by, byName, withNote, null, until, withGrantedUntil);
     }
 
     Request expired(String at, int afterDays) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, EXPIRED, createdAt, at,
-          null, null, null, afterDays);
+          null, null, null, afterDays, until, null);
     }
   }
 
@@ -106,8 +108,14 @@ public class AccessRequests {
   /** Adds a pending request, unless the requester already has one for the group (409). */
   public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
       String member, String reason, int maxPendingPerUser) {
+    return add(definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, null, maxPendingPerUser);
+  }
+
+  /** As above, for access until the end of {@code until} (a day as {@code yyyy-MM-dd}; null: no end asked). */
+  public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
+      String member, String reason, String until, int maxPendingPerUser) {
     Request r = new Request("req-" + UUID.randomUUID(), definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason,
-        PENDING, now(), null, null, null, null, null);
+        PENDING, now(), null, null, null, null, null, until, null);
     store(list -> {
       List<Request> mine = list.stream().filter(x -> x.pending() && x.requester().equals(requester)).toList();
       if (mine.stream().anyMatch(x -> x.definitionId().equals(definitionId) && com.winllc.dsp.ldap.Dns.equal(x.groupDn(), groupDn))) {
@@ -123,8 +131,13 @@ public class AccessRequests {
 
   /** Closes a pending request (409 when it was decided or cancelled meanwhile); returns it closed. */
   public Request close(String id, String status, String by, String byName, String note) {
+    return close(id, status, by, byName, note, null);
+  }
+
+  /** As above; {@code grantedUntil}: the end date an approval gives the membership (null: none). */
+  public Request close(String id, String status, String by, String byName, String note, String grantedUntil) {
     String at = now();
-    return close(id, r -> r.closed(status, at, by, byName, note));
+    return close(id, r -> r.closed(status, at, by, byName, note, grantedUntil));
   }
 
   /**

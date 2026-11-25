@@ -6,6 +6,7 @@ import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.Memberships;
 import com.winllc.dsp.web.ApiException;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.List;
@@ -35,11 +36,17 @@ public class GroupsController {
     this.groups = groups;
   }
 
-  public record RequestInput(@Size(max = GroupService.MAX_REASON) String reason) {}
+  /** {@code until}: the last day of the access asked for ({@code yyyy-MM-dd}, UTC); none: no end asked. */
+  public record RequestInput(@Size(max = GroupService.MAX_REASON) String reason, @Size(max = 10) String until) {}
 
-  public record DecisionInput(@Size(max = GroupService.MAX_REASON) String note) {}
+  /** {@code until}: an approval's end date, no later than the day asked for; none: as asked. */
+  public record DecisionInput(@Size(max = GroupService.MAX_REASON) String note, @Size(max = 10) String until) {}
 
-  public record MembersInput(@NotNull @Size(max = 1000) List<@Size(max = 1024) String> add, @NotNull @Size(max = 1000) List<@Size(max = 1024) String> remove) {}
+  /** {@code until}: the last day of the memberships added; none: the directory's longest, or no end. */
+  public record MembersInput(@NotNull @Size(max = 1000) List<@Size(max = 1024) String> add, @NotNull @Size(max = 1000) List<@Size(max = 1024) String> remove,
+      @Size(max = 10) String until) {}
+
+  public record MemberUntilInput(@NotBlank @Size(max = 1024) String member, @Size(max = 10) String until) {}
 
   public record OwnersInput(@NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> add,
       @NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> remove) {}
@@ -79,7 +86,7 @@ public class GroupsController {
   @PostMapping("/{definitionId}/requests")
   public ResponseEntity<AccessRequests.Request> request(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId,
       @RequestParam String dn, @Valid @RequestBody RequestInput in) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(groups.request(user, definitionId, dn(dn), in.reason()));
+    return ResponseEntity.status(HttpStatus.CREATED).body(groups.request(user, definitionId, dn(dn), in.reason(), in.until()));
   }
 
   /** Joins an open group at once, without approval. */
@@ -104,7 +111,14 @@ public class GroupsController {
   @PostMapping("/{definitionId}/members")
   public Memberships.Change changeMembers(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn,
       @Valid @RequestBody MembersInput in) {
-    return groups.changeMembers(user, definitionId, dn(dn), in.add(), in.remove());
+    return groups.changeMembers(user, definitionId, dn(dn), in.add(), in.remove(), in.until());
+  }
+
+  /** Sets, changes or (without {@code until}) clears a member's end date. */
+  @PostMapping("/{definitionId}/members/until")
+  public GroupService.Member memberUntil(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn,
+      @Valid @RequestBody MemberUntilInput in) {
+    return groups.setMemberUntil(user, definitionId, dn(dn), in.member(), in.until());
   }
 
   /** Adds people to and removes values from the group's owners (when its directory lets owners do so). */
@@ -147,7 +161,7 @@ public class GroupsController {
 
   @PostMapping("/requests/{id}/approve")
   public AccessRequests.Request approve(@AuthenticationPrincipal SessionUser user, @PathVariable String id, @Valid @RequestBody DecisionInput in) {
-    return groups.decide(user, id, true, in.note());
+    return groups.decide(user, id, true, in.note(), in.until());
   }
 
   @PostMapping("/requests/{id}/reject")

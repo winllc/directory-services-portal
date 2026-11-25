@@ -11,6 +11,47 @@ export const groupPath = (definitionId: string, dn: string) => `/groups/${encode
 export const when = (iso?: string) =>
   iso ? new Date(iso).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
+/** An end date (`yyyy-MM-dd`, a whole day in UTC) as shown: the same day whatever the viewer's time zone. */
+export const day = (date?: string | null) =>
+  date ? new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
+
+/** Today (UTC) plus `days`, as `yyyy-MM-dd`: end dates are whole days in UTC. */
+export const dayFromNow = (days = 0) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * The last day of a membership: a date from today on, no later than `latest` (a day) or the
+ * directory's longest membership (`maxDays`).
+ */
+export function EndDateField({
+  id,
+  label,
+  value,
+  onChange,
+  maxDays,
+  latest,
+  hint,
+  error,
+  required,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  maxDays?: number | null;
+  latest?: string;
+  hint?: string;
+  error?: string;
+  required?: boolean;
+}) {
+  const limit = maxDays ? dayFromNow(maxDays) : undefined;
+  const max = latest && (!limit || latest < limit) ? latest : limit;
+  return (
+    <FormRow label={label} htmlFor={id} hint={hint} error={error} required={required}>
+      <input id={id} className="input" type="date" min={dayFromNow()} max={max} value={value} onChange={(e) => onChange(e.target.value)} />
+    </FormRow>
+  );
+}
+
 export function GroupLink({ definitionId, dn, children }: { definitionId: string; dn: string; children: React.ReactNode }) {
   return <Link to={groupPath(definitionId, dn)}>{children}</Link>;
 }
@@ -19,7 +60,7 @@ export function GroupLink({ definitionId, dn, children }: { definitionId: string
 export function GroupBadges({ group }: { group: GroupSummary }) {
   return (
     <span className="group-badges">
-      {group.member && <Badge tone="success">Member</Badge>}
+      {group.member && <Badge tone="success">{group.memberUntil ? `Member until ${day(group.memberUntil)}` : 'Member'}</Badge>}
       {group.owner && <Badge tone="accent">Owner</Badge>}
       {group.pendingRequestId && <Badge tone="info">Requested</Badge>}
       {!group.member && group.open && <Badge tone="info">Open to join</Badge>}
@@ -45,15 +86,20 @@ export function RequestStatus({ status }: { status: AccessRequestStatus }) {
   return <Badge tone={s.tone}>{s.label}</Badge>;
 }
 
-/** Asks to join a group, with a reason (required when the group's directory says so). */
+/**
+ * Asks to join a group, with a reason (required when the group's directory says so) and, if the
+ * requester wants, the day until which they need access.
+ */
 export function RequestAccessDialog({
   group,
   requireReason,
+  maxMembershipDays,
   open,
   onClose,
 }: {
   group: Pick<GroupSummary, 'definitionId' | 'dn' | 'name'>;
   requireReason: boolean;
+  maxMembershipDays?: number | null;
   open: boolean;
   onClose: () => void;
 }) {
@@ -61,15 +107,17 @@ export function RequestAccessDialog({
   const toast = useToast();
   const { request } = useGroupMutations();
   const [reason, setReason] = useState('');
+  const [until, setUntil] = useState('');
   const close = () => {
     request.reset();
     setReason('');
+    setUntil('');
     onClose();
   };
   const details = (request.error as { details?: Record<string, string> } | null)?.details;
   const submit = () =>
     request.mutate(
-      { definitionId: group.definitionId, dn: group.dn, reason: reason.trim() },
+      { definitionId: group.definitionId, dn: group.dn, reason: reason.trim(), until },
       {
         onSuccess: () => {
           toast.success(`Asked to join ${group.name}. Its owners will decide.`);
@@ -103,24 +151,40 @@ export function RequestAccessDialog({
         >
           <textarea id={`${id}-reason`} className="input" rows={4} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} />
         </FormRow>
+        <EndDateField
+          id={`${id}-until`}
+          label="Access until (optional)"
+          value={until}
+          onChange={setUntil}
+          maxDays={maxMembershipDays}
+          error={details?.until}
+          hint={
+            maxMembershipDays
+              ? `The last day you need access. Memberships here last at most ${maxMembershipDays} days; empty: that long.`
+              : 'The last day you need access. Empty: no end date.'
+          }
+        />
       </div>
     </Modal>
   );
 }
 
-/** Approves or rejects a request, with an optional note for the requester. */
+/** Approves or rejects a request, with an optional note for the requester; an approval may shorten the access asked for. */
 export function DecisionDialog({ request, approve, onClose }: { request: AccessRequest | null; approve: boolean; onClose: () => void }) {
   const id = useId();
   const toast = useToast();
   const { decide } = useGroupMutations();
   const [note, setNote] = useState('');
+  const [until, setUntil] = useState('');
   const close = () => {
     decide.reset();
     setNote('');
+    setUntil('');
     onClose();
   };
   if (!request) return null;
   const who = request.requesterName ?? request.requester;
+  const details = (decide.error as { details?: Record<string, string> } | null)?.details;
   return (
     <Modal
       open
@@ -134,7 +198,7 @@ export function DecisionDialog({ request, approve, onClose }: { request: AccessR
             loading={decide.isPending}
             onClick={() =>
               decide.mutate(
-                { id: request.id, approve, note: note.trim() },
+                { id: request.id, approve, note: note.trim(), until },
                 {
                   onSuccess: () => {
                     toast.success(approve ? `${who} was added to ${request.groupName}.` : `The request was rejected.`);
@@ -150,12 +214,27 @@ export function DecisionDialog({ request, approve, onClose }: { request: AccessR
       }
     >
       <div className="stack">
-        <ErrorAlert error={decide.error} />
+        {!details?.until && <ErrorAlert error={decide.error} />}
         {request.reason && (
           <blockquote className="request-reason">
             <span className="muted small">Their reason</span>
             <p>{request.reason}</p>
           </blockquote>
+        )}
+        {approve && (
+          <EndDateField
+            id={`${id}-until`}
+            label="Access until (optional)"
+            value={until}
+            onChange={setUntil}
+            latest={request.until}
+            error={details?.until}
+            hint={
+              request.until
+                ? `${who} asked for access until ${day(request.until)}. You can shorten it; empty: as asked.`
+                : "Empty: no end date, or the directory's longest membership."
+            }
+          />
         )}
         <FormRow label={approve ? 'Note (optional)' : 'Why not? (optional)'} htmlFor={`${id}-note`} hint={`${who} sees this with the decision.`}>
           <textarea id={`${id}-note`} className="input" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />

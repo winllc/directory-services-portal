@@ -28,6 +28,9 @@ import java.util.Locale;
  *       many days (none or 0: never; at most {@value #MAX_REQUEST_EXPIRY_DAYS}).</li>
  *   <li>{@code openFilter}: groups matching this LDAP filter, among those that take requests, are
  *       open: anyone who could ask joins at once, without approval. None: no group is open.</li>
+ *   <li>{@code maxMembershipDays}: the longest membership the portal grants (requests, joins,
+ *       members added by owners), in days: every such membership then gets an end date. None or 0:
+ *       no limit, and an end date is optional. At most {@value #MAX_MEMBERSHIP_DAYS}.</li>
  * </ul>
  *
  * <p>Settings added after the first release are objects, not primitives: definitions stored (and
@@ -43,11 +46,14 @@ public record GroupAccess(
     boolean allowLeave,
     Boolean ownersManageOwners,
     @Min(0) @Max(GroupAccess.MAX_REQUEST_EXPIRY_DAYS) Integer requestExpiryDays,
-    @Size(max = 1000) @LdapFilter String openFilter) {
+    @Size(max = 1000) @LdapFilter String openFilter,
+    @Min(0) @Max(GroupAccess.MAX_MEMBERSHIP_DAYS) Integer maxMembershipDays) {
 
   public static final String DEFAULT_OWNER_ATTRIBUTE = "owner";
   /** Closed requests are kept for a year, so an open one waits no longer than that. */
   public static final int MAX_REQUEST_EXPIRY_DAYS = 365;
+  /** No membership's end date is further away than this (ten years). */
+  public static final int MAX_MEMBERSHIP_DAYS = 3650;
 
   public String ownerAttributeOrDefault() {
     return ownerAttribute == null || ownerAttribute.isBlank() ? DEFAULT_OWNER_ATTRIBUTE : ownerAttribute.toLowerCase(Locale.ROOT);
@@ -63,10 +69,16 @@ public record GroupAccess(
     return requestExpiryDays == null ? 0 : Math.max(0, requestExpiryDays);
   }
 
+  /** The longest membership the portal grants, in days; 0: no limit. */
+  public int maxMembership() {
+    return maxMembershipDays == null ? 0 : Math.max(0, maxMembershipDays);
+  }
+
   /** As stored: blanks and settings that are off dropped. */
   public GroupAccess cleaned() {
     return new GroupAccess(enabled, blank(memberAttribute), blank(ownerAttribute), blank(requestFilter), requireReason, allowLeave,
-        ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null, blank(openFilter));
+        ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null, blank(openFilter),
+        maxMembership() > 0 ? maxMembership() : null);
   }
 
   private static String blank(String s) {

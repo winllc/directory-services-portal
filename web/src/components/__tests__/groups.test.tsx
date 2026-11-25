@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import type { AccessRequest, GroupDetail, GroupPerson, GroupSummary } from '@dsp/shared';
+import type { AccessRequest, GroupDetail, GroupMember, GroupPerson, GroupSummary } from '@dsp/shared';
 import { App } from '../../App';
 import { AuthProvider } from '../../lib/auth';
 import { ToastProvider } from '../ui';
@@ -39,6 +39,9 @@ const request = (id: string, patch: Partial<AccessRequest>): AccessRequest => ({
 });
 
 const SOCIAL = `cn=social-club,ou=groups,${B}`;
+/** A day from today (UTC), as the API takes end dates. */
+const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+const shown = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 const summary = (dn: string, name: string, patch: Partial<GroupSummary>): GroupSummary => ({
   definitionId: 'def-groups',
   definitionName: 'Groups',
@@ -56,6 +59,8 @@ function server(overrides: Partial<GroupDetail> = {}) {
   const state = {
     owners: [ADA, CAROL],
     mine: [] as AccessRequest[],
+    review: [] as AccessRequest[],
+    members: [CAROL] as GroupMember[],
     groups: [summary(SOCIAL, 'social-club', { open: true }), summary(`cn=sales,ou=groups,${B}`, 'sales', {})],
   };
   const sent: { method: string; path: string; body: unknown }[] = [];
@@ -96,6 +101,25 @@ function server(overrides: Partial<GroupDetail> = {}) {
       if (path === '/api/groups/directories') return json([{ id: 'def-groups', name: 'Groups', slug: 'groups', requireReason: true, allowLeave: true }]);
       if (path === '/api/groups/requests/summary') return json({ toReview: 0, myPending: 0 });
       if (path === '/api/groups/requests' && url.includes('scope=mine')) return json(state.mine.map((r) => ({ request: r, definitionName: 'Groups', canDecide: false })));
+      if (path === '/api/groups/requests' && url.includes('scope=review')) return json(state.review.map((r) => ({ request: r, definitionName: 'Groups', canDecide: true })));
+      if (/^\/api\/groups\/requests\/[^/]+\/(approve|reject)$/.test(path)) {
+        const id = path.split('/')[4];
+        const decided = { ...state.review.find((r) => r.id === id)!, status: path.endsWith('approve') ? 'approved' : 'rejected' };
+        state.review = state.review.filter((r) => r.id !== id);
+        return json(decided);
+      }
+      if (path === '/api/groups/mine') return json({ groups: state.groups.filter((g) => g.member), truncated: false });
+      if (path === '/api/groups/def-groups/requests') return json(request('req-new', { requester: 'carol', ...(body as object) }), 201);
+      if (path === '/api/groups/def-groups/members/until') {
+        const change = body as { member: string; until?: string };
+        state.members = state.members.map((m) => (m.value === change.member ? { ...m, until: change.until ?? null } : m));
+        return json({ value: change.member, name: change.member, until: change.until ?? null });
+      }
+      if (path === '/api/groups/def-groups/members' && method === 'POST') {
+        const change = body as { add: string[]; remove: string[]; until?: string };
+        state.members = [...state.members.filter((m) => !change.remove.includes(m.value)), ...[GEORGE].filter((p) => change.add.includes(p.value)).map((p) => ({ ...p, until: change.until ?? null }))];
+        return json({ dn: ENGINEERING, attribute: 'member', added: change.add, removed: change.remove, partial: false });
+      }
       if (path === '/api/groups') return json({ groups: state.groups, truncated: false });
       if (path === '/api/groups/def-groups/join') {
         const dn = new URLSearchParams(url.split('?')[1]).get('dn');
@@ -103,7 +127,7 @@ function server(overrides: Partial<GroupDetail> = {}) {
         return json({ dn, attribute: 'member', added: [CAROL.value], removed: [], partial: false });
       }
       if (path === '/api/groups/def-groups/group') return json(detail());
-      if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: [CAROL], total: 1, page: 1, pageSize: 25, partial: false });
+      if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: state.members, total: state.members.length, page: 1, pageSize: 25, partial: false });
       if (path === '/api/groups/def-groups/people') return json([GEORGE]);
       if (path === '/api/groups/def-groups/owners') {
         const change = body as { add: string[]; remove: string[] };
@@ -224,5 +248,113 @@ describe('open groups', () => {
     await u.click(screen.getByRole('button', { name: 'Join' }));
     expect(await screen.findByText('You joined engineering.')).toBeInTheDocument();
     expect(api.sent[0].path).toBe('/api/groups/def-groups/join');
+  });
+});
+
+describe('time-limited membership', () => {
+  it('asks for access until a date, within the directory\'s longest membership', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    renderAt('/groups');
+
+    const sales = (await screen.findByRole('link', { name: 'sales' })).closest('tr')!;
+    await u.click(within(sales).getByRole('button', { name: 'Request access' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ask to join sales' });
+    await u.type(within(dialog).getByLabelText(/Why do you need access/), 'Quarter end');
+    const until = within(dialog).getByLabelText('Access until (optional)');
+    expect(until).toHaveAttribute('min', inDays(0));
+    expect(until).not.toHaveAttribute('max');
+    fireEvent.change(until, { target: { value: inDays(30) } });
+    await u.click(within(dialog).getByRole('button', { name: 'Send request' }));
+    expect(await screen.findByText('Asked to join sales. Its owners will decide.')).toBeInTheDocument();
+    expect(api.sent).toEqual([{ method: 'POST', path: '/api/groups/def-groups/requests', body: { reason: 'Quarter end', until: inDays(30) } }]);
+  });
+
+  it('lets the approver shorten the access asked for', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.review = [request('req-9', { until: inDays(30) })];
+    renderAt('/groups?tab=review');
+
+    const row = (await screen.findByText('Dave Diaz')).closest('tr')!;
+    expect(row).toHaveTextContent(`Until ${shown(inDays(30))}`);
+    await u.click(within(row).getByRole('button', { name: 'Approve' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add Dave Diaz to engineering?' });
+    const until = within(dialog).getByLabelText('Access until (optional)');
+    // No later than the day asked for.
+    expect(until).toHaveAttribute('max', inDays(30));
+    expect(dialog).toHaveTextContent(`Dave Diaz asked for access until ${shown(inDays(30))}. You can shorten it; empty: as asked.`);
+    fireEvent.change(until, { target: { value: inDays(10) } });
+    await u.click(within(dialog).getByRole('button', { name: 'Approve and add' }));
+    expect(await screen.findByText('Dave Diaz was added to engineering.')).toBeInTheDocument();
+    expect(api.sent).toEqual([{ method: 'POST', path: '/api/groups/requests/req-9/approve', body: { until: inDays(10) } }]);
+  });
+
+  it('shows members\' end dates to owners, who add with one and change or remove it', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.members = [{ ...CAROL, until: inDays(5) }];
+    renderAt(GROUP_PAGE);
+
+    await screen.findByRole('heading', { name: /^Members/ });
+    const members = card(/^Members/);
+    const carolRow = (await within(members).findByText('Carol Chen')).closest('li')!;
+    expect(carolRow).toHaveTextContent(`until ${shown(inDays(5))}`);
+
+    // Added with the end date typed next to the search.
+    fireEvent.change(within(members).getByLabelText('End date for people you add (optional)'), { target: { value: inDays(20) } });
+    await u.type(within(members).getByLabelText('Find someone to add'), 'geo');
+    await u.click(await within(members).findByRole('button', { name: 'Add' }));
+    expect(await screen.findByText('George Gupta was added.')).toBeInTheDocument();
+    expect(api.sent[0]).toEqual({ method: 'POST', path: '/api/groups/def-groups/members', body: { add: [GEORGE.value], remove: [], until: inDays(20) } });
+    expect((await within(members).findByText('George Gupta')).closest('li')!).toHaveTextContent(`until ${shown(inDays(20))}`);
+
+    // Changed in a dialog; removing a member sends no date.
+    await u.click(within(members).getByRole('button', { name: 'End date for Carol Chen' }));
+    let dialog = await screen.findByRole('dialog', { name: 'End date for Carol Chen' });
+    expect(within(dialog).getByLabelText('Member until')).toHaveValue(inDays(5));
+    fireEvent.change(within(dialog).getByLabelText('Member until'), { target: { value: inDays(9) } });
+    await u.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(`Carol Chen is a member until ${shown(inDays(9))}.`)).toBeInTheDocument();
+    expect(api.sent[1]).toEqual({ method: 'POST', path: '/api/groups/def-groups/members/until', body: { member: CAROL.value, until: inDays(9) } });
+
+    await u.click(within(members).getByRole('button', { name: 'End date for Carol Chen' }));
+    dialog = await screen.findByRole('dialog', { name: 'End date for Carol Chen' });
+    await u.click(within(dialog).getByRole('button', { name: 'Remove end date' }));
+    expect(await screen.findByText("Carol Chen's membership has no end date any more.")).toBeInTheDocument();
+    expect(api.sent[2].body).toEqual({ member: CAROL.value });
+  });
+
+  it('limits the dates to the directory\'s longest membership, where an end date cannot be removed', async () => {
+    const u = userEvent.setup();
+    const api = server({ maxMembershipDays: 30 });
+    api.state.members = [{ ...CAROL, until: inDays(5) }];
+    renderAt(GROUP_PAGE);
+
+    await screen.findByRole('heading', { name: /^Members/ });
+    const members = card(/^Members/);
+    expect(within(members).getByLabelText('End date for people you add (optional)')).toHaveAttribute('max', inDays(30));
+    await u.click(await within(members).findByRole('button', { name: 'End date for Carol Chen' }));
+    const dialog = await screen.findByRole('dialog', { name: 'End date for Carol Chen' });
+    expect(within(dialog).getByLabelText('Member until')).toHaveAttribute('max', inDays(30));
+    expect(within(dialog).queryByRole('button', { name: 'Remove end date' })).not.toBeInTheDocument();
+    expect(api.sent).toEqual([]);
+  });
+
+  it('shows the member their own end date', async () => {
+    const api = server({ group: summary(ENGINEERING, 'engineering', { member: true, memberUntil: inDays(12) }), canManageOwners: false });
+    api.state.groups = [summary(SOCIAL, 'social-club', { member: true, open: true, memberUntil: inDays(12) })];
+    renderAt(GROUP_PAGE);
+    expect(await screen.findByText(`You are a member of this group until ${shown(inDays(12))}.`)).toBeInTheDocument();
+  });
+
+  it('lists My groups with the end dates', async () => {
+    const api = server();
+    api.state.groups = [summary(SOCIAL, 'social-club', { member: true, open: true, memberUntil: inDays(12) }), summary(ENGINEERING, 'engineering', { member: true })];
+    renderAt('/groups?tab=mine');
+    const social = (await screen.findByRole('link', { name: 'social-club' })).closest('tr')!;
+    expect(social).toHaveTextContent(`Member until ${shown(inDays(12))}`);
+    const engineering = screen.getByRole('link', { name: 'engineering' }).closest('tr')!;
+    expect(within(engineering).getByText('Member')).toBeInTheDocument();
   });
 });

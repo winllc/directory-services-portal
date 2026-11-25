@@ -11,7 +11,7 @@ import {
   useMyGroups,
 } from '../api/hooks';
 import { Alert, Button, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, useDebounced, useToast } from '../components/ui';
-import { DecisionDialog, expiredText, GroupBadges, GroupLink, JoinButton, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
+import { day, DecisionDialog, expiredText, GroupBadges, GroupLink, JoinButton, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
 
 type Tab = 'find' | 'mine' | 'requests' | 'review';
 const TABS: Tab[] = ['find', 'mine', 'requests', 'review'];
@@ -92,6 +92,7 @@ function GroupAction({ group, directories }: { group: GroupSummary; directories:
       <RequestAccessDialog
         group={group}
         requireReason={settingsOf(directories, group.definitionId)?.requireReason ?? false}
+        maxMembershipDays={settingsOf(directories, group.definitionId)?.maxMembershipDays}
         open={asking}
         onClose={() => setAsking(false)}
       />
@@ -275,10 +276,12 @@ function MyRequests() {
                 </GroupLink>
                 {definitionName && <div className="muted small">{definitionName}</div>}
                 {r.reason && <div className="small request-quote">“{r.reason}”</div>}
+                {r.until && <div className="muted small">Asked for until {day(r.until)}</div>}
               </td>
               <td className="muted nowrap">{when(r.createdAt)}</td>
               <td>
                 <RequestStatus status={r.status} />
+                {r.status === 'approved' && r.grantedUntil && <div className="muted small">Access until {day(r.grantedUntil)}</div>}
               </td>
               <td>
                 {r.status === 'expired' && (
@@ -347,7 +350,10 @@ export function RequestQueue({ requests, showGroup = true }: { requests: { reque
                     {definitionName && <div className="muted small">{definitionName}</div>}
                   </td>
                 )}
-                <td className="request-reason-cell">{r.reason ?? <span className="muted">—</span>}</td>
+                <td className="request-reason-cell">
+                  {r.reason ?? <span className="muted">—</span>}
+                  {r.until && <div className="muted small">Until {day(r.until)}</div>}
+                </td>
                 <td className="muted nowrap">{when(r.createdAt)}</td>
                 <td className="actions-col">
                   {canDecide ? (

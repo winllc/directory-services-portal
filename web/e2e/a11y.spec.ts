@@ -11,6 +11,7 @@ const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 const ALICE = 'uid=alice,ou=people,dc=example,dc=com';
 const ENGINEERING = 'cn=engineering,ou=groups,dc=example,dc=com';
 const SOCIAL = 'cn=social-club,ou=groups,dc=example,dc=com';
+const SALES = 'cn=sales,ou=groups,dc=example,dc=com';
 
 async function check(page: Page, name: string) {
   // Settle: no loading spinners left.
@@ -117,6 +118,21 @@ test('dialogs: import, new webhook, bulk members', async ({ page }) => {
   await page.getByRole('button', { name: /Change members in bulk/ }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await check(page, 'dialog-members');
+});
+
+test('group access dialogs: a member\'s end date, a request', async ({ page }) => {
+  await signIn(page);
+  await page.goto(`/groups/def-groups/group?dn=${encodeURIComponent(ENGINEERING)}`);
+  await page.getByRole('button', { name: /^End date for / }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await check(page, 'dialog-member-end-date');
+  await page.keyboard.press('Escape');
+
+  // The administrator isn't in sales: the request dialog, with its optional end date.
+  await page.goto(`/groups/def-groups/group?dn=${encodeURIComponent(SALES)}`);
+  await page.getByRole('button', { name: 'Request access' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await check(page, 'dialog-request-access');
 });
 
 test('as a user without administration: home and profile', async ({ page }) => {
