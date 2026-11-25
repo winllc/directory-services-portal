@@ -87,6 +87,8 @@ public class GroupService {
   static final Duration EXPIRY_RETRY = Duration.ofHours(24);
   /** An owner without write access changed the group's owners. */
   public static final String VIA_OWNERS = "group-owners";
+  /** Most lines of a pasted list of people looked up at once. */
+  static final int MAX_PASTED = 200;
   /** Most owners added or removed in one change. */
   static final int MAX_OWNER_CHANGES = 20;
 
@@ -120,6 +122,15 @@ public class GroupService {
       boolean requireReason, boolean allowLeave, int pendingRequests, boolean canManageOwners, Integer maxMembershipDays) {}
 
   public record MemberPage(List<Member> items, int total, int page, int pageSize, boolean partial) {}
+
+  /** A pasted line that named one person: {@code value} is what the member attribute holds; {@code member}: already in the group. */
+  public record FoundPerson(String line, String value, String dn, String name, boolean member) {}
+
+  /** A pasted line that several people match (their names, the first few). */
+  public record AmbiguousLine(String line, List<String> matches) {}
+
+  /** A pasted list of people, looked up: who was found, the lines nobody matches, and those several people match. */
+  public record ResolvedPeople(List<FoundPerson> found, List<String> notFound, List<AmbiguousLine> ambiguous) {}
 
   /** A request as shown: {@code canDecide} when the viewer may approve or reject it. */
   public record RequestView(AccessRequests.Request request, String definitionName, boolean canDecide) {}
@@ -570,6 +581,47 @@ public class GroupService {
       out.add(new Person(dnValued ? r.dn() : r.id(), r.dn(), r.label()));
     }
     return out;
+  }
+
+  /**
+   * Looks up a pasted list of people for those who manage the group: each line is a login name, an
+   * e-mail address or a DN, and must name exactly one person of the group's directory. Blank and
+   * repeated lines are skipped; a person named twice is listed once.
+   */
+  public ResolvedPeople resolvePeople(SessionUser user, String definitionId, String dn, List<String> lines) {
+    DirectoryDefinition def = definition(user, definitionId);
+    DirectoryEntry group = managed(user, def, dn);
+    FormField member = memberField(def);
+    boolean dnValued = Memberships.dnValued(member);
+    Directories.Directory dir = directories.forDefinition(def);
+    Set<String> members = new TreeSet<>();
+    for (String v : dir.ldap().withAllValues(entries.readInNamespace(def, group.dn(), List.of(member.attribute())), member.attribute())
+        .values(member.attribute())) {
+      members.add(normal(v));
+    }
+    List<FoundPerson> found = new ArrayList<>();
+    List<String> notFound = new ArrayList<>();
+    List<AmbiguousLine> ambiguous = new ArrayList<>();
+    Set<String> seen = new TreeSet<>();
+    for (String line : distinct(lines)) {
+      List<SubjectSearchResult> matches;
+      if (Dns.isValid(line) && line.contains("=")) {
+        SubjectSearchResult p = People.byDn(dir, line);
+        matches = p == null ? List.of() : List.of(p);
+      } else {
+        matches = People.exact(dir, line, 5);
+      }
+      if (matches.isEmpty()) {
+        notFound.add(line);
+      } else if (matches.size() > 1) {
+        ambiguous.add(new AmbiguousLine(line, matches.stream().map(SubjectSearchResult::label).toList()));
+      } else if (seen.add(normal(matches.get(0).dn()))) {
+        SubjectSearchResult p = matches.get(0);
+        String value = dnValued ? p.dn() : p.id();
+        found.add(new FoundPerson(line, value, p.dn(), p.label(), members.contains(normal(value))));
+      }
+    }
+    return new ResolvedPeople(found, notFound, ambiguous);
   }
 
   // ---------------------------------------------------------------------------

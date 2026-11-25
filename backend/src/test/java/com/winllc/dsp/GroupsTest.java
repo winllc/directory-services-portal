@@ -2,9 +2,12 @@ package com.winllc.dsp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.unboundid.ldap.sdk.Modification;
+import com.unboundid.ldap.sdk.ModificationType;
 import com.winllc.dsp.groups.AccessRequests;
 import com.winllc.dsp.groups.GroupAccessJobs;
 import com.winllc.dsp.groups.MembershipExpiries;
+import com.winllc.dsp.ldap.LdapDirectory;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.service.EntryChanged;
 import com.winllc.dsp.service.LoginThrottle;
@@ -38,6 +41,7 @@ class GroupsTest extends ApiTestSupport {
   @Autowired GroupAccessJobs jobs;
   @Autowired ApplicationEventMulticaster multicaster;
   @Autowired MembershipExpiries expiries;
+  @Autowired LdapDirectory directory;
   @Autowired LoginThrottle throttle;
 
   @BeforeEach
@@ -644,6 +648,58 @@ class GroupsTest extends ApiTestSupport {
     assertThat(member(erin, SOCIAL)).isFalse();
     assertThat(expiries.all()).isEmpty();
     assertThat(events("group.membership-expired", "member", erinDn).get(0).get("outcome").asString()).isEqualTo("success");
+  }
+
+  @Test
+  void ownersLookUpAPastedListOfPeople() throws Exception {
+    String george = "uid=george,ou=people," + B;
+    String dave = "uid=dave,ou=people," + B;
+    // Two people share an address.
+    directory.modify(george, List.of(new Modification(ModificationType.REPLACE, "mail", "dave@example.com")));
+    Client carol = login("carol");
+    String resolve = "/api/groups/def-groups/people/resolve" + q(ENGINEERING);
+    List<String> lines = List.of("erin", " BOB@example.com ", george.toUpperCase(), "alice", "nobody", "uid=ghost,ou=people," + B, SALES,
+        "dave@example.com", "", "erin@example.com", "erin");
+    JsonNode r = body(carol.post(resolve, Map.of("lines", lines)));
+    Map<String, JsonNode> found = new HashMap<>();
+    r.get("found").forEach(f -> found.put(f.get("line").asString(), f));
+    // By login, by e-mail and by DN; a person named twice is listed once; alice is a member already.
+    assertThat(found).containsOnlyKeys("erin", "BOB@example.com", george.toUpperCase(), "alice");
+    assertThat(found.get("erin").get("value").asString()).isEqualTo("uid=erin,ou=people," + B);
+    assertThat(found.get("erin").get("name").asString()).isEqualTo("Erin Evans (erin)");
+    assertThat(found.get("erin").get("member").asBoolean()).isFalse();
+    assertThat(found.get("BOB@example.com").get("dn").asString()).isEqualTo("uid=bob,ou=people," + B);
+    assertThat(found.get(george.toUpperCase()).get("value").asString()).isEqualTo(george);
+    assertThat(found.get("alice").get("member").asBoolean()).isTrue();
+    // Nobody, a DN that isn't there, and a group aren't people; an address two people have is ambiguous.
+    List<String> notFound = new ArrayList<>();
+    r.get("notFound").forEach(n -> notFound.add(n.asString()));
+    assertThat(notFound).containsExactly("nobody", "uid=ghost,ou=people," + B, SALES);
+    assertThat(r.get("ambiguous")).hasSize(1);
+    assertThat(r.get("ambiguous").get(0).get("line").asString()).isEqualTo("dave@example.com");
+    assertThat(r.get("ambiguous").get(0).get("matches")).hasSize(2);
+
+    // The found people are added in one step, with an end date.
+    LocalDate last = LocalDate.now(ZoneOffset.UTC).plusDays(14);
+    List<String> values = new ArrayList<>();
+    r.get("found").forEach(f -> values.add(f.get("value").asString()));
+    MvcResult added = carol.post("/api/groups/def-groups/members" + q(ENGINEERING), Map.of("add", values, "remove", List.of(), "until", last.toString()));
+    assertThat(status(added)).as(added.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(added).get("added")).hasSize(3);
+    assertThat(memberUntil(carol, ENGINEERING, george)).isEqualTo(last.toString());
+    assertThat(member(login("erin"), ENGINEERING)).isTrue();
+    assertThat(dave).isNotIn(values);
+
+    // Only for those who manage the group, and for a list of a sensible length.
+    assertThat(status(login("alice").post(resolve, Map.of("lines", List.of("erin"))))).isEqualTo(403);
+    assertThat(status(login("bob").post(resolve, Map.of("lines", List.of("erin"))))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/people/resolve" + q(SALES), Map.of("lines", List.of("erin"))))).isEqualTo(403);
+    List<String> many = new ArrayList<>();
+    for (int i = 0; i <= 200; i++) many.add("user" + i);
+    assertThat(status(carol.post(resolve, Map.of("lines", many)))).isEqualTo(400);
+    assertThat(status(carol.post(resolve, Map.of()))).isEqualTo(400);
+    assertThat(body(carol.post(resolve, Map.of("lines", List.of(" ", "*", "(uid=*)", "a*"))))
+        .get("found")).isEmpty();
   }
 
   @Test

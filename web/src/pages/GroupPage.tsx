@@ -1,9 +1,9 @@
 import { useId, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
-import type { GroupDetail, GroupMember, GroupPerson, GroupSummary } from '@dsp/shared';
+import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, ListPlus, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
+import type { GroupDetail, GroupMember, GroupPeopleResolved, GroupPerson, GroupSummary } from '@dsp/shared';
 import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
-import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
+import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
 import { day, EndDateField, GroupBadges, JoinButton, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
@@ -235,6 +235,7 @@ function Members({ detail }: { detail: GroupDetail }) {
   const [removing, setRemoving] = useState<{ value: string; name: string } | null>(null);
   const [until, setUntil] = useState('');
   const [dating, setDating] = useState<GroupMember | null>(null);
+  const [pasting, setPasting] = useState(false);
   const id = useId();
   const max = detail.maxMembershipDays;
   const data = members.data;
@@ -255,7 +256,17 @@ function Members({ detail }: { detail: GroupDetail }) {
     );
 
   return (
-    <Card title={`Members (${detail.memberCount ?? data?.total ?? '…'})`} subtitle="As an owner you can add and remove members directly.">
+    <Card
+      title={`Members (${detail.memberCount ?? data?.total ?? '…'})`}
+      subtitle="As an owner you can add and remove members directly."
+      actions={
+        <div className="toolbar-actions">
+          <Button size="sm" icon={<ListPlus size={14} />} onClick={() => setPasting(true)}>
+            Add from a list
+          </Button>
+        </div>
+      }
+    >
       <div className="stack">
         <PersonSearch
           definitionId={g.definitionId}
@@ -345,6 +356,7 @@ function Members({ detail }: { detail: GroupDetail }) {
         onConfirm={() => removing && apply([], [removing.value], `${removing.name} was removed.`)}
       />
       <MemberEndDateDialog key={dating?.value ?? 'none'} group={g} member={dating} maxDays={max} onClose={() => setDating(null)} />
+      {pasting && <BulkAddDialog group={g} maxDays={max} onClose={() => setPasting(false)} />}
     </Card>
   );
 }
@@ -406,6 +418,146 @@ function MemberEndDateDialog({ group, member, maxDays, onClose }: { group: Group
           }
         />
       </div>
+    </Modal>
+  );
+}
+
+/** Most lines of a pasted list (the server's limit). */
+const MAX_PASTED = 200;
+
+/**
+ * Adds many people at once from a pasted list of logins, e-mail addresses or DNs: the list is
+ * looked up first, and the owner sees who was found, who was not and which lines are ambiguous
+ * before adding the people found.
+ */
+function BulkAddDialog({ group, maxDays, onClose }: { group: GroupSummary; maxDays?: number | null; onClose: () => void }) {
+  const id = useId();
+  const toast = useToast();
+  const { resolvePeople, members: change } = useGroupMutations();
+  const [text, setText] = useState('');
+  const [until, setUntil] = useState('');
+  const [result, setResult] = useState<GroupPeopleResolved | null>(null);
+  const lines = [...new Set(text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
+  const tooMany = lines.length > MAX_PASTED;
+  const toAdd = result?.found.filter((p) => !p.member) ?? [];
+  const details = (change.error as { details?: Record<string, string> } | null)?.details;
+  const check = () => resolvePeople.mutate({ definitionId: group.definitionId, dn: group.dn, lines }, { onSuccess: setResult });
+  const add = () =>
+    change.mutate(
+      { definitionId: group.definitionId, dn: group.dn, add: toAdd.map((p) => p.value), remove: [], until },
+      {
+        onSuccess: (r) => {
+          toast.success(`${r.added.length} ${r.added.length === 1 ? 'person was' : 'people were'} added to ${group.name}.`);
+          onClose();
+        },
+      },
+    );
+  return (
+    <Modal
+      open
+      wide
+      onClose={onClose}
+      title={`Add people to ${group.name} from a list`}
+      footer={
+        result ? (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={() => {
+                change.reset();
+                setResult(null);
+              }}
+            >
+              Back to the list
+            </Button>
+            <Button variant="primary" loading={change.isPending} disabled={!toAdd.length} onClick={add}>
+              {toAdd.length === 1 ? 'Add 1 person' : `Add ${toAdd.length} people`}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button variant="primary" loading={resolvePeople.isPending} disabled={!lines.length || tooMany} onClick={check}>
+              Check the list
+            </Button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <div className="stack">
+          {!details?.until && <ErrorAlert error={change.error} />}
+          <section aria-label="Found">
+            <h3 className="section-title">
+              Found ({result.found.length}){toAdd.length !== result.found.length && `, ${toAdd.length} to add`}
+            </h3>
+            {result.found.length === 0 ? (
+              <p className="muted">Nobody on the list was found.</p>
+            ) : (
+              <ul className="plain-list person-list">
+                {result.found.map((p) => (
+                  <li key={p.value} className="person-result">
+                    <span>
+                      {p.name}
+                      {p.dn && <span className="muted small mono"> {p.dn}</span>}
+                    </span>
+                    {p.member && <Badge>Already a member</Badge>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          {result.notFound.length > 0 && (
+            <section aria-label="Not found">
+              <h3 className="section-title">Not found ({result.notFound.length})</h3>
+              <ul className="plain-list person-list">
+                {result.notFound.map((l) => (
+                  <li key={l} className="mono small">
+                    {l}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {result.ambiguous.length > 0 && (
+            <section aria-label="Ambiguous">
+              <h3 className="section-title">Ambiguous ({result.ambiguous.length})</h3>
+              <p className="muted small">Several people match these lines. Use their login or DN instead.</p>
+              <ul className="plain-list person-list">
+                {result.ambiguous.map((a) => (
+                  <li key={a.line}>
+                    <span className="mono small">{a.line}</span>
+                    <div className="muted small">{a.matches.join(', ')}</div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {toAdd.length > 0 && (
+            <EndDateField
+              id={`${id}-until`}
+              label="End date (optional)"
+              value={until}
+              onChange={setUntil}
+              maxDays={maxDays}
+              error={details?.until}
+              hint={maxDays ? `Their last day in the group. Memberships here last at most ${maxDays} days; empty: that long.` : 'Their last day in the group. Empty: no end date.'}
+            />
+          )}
+        </div>
+      ) : (
+        <div className="stack">
+          <ErrorAlert error={resolvePeople.error} />
+          <FormRow
+            label="People to add"
+            htmlFor={`${id}-lines`}
+            error={tooMany ? `At most ${MAX_PASTED} lines at once: this list has ${lines.length}.` : undefined}
+            hint={`Logins, e-mail addresses or DNs, one per line (at most ${MAX_PASTED}). Nothing is added until you have seen who was found.`}
+          >
+            <textarea id={`${id}-lines`} className="input mono" rows={10} value={text} onChange={(e) => setText(e.target.value)} />
+          </FormRow>
+        </div>
+      )}
     </Modal>
   );
 }

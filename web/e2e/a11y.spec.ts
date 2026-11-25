@@ -120,12 +120,22 @@ test('dialogs: import, new webhook, bulk members', async ({ page }) => {
   await check(page, 'dialog-members');
 });
 
-test('group access dialogs: a member\'s end date, a request', async ({ page }) => {
+test('group access dialogs: a member\'s end date, a pasted list, a request', async ({ page }) => {
   await signIn(page);
   await page.goto(`/groups/def-groups/group?dn=${encodeURIComponent(ENGINEERING)}`);
   await page.getByRole('button', { name: /^End date for / }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await check(page, 'dialog-member-end-date');
+  await page.keyboard.press('Escape');
+
+  // A pasted list of people: the list, then who was found, who was not and what is ambiguous.
+  await page.getByRole('button', { name: 'Add from a list' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await check(page, 'dialog-add-from-list');
+  await page.getByLabel('People to add').fill('george\nalice\nnobody\nbob@example.com');
+  await page.getByRole('button', { name: 'Check the list' }).click();
+  await expect(page.getByRole('region', { name: 'Not found' })).toBeVisible();
+  await check(page, 'dialog-add-from-list-checked');
   await page.keyboard.press('Escape');
 
   // The administrator isn't in sales: the request dialog, with its optional end date.

@@ -110,6 +110,16 @@ function server(overrides: Partial<GroupDetail> = {}) {
       }
       if (path === '/api/groups/mine') return json({ groups: state.groups.filter((g) => g.member), truncated: false });
       if (path === '/api/groups/def-groups/requests') return json(request('req-new', { requester: 'carol', ...(body as object) }), 201);
+      if (path === '/api/groups/def-groups/people/resolve') {
+        return json({
+          found: [
+            { line: 'george', value: GEORGE.value, dn: GEORGE.dn, name: 'George Gupta (george)', member: false },
+            { line: 'carol@example.com', value: CAROL.value, dn: CAROL.dn, name: 'Carol Chen (carol)', member: true },
+          ],
+          notFound: ['nobody'],
+          ambiguous: [{ line: 'dave@example.com', matches: ['Dave Diaz (dave)', 'Dana Diaz (dana)'] }],
+        });
+      }
       if (path === '/api/groups/def-groups/members/until') {
         const change = body as { member: string; until?: string };
         state.members = state.members.map((m) => (m.value === change.member ? { ...m, until: change.until ?? null } : m));
@@ -356,5 +366,51 @@ describe('time-limited membership', () => {
     expect(social).toHaveTextContent(`Member until ${shown(inDays(12))}`);
     const engineering = screen.getByRole('link', { name: 'engineering' }).closest('tr')!;
     expect(within(engineering).getByText('Member')).toBeInTheDocument();
+  });
+});
+
+describe('group page: adding people from a pasted list', () => {
+  it('shows who was found, who was not and what is ambiguous before adding the people found', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    renderAt(GROUP_PAGE);
+
+    await u.click(await screen.findByRole('button', { name: 'Add from a list' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add people to engineering from a list' });
+    const check = within(dialog).getByRole('button', { name: 'Check the list' });
+    expect(check).toBeDisabled();
+    // Blank and repeated lines are dropped.
+    await u.type(within(dialog).getByLabelText('People to add'), 'george\n\ncarol@example.com\n nobody \ndave@example.com\ngeorge');
+    await u.click(check);
+
+    const found = await within(dialog).findByRole('region', { name: 'Found' });
+    expect(api.sent).toEqual([
+      { method: 'POST', path: '/api/groups/def-groups/people/resolve', body: { lines: ['george', 'carol@example.com', 'nobody', 'dave@example.com'] } },
+    ]);
+    expect(found).toHaveTextContent('Found (2), 1 to add');
+    expect(within(found).getByText('Carol Chen (carol)').closest('li')!).toHaveTextContent('Already a member');
+    expect(within(dialog).getByRole('region', { name: 'Not found' })).toHaveTextContent('nobody');
+    const ambiguous = within(dialog).getByRole('region', { name: 'Ambiguous' });
+    expect(ambiguous).toHaveTextContent('dave@example.com');
+    expect(ambiguous).toHaveTextContent('Dave Diaz (dave), Dana Diaz (dana)');
+
+    // Only the people found who aren't members yet are added, in one step, with the end date.
+    fireEvent.change(within(dialog).getByLabelText('End date (optional)'), { target: { value: inDays(14) } });
+    await u.click(within(dialog).getByRole('button', { name: 'Add 1 person' }));
+    expect(await screen.findByText('1 person was added to engineering.')).toBeInTheDocument();
+    expect(api.sent[1]).toEqual({ method: 'POST', path: '/api/groups/def-groups/members', body: { add: [GEORGE.value], remove: [], until: inDays(14) } });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('refuses a list longer than the limit before asking the server', async () => {
+    const api = server();
+    renderAt(GROUP_PAGE);
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Add from a list' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('People to add'), { target: { value: Array.from({ length: 201 }, (_, i) => `user${i}`).join('\n') } });
+    expect(within(dialog).getByText('At most 200 lines at once: this list has 201.')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Check the list' })).toBeDisabled();
+    expect(api.sent).toEqual([]);
   });
 });

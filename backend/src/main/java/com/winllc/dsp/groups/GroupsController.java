@@ -1,6 +1,7 @@
 package com.winllc.dsp.groups;
 
 import com.winllc.dsp.license.LicensedFeature;
+import com.winllc.dsp.license.ReadOnlyAllowed;
 import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.Memberships;
@@ -47,6 +48,9 @@ public class GroupsController {
       @Size(max = 10) String until) {}
 
   public record MemberUntilInput(@NotBlank @Size(max = 1024) String member, @Size(max = 10) String until) {}
+
+  /** A pasted list of people: login names, e-mail addresses or DNs, one a line. */
+  public record PeopleInput(@NotNull @Size(max = GroupService.MAX_PASTED) List<@Size(max = 1024) String> lines) {}
 
   public record OwnersInput(@NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> add,
       @NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> remove) {}
@@ -132,6 +136,14 @@ public class GroupsController {
   public List<GroupService.Person> people(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn,
       @RequestParam(required = false) String q) {
     return groups.findPeople(user, definitionId, dn(dn), query(q));
+  }
+
+  /** Looks up a pasted list of people to add: who was found, who was not, and which lines are ambiguous. */
+  @PostMapping("/{definitionId}/people/resolve")
+  @ReadOnlyAllowed
+  public GroupService.ResolvedPeople resolvePeople(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId,
+      @RequestParam String dn, @Valid @RequestBody PeopleInput in) {
+    return groups.resolvePeople(user, definitionId, dn(dn), in.lines());
   }
 
   @GetMapping("/{definitionId}/group/requests")

@@ -300,6 +300,16 @@ export interface GroupMember extends GroupPerson {
   until?: string | null;
 }
 
+/** A pasted list of people, looked up for a group's owners before they add them. */
+export interface GroupPeopleResolved {
+  /** Lines that name one person: `value` is what the member attribute holds; `member`: already in the group. */
+  found: { line: string; value: string; dn?: string; name: string; member: boolean }[];
+  /** Lines nobody matches. */
+  notFound: string[];
+  /** Lines several people match, with their names (the first few). */
+  ambiguous: { line: string; matches: string[] }[];
+}
+
 export interface GroupMemberPage {
   items: GroupMember[];
   total: number;

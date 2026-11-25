@@ -33,6 +33,7 @@ import type {
   GroupList,
   GroupMember,
   GroupMemberPage,
+  GroupPeopleResolved,
   GroupPerson,
   GroupRequestSummary,
   Webhook,
@@ -1066,6 +1067,11 @@ export function useGroupMutations() {
       mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[]; until?: string }) =>
         api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove, until: v.until || undefined }),
       onSuccess: refresh,
+    }),
+    /** Looks up a pasted list of people (logins, e-mail addresses or DNs) before adding them. */
+    resolvePeople: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; lines: string[] }) =>
+        api.post<GroupPeopleResolved>(groupUrl(v.definitionId, 'people/resolve', v.dn), { lines: v.lines }),
     }),
     /** Sets, changes or (without `until`) clears a member's end date. */
     memberUntil: useMutation({

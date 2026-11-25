@@ -687,6 +687,9 @@ doesn't take the portal out of service. It is DOWN when none answers.
   decision and the owner's note. Nobody decides their own request.
 - **Owners manage members** on the group's page: find people by name, login or e-mail to add
   them, and remove members. They don't need write access to the whole definition for this.
+  **Add from a list** takes pasted logins, e-mail addresses or DNs, one per line (at most 200):
+  the owner sees who was found, who was not and which lines several people match, then adds the
+  people found in one step, with an end date if they want.
 - **Time-limited membership.** A request may ask for access until a date; the approver may
   shorten it, not extend it. Owners can give the members they add an end date, and change or
   remove it later in the member list. Dates are whole days in UTC: the member belongs to the

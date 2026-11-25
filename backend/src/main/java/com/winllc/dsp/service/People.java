@@ -53,6 +53,14 @@ public final class People {
     return out;
   }
 
+  /** Up to {@code limit} people whose login name or e-mail address is exactly {@code value}. */
+  public static List<SubjectSearchResult> exact(Directories.Directory dir, String value, int limit) {
+    DirectoryProperties c = dir.config();
+    Filter filter = Filter.createORFilter(userFilter(c, Filter.encodeValue(value)),
+        Filter.createANDFilter(userFilter(c, "*"), Filter.createEqualityFilter("mail", value)));
+    return results(c, dir.ldap().search(c.effectiveUserSearchBase(), SearchScope.SUB, filter, limit, attributes(c)).entries());
+  }
+
   /** Up to {@code limit} people matching {@code q} (all when blank), as "Name (login)" with their DN. */
   public static List<SubjectSearchResult> search(Directories.Directory dir, String q, int limit) {
     DirectoryProperties c = dir.config();
