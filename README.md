@@ -245,6 +245,23 @@ every new setting has a safe default. What is new:
 - The release bundle's `env.template` lists the new variables (`API_*`, `WEBHOOK*`, `EXPORT_*`,
   `IMPORT_*`, `BULK_MAX_MEMBERS`, `MAX_BODY_SIZE`); `upgrade.sh` keeps your `.env`.
 
+### Upgrade notes: group access enhancements
+
+Nothing needs changing: every new [Group access](#group-access) setting is off or empty until an
+administrator sets it, and stored definitions and requests are read as before. What is new:
+
+- Per definition: owners may change a group's owners, requests expire after a number of days,
+  open groups are joined without approval, and memberships can have an end date (with an
+  optional longest membership).
+- For owners on a group's page: adding people from a pasted list, exporting the members as CSV,
+  and the group's past requests. In *To review*, several requests are decided at once.
+- With the shared database, the first start creates `dsp_group_membership_expiry` (Flyway
+  migration V13). Alone, end dates are kept in `DATA_DIR/group-membership-expiries.json`.
+- New audit actions: `group.access-expired`, `group.membership-end-date` and
+  `group.membership-expired`; new `details.via` values on `entry.update`: `group-owners`,
+  `group-join` and `group-membership-expired` (by the system).
+- The demo directory has a sixth group, *social-club* (open to join).
+
 ## Releases
 
 Cut a release by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`. The CI `image` job
