@@ -69,6 +69,7 @@ public class GroupService {
   /** Most groups read per definition for one lookup, "my groups" or the groups someone owns. */
   static final int SCAN_LIMIT = 1_000;
   static final int MEMBERS_PAGE = 25;
+  static final int HISTORY_PAGE = 20;
   static final int MAX_OWNERS_SHOWN = 20;
   static final int MAX_PENDING_PER_USER = 25;
   static final int MAX_REASON = 1_000;
@@ -146,6 +147,9 @@ public class GroupService {
 
   /** A request as shown: {@code canDecide} when the viewer may approve or reject it. */
   public record RequestView(AccessRequests.Request request, String definitionName, boolean canDecide) {}
+
+  /** A page of a group's closed requests, newest first. */
+  public record RequestHistory(List<RequestView> items, int total, int page, int pageSize) {}
 
   public record Summary(int toReview, int myPending) {}
 
@@ -824,6 +828,23 @@ public class GroupService {
     DirectoryEntry e = managed(user, def, dn);
     return requests.list(r -> r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn())).stream()
         .map(r -> new RequestView(r, def.name(), !r.requester().equals(user.key()))).toList();
+  }
+
+  /**
+   * A page of the group's past requests (approved, rejected, withdrawn, expired), the most recently
+   * closed first, for those who manage it. As long as the portal keeps them: a year, at most
+   * {@value AccessRequests#KEEP_CLOSED}.
+   */
+  public RequestHistory groupHistory(SessionUser user, String definitionId, String dn, int page) {
+    DirectoryDefinition def = definition(user, definitionId);
+    DirectoryEntry e = managed(user, def, dn);
+    List<AccessRequests.Request> closed = requests.list(r -> !r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn())).stream()
+        .sorted(Comparator.comparing((AccessRequests.Request r) -> r.decidedAt() != null ? r.decidedAt() : r.createdAt()).reversed()).toList();
+    int p = Math.max(1, page);
+    int from = (int) Math.min((long) (p - 1) * HISTORY_PAGE, closed.size());
+    List<RequestView> items = closed.subList(from, Math.min(from + HISTORY_PAGE, closed.size())).stream().map(r -> new RequestView(r, def.name(), false))
+        .toList();
+    return new RequestHistory(items, closed.size(), p, HISTORY_PAGE);
   }
 
   public Summary summary(SessionUser user) {

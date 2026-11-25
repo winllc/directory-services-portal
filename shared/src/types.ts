@@ -350,6 +350,14 @@ export interface AccessRequestView {
   canDecide: boolean;
 }
 
+/** A page of a group's past requests (decided, withdrawn, expired), newest first. */
+export interface GroupRequestHistory {
+  items: AccessRequestView[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 /** Several requests decided together: each on its own, with the reason for those that were not. */
 export interface AccessDecisions {
   results: { id: string; ok: boolean; status?: AccessRequestStatus | null; error?: string | null; code?: number | null }[];

@@ -714,6 +714,9 @@ doesn't take the portal out of service. It is DOWN when none answers.
 - **Owners manage owners**, where the directory allows it (off by default): on the group's page
   they add people as owners and remove any owner, person or group. The last owner can't be
   removed. Those who may edit the definition can do the same there.
+- **Past requests.** On the group's page its owners see the group's closed requests, newest
+  first, 20 a page: who asked and why, who approved or rejected it (or that it was withdrawn or
+  expired), when, and the note. As long as the portal keeps them (a year).
 - **My groups** lists the user's groups. Members can **leave** a group when its directory allows
   it; otherwise they ask the owners.
 - **Settings** (per definition): the member field (automatic: member, uniqueMember or memberUid),

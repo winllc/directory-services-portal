@@ -1,11 +1,11 @@
 import { useId, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, Download, ListPlus, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
-import type { GroupDetail, GroupMember, GroupPeopleResolved, GroupPerson, GroupSummary } from '@dsp/shared';
-import { downloadGroupMembers, useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
+import type { AccessRequest, GroupDetail, GroupMember, GroupPeopleResolved, GroupPerson, GroupSummary } from '@dsp/shared';
+import { downloadGroupMembers, useGroup, useGroupAccessMembers, useGroupHistory, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
 import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
 import { useFeature } from '../lib/license';
-import { day, EndDateField, GroupBadges, JoinButton, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
+import { day, EndDateField, expiredText, GroupBadges, JoinButton, PersonSearch, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
 /** One group: what it is, who owns it, the user's membership; for its owners, members and requests. */
@@ -47,6 +47,7 @@ export function GroupPage() {
         <>
           <GroupRequests definitionId={d.group.definitionId} dn={d.group.dn} count={d.pendingRequests} />
           <Members detail={d} />
+          <GroupHistory definitionId={d.group.definitionId} dn={d.group.dn} />
         </>
       )}
     </div>
@@ -221,6 +222,82 @@ function GroupRequests({ definitionId, dn, count }: { definitionId: string; dn: 
     <Card title={`Requests to join (${list.length || count})`}>
       <ErrorAlert error={requests.error} />
       {requests.isLoading ? <Spinner /> : <RequestQueue requests={list} showGroup={false} empty={<p className="muted">No open requests.</p>} />}
+    </Card>
+  );
+}
+
+/** What became of a past request: who decided it, or that it expired or was withdrawn. */
+function outcome(r: AccessRequest) {
+  if (r.status === 'expired') return expiredText(r);
+  if (r.status === 'cancelled') return `Withdrawn by ${r.requesterName ?? r.requester}.`;
+  const until = r.status === 'approved' && r.grantedUntil ? `, until ${day(r.grantedUntil)}` : '';
+  return `By ${r.decidedByName ?? r.decidedBy ?? 'someone'}${until}.`;
+}
+
+/** The group's past requests, newest first: who asked and why, what became of each, when, and the note. */
+function GroupHistory({ definitionId, dn }: { definitionId: string; dn: string }) {
+  const [page, setPage] = useState(1);
+  const history = useGroupHistory(definitionId, dn, page, true);
+  const data = history.data;
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  return (
+    <Card title={`Past requests (${data?.total ?? '…'})`} subtitle="Decided, withdrawn and expired requests of the last year, newest first.">
+      <div className="stack">
+        <ErrorAlert error={history.error} />
+        {history.isLoading ? (
+          <Spinner />
+        ) : !data || data.items.length === 0 ? (
+          <p className="muted">No past requests.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table table-compact">
+              <thead>
+                <tr>
+                  <th>Who</th>
+                  <th>Reason</th>
+                  <th>Outcome</th>
+                  <th>When</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map(({ request: r }) => (
+                  <tr key={r.id}>
+                    <td>
+                      {r.requesterName ?? r.requester}
+                      {r.requesterDn && (
+                        <div className="muted small mono ellipsis" title={r.requesterDn}>
+                          {r.requesterDn}
+                        </div>
+                      )}
+                    </td>
+                    <td className="request-reason-cell">{r.reason ?? <span className="muted">—</span>}</td>
+                    <td>
+                      <RequestStatus status={r.status} />
+                      <div className="muted small">{outcome(r)}</div>
+                    </td>
+                    <td className="muted nowrap">{when(r.decidedAt ?? r.createdAt)}</td>
+                    <td className="request-reason-cell">{r.note ?? <span className="muted">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {pages > 1 && (
+          <div className="pagination">
+            <Button size="sm" variant="ghost" icon={<ChevronLeft size={16} />} disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              Newer
+            </Button>
+            <span className="muted small">
+              Page {page} of {pages}
+            </span>
+            <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage(page + 1)}>
+              Older <ChevronRight size={16} />
+            </Button>
+          </div>
+        )}
+      </div>
     </Card>
   );
 }

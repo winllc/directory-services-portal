@@ -61,6 +61,7 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
     mine: [] as AccessRequest[],
     review: [] as AccessRequest[],
     members: [CAROL] as GroupMember[],
+    history: [] as AccessRequest[],
     groups: [summary(SOCIAL, 'social-club', { open: true }), summary(`cn=sales,ou=groups,${B}`, 'sales', {})],
   };
   const sent: { method: string; path: string; body: unknown }[] = [];
@@ -153,6 +154,11 @@ function server(overrides: Partial<GroupDetail> = {}, licensed = ['directory-edi
         const dn = new URLSearchParams(url.split('?')[1]).get('dn');
         state.groups = state.groups.map((g) => (g.dn === dn ? { ...g, member: true } : g));
         return json({ dn, attribute: 'member', added: [CAROL.value], removed: [], partial: false });
+      }
+      if (path === '/api/groups/def-groups/group/history') {
+        const page = Number(new URLSearchParams(url.split('?')[1]).get('page') ?? 1);
+        const items = state.history.slice((page - 1) * 20, page * 20).map((r) => ({ request: r, definitionName: 'Groups', canDecide: false }));
+        return json({ items, total: state.history.length, page, pageSize: 20 });
       }
       if (path === '/api/groups/def-groups/group') return json(detail());
       if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: state.members, total: state.members.length, page: 1, pageSize: 25, partial: false });
@@ -521,5 +527,66 @@ describe('group page: exporting the members', () => {
 
     expect(await screen.findByRole('button', { name: 'Add from a list' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Export CSV' })).not.toBeInTheDocument();
+  });
+});
+
+describe('group page: past requests', () => {
+  it('shows owners who asked, what became of each request, and the note', async () => {
+    const api = server();
+    api.state.history = [
+      request('req-e', { requester: 'bob', requesterName: 'Bob Baker', reason: 'Some day', status: 'expired', decidedAt: '2026-03-15T09:00:00.000Z', expiredAfterDays: 14 }),
+      request('req-w', { requester: 'george', requesterName: 'George Gupta', reason: 'Mistake', status: 'cancelled', decidedAt: '2026-03-03T09:00:00.000Z' }),
+      request('req-r', { requester: 'erin', requesterName: 'Erin Evans', reason: 'Curious', status: 'rejected', decidedAt: '2026-03-02T10:00:00.000Z', decidedByName: 'Ada Admin', note: 'Not for HR' }),
+      request('req-a', { status: 'approved', decidedAt: '2026-03-02T09:00:00.000Z', decidedByName: 'Carol Chen', note: 'Welcome', grantedUntil: '2026-06-30' }),
+    ];
+    renderAt(GROUP_PAGE);
+
+    await screen.findByRole('heading', { name: 'Past requests (4)' });
+    const rows = within(card(/^Past requests/)).getAllByRole('row').slice(1);
+    // Newest first, as the server lists them.
+    expect(rows.map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual([
+      expect.stringMatching(/^Bob Baker/),
+      expect.stringMatching(/^George Gupta/),
+      expect.stringMatching(/^Erin Evans/),
+      expect.stringMatching(/^Dave Diaz/),
+    ]);
+    expect(rows[0]).toHaveTextContent('Some day');
+    expect(rows[0]).toHaveTextContent('Expired');
+    expect(rows[0]).toHaveTextContent('Nobody answered within 14 days.');
+    expect(rows[1]).toHaveTextContent('Withdrawn by George Gupta.');
+    expect(rows[2]).toHaveTextContent('Rejected');
+    expect(rows[2]).toHaveTextContent('By Ada Admin.');
+    expect(rows[2]).toHaveTextContent('Not for HR');
+    expect(rows[3]).toHaveTextContent('Approved');
+    expect(rows[3]).toHaveTextContent(`By Carol Chen, until ${shown('2026-06-30')}.`);
+    expect(rows[3]).toHaveTextContent('Welcome');
+    // Nothing to decide here.
+    expect(within(card(/^Past requests/)).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('pages through a long history', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.history = Array.from({ length: 23 }, (_, i) =>
+      request(`req-${i}`, { requesterName: `User ${i}`, requesterDn: undefined, status: 'rejected', decidedAt: '2026-03-02T09:00:00.000Z', decidedByName: 'Carol Chen' }),
+    );
+    renderAt(GROUP_PAGE);
+
+    await screen.findByRole('heading', { name: 'Past requests (23)' });
+    const past = card(/^Past requests/);
+    expect(within(past).getAllByRole('row')).toHaveLength(21);
+    expect(within(past).getByText('Page 1 of 2')).toBeInTheDocument();
+    expect(within(past).getByRole('button', { name: 'Newer' })).toBeDisabled();
+    await u.click(within(past).getByRole('button', { name: 'Older' }));
+    expect(await within(past).findByText('User 22')).toBeInTheDocument();
+    expect(within(past).getAllByRole('row')).toHaveLength(4);
+    expect(within(past).getByRole('button', { name: 'Older' })).toBeDisabled();
+  });
+
+  it('says so when there are none', async () => {
+    server();
+    renderAt(GROUP_PAGE);
+    await screen.findByRole('heading', { name: 'Past requests (0)' });
+    expect(within(card(/^Past requests/)).getByText('No past requests.')).toBeInTheDocument();
   });
 });

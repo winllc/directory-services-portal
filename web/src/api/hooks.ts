@@ -36,6 +36,7 @@ import type {
   GroupMemberPage,
   GroupPeopleResolved,
   GroupPerson,
+  GroupRequestHistory,
   GroupRequestSummary,
   Webhook,
   WebhookDelivery,
@@ -1018,6 +1019,15 @@ export const useGroupRequestsFor = (definitionId: string, dn: string, enabled: b
     queryKey: [...keys.groups, 'group-requests', definitionId, dn],
     queryFn: () => api.get<AccessRequestView[]>(groupUrl(definitionId, 'group/requests', dn)),
     enabled,
+  });
+
+/** A page of the group's past requests, for those who manage it. */
+export const useGroupHistory = (definitionId: string, dn: string, page: number, enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'group-history', definitionId, dn, page],
+    queryFn: () => api.get<GroupRequestHistory>(`${groupUrl(definitionId, 'group/history', dn)}&${qs({ page }).slice(1)}`),
+    enabled,
+    placeholderData: (prev) => prev,
   });
 
 /** `mine`: the user's requests; `review`: open ones they may decide; `decided`: the ones they decided. */

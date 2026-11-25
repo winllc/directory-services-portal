@@ -180,6 +180,13 @@ public class GroupsController {
     return groups.groupRequests(user, definitionId, dn(dn));
   }
 
+  /** The group's past requests (decided, withdrawn, expired), newest first, a page at a time. */
+  @GetMapping("/{definitionId}/group/history")
+  public GroupService.RequestHistory groupHistory(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId,
+      @RequestParam String dn, @RequestParam(required = false) Integer page) {
+    return groups.groupHistory(user, definitionId, dn(dn), page == null ? 1 : page);
+  }
+
   // Requests -----------------------------------------------------------------
 
   /** {@code scope}: mine (default), review or decided. */

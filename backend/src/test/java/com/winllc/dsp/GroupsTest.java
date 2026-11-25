@@ -830,6 +830,79 @@ class GroupsTest extends ApiTestSupport {
   }
 
   @Test
+  void ownersSeeTheirGroupsPastRequests() throws Exception {
+    setGroups(groups(Map.of("requestExpiryDays", 14, "requireReason", true)));
+    Client carol = login("carol");
+    Client admin = login("admin");
+    Client dave = login("dave");
+    String history = "/api/groups/def-groups/group/history" + q(ENGINEERING);
+    assertThat(body(carol.get(history)).get("total").asInt()).isZero();
+
+    // Approved, rejected, withdrawn and expired; one still open, one for another group.
+    String approved = ask(dave, ENGINEERING, "On call");
+    assertThat(status(carol.post("/api/groups/requests/" + approved + "/approve", Map.of("note", "Welcome")))).isEqualTo(200);
+    String rejected = ask(login("erin"), ENGINEERING, "Curious");
+    assertThat(status(admin.post("/api/groups/requests/" + rejected + "/reject", Map.of("note", "Not for HR")))).isEqualTo(200);
+    Client george = login("george");
+    String withdrawn = ask(george, ENGINEERING, "Mistake");
+    assertThat(status(george.post("/api/groups/requests/" + withdrawn + "/cancel", null))).isEqualTo(200);
+    String expired = ask(login("bob"), ENGINEERING, "Some day");
+    String open = ask(george, ENGINEERING, "Really");
+    String other = ask(dave, SALES, "Demo");
+    assertThat(status(admin.post("/api/groups/requests/" + other + "/reject", Map.of()))).isEqualTo(200);
+    Instant late = Instant.now().plus(15, ChronoUnit.DAYS);
+    assertThat(jobs.expireRequests(late)).isEqualTo(2);
+
+    JsonNode page = body(carol.get(history));
+    assertThat(page.get("total").asInt()).isEqualTo(5);
+    assertThat(page.get("page").asInt()).isEqualTo(1);
+    assertThat(page.get("pageSize").asInt()).isEqualTo(20);
+    Map<String, JsonNode> byId = new HashMap<>();
+    List<String> order = new ArrayList<>();
+    page.get("items").forEach(v -> {
+      byId.put(v.get("request").get("id").asString(), v.get("request"));
+      order.add(v.get("request").get("id").asString());
+      assertThat(v.get("canDecide").asBoolean()).isFalse();
+    });
+    // The most recently closed first (the two that expired, then the others backwards); never another group's.
+    assertThat(order).hasSize(5).doesNotContain(other);
+    assertThat(order.subList(0, 2)).containsExactlyInAnyOrder(expired, open);
+    assertThat(order.subList(2, 5)).containsExactly(withdrawn, rejected, approved);
+    assertThat(byId.get(approved).get("status").asString()).isEqualTo("approved");
+    assertThat(byId.get(approved).get("requesterName").asString()).isEqualTo("Dave Diaz");
+    assertThat(byId.get(approved).get("reason").asString()).isEqualTo("On call");
+    assertThat(byId.get(approved).get("decidedByName").asString()).isEqualTo("Carol Chen");
+    assertThat(byId.get(approved).get("note").asString()).isEqualTo("Welcome");
+    assertThat(byId.get(rejected).get("decidedByName").asString()).isEqualTo("Ada Admin");
+    assertThat(byId.get(withdrawn).get("status").asString()).isEqualTo("cancelled");
+    assertThat(byId.get(expired).get("status").asString()).isEqualTo("expired");
+    assertThat(byId.get(expired).get("expiredAfterDays").asInt()).isEqualTo(14);
+    // The open requests keep their own list.
+    assertThat(body(carol.get("/api/groups/def-groups/group/requests" + q(ENGINEERING)))).isEmpty();
+
+    // A page at a time.
+    for (int i = 0; i < 20; i++) {
+      requests.close(requests.add("def-groups", ENGINEERING, "engineering", "u" + i, null, "User " + i, "uid=u" + i + ",ou=people," + B, null, 25).id(),
+          AccessRequests.REJECTED, "admin", "Ada Admin", null);
+    }
+    JsonNode first = body(carol.get(history));
+    assertThat(first.get("total").asInt()).isEqualTo(25);
+    assertThat(first.get("items")).hasSize(20);
+    JsonNode second = body(carol.get(history + "&page=2"));
+    assertThat(second.get("items")).hasSize(5);
+    assertThat(second.get("items").get(4).get("request").get("id").asString()).isEqualTo(approved);
+    assertThat(body(carol.get(history + "&page=99")).get("items")).isEmpty();
+    assertThat(body(carol.get(history + "&page=-3")).get("page").asInt()).isEqualTo(1);
+
+    // Only for those who manage the group: members and requesters get nothing of it.
+    assertThat(status(login("alice").get(history))).isEqualTo(403);
+    assertThat(status(dave.get(history))).isEqualTo(403);
+    assertThat(status(carol.get("/api/groups/def-groups/group/history" + q(SALES)))).isEqualTo(403);
+    assertThat(body(admin.get("/api/groups/def-groups/group/history" + q(SALES))).get("total").asInt()).isEqualTo(1);
+    assertThat(status(carol.get("/api/groups/def-groups/group/history" + q("cn=nope,ou=groups," + B)))).isEqualTo(404);
+  }
+
+  @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
     Map<String, Object> def = definitionInput();
