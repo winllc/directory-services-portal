@@ -26,6 +26,8 @@ import java.util.Locale;
  *       attribute must then be a multi-valued field of the form).</li>
  *   <li>{@code requestExpiryDays}: an open request nobody answered is closed as expired after this
  *       many days (none or 0: never; at most {@value #MAX_REQUEST_EXPIRY_DAYS}).</li>
+ *   <li>{@code openFilter}: groups matching this LDAP filter, among those that take requests, are
+ *       open: anyone who could ask joins at once, without approval. None: no group is open.</li>
  * </ul>
  *
  * <p>Settings added after the first release are objects, not primitives: definitions stored (and
@@ -40,7 +42,8 @@ public record GroupAccess(
     boolean requireReason,
     boolean allowLeave,
     Boolean ownersManageOwners,
-    @Min(0) @Max(GroupAccess.MAX_REQUEST_EXPIRY_DAYS) Integer requestExpiryDays) {
+    @Min(0) @Max(GroupAccess.MAX_REQUEST_EXPIRY_DAYS) Integer requestExpiryDays,
+    @Size(max = 1000) @LdapFilter String openFilter) {
 
   public static final String DEFAULT_OWNER_ATTRIBUTE = "owner";
   /** Closed requests are kept for a year, so an open one waits no longer than that. */
@@ -63,7 +66,7 @@ public record GroupAccess(
   /** As stored: blanks and settings that are off dropped. */
   public GroupAccess cleaned() {
     return new GroupAccess(enabled, blank(memberAttribute), blank(ownerAttribute), blank(requestFilter), requireReason, allowLeave,
-        ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null);
+        ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null, blank(openFilter));
   }
 
   private static String blank(String s) {

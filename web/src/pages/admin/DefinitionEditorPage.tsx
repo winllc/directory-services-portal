@@ -147,6 +147,7 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
             memberAttribute: d.groups.memberAttribute || undefined,
             ownerAttribute: d.groups.ownerAttribute?.trim() || undefined,
             requestFilter: d.groups.requestFilter?.trim() || undefined,
+            openFilter: d.groups.openFilter?.trim() || undefined,
           }
         : undefined,
       filter: d.filter?.trim() || undefined,
@@ -503,6 +504,21 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                       placeholder="(objectClass=*)"
                       value={groups.requestFilter ?? ''}
                       onChange={(e) => setGroups({ requestFilter: e.target.value })}
+                    />
+                  </FormRow>
+                </div>
+                <div className="span-2">
+                  <FormRow
+                    label="Open groups"
+                    htmlFor="ga-open"
+                    hint="An LDAP filter, e.g. (cn=social-*). Among the groups that take requests, those that match are joined at once, without approval: use it only for groups that give no access worth guarding. Empty: no group is open."
+                  >
+                    <input
+                      id="ga-open"
+                      className="input mono"
+                      placeholder="None"
+                      value={groups.openFilter ?? ''}
+                      onChange={(e) => setGroups({ openFilter: e.target.value })}
                     />
                   </FormRow>
                 </div>

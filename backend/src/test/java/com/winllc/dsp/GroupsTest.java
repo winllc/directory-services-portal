@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.winllc.dsp.groups.AccessRequests;
 import com.winllc.dsp.groups.GroupAccessJobs;
 import com.winllc.dsp.model.DirectoryDefinition;
+import com.winllc.dsp.service.EntryChanged;
 import com.winllc.dsp.service.LoginThrottle;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -15,6 +16,10 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.PayloadApplicationEvent;
+import org.springframework.context.event.ApplicationEventMulticaster;
 import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 
@@ -24,9 +29,11 @@ class GroupsTest extends ApiTestSupport {
   static final String SALES = "cn=sales,ou=groups," + B;
   static final String HR = "cn=hr,ou=groups," + B;
   static final String ADMINS = "cn=directory-admins,ou=groups," + B;
+  static final String SOCIAL = "cn=social-club,ou=groups," + B;
 
   @Autowired AccessRequests requests;
   @Autowired GroupAccessJobs jobs;
+  @Autowired ApplicationEventMulticaster multicaster;
   @Autowired LoginThrottle throttle;
 
   @BeforeEach
@@ -339,6 +346,73 @@ class GroupsTest extends ApiTestSupport {
     assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
   }
 
+  /** The entry changes published while {@code action} runs: what webhooks are sent from. */
+  List<EntryChanged> changesDuring(java.util.concurrent.Callable<?> action) throws Exception {
+    List<EntryChanged> changes = new java.util.concurrent.CopyOnWriteArrayList<>();
+    ApplicationListener<ApplicationEvent> listener = e -> {
+      if (e instanceof PayloadApplicationEvent<?> p && p.getPayload() instanceof EntryChanged c) changes.add(c);
+    };
+    multicaster.addApplicationListener(listener);
+    try {
+      action.call();
+    } finally {
+      multicaster.removeApplicationListener(listener);
+    }
+    return changes;
+  }
+
+  @Test
+  void openGroupsAreJoinedWithoutApproval() throws Exception {
+    String daveDn = "uid=dave,ou=people," + B;
+    Client dave = login("dave");
+    Map<String, JsonNode> all = byName(body(dave.get("/api/groups")));
+    assertThat(all.get("social-club").get("open").asBoolean()).isTrue();
+    assertThat(all.get("sales").get("open").asBoolean()).isFalse();
+    assertThat(body(dave.get("/api/groups/def-groups/group" + q(SOCIAL))).get("group").get("open").asBoolean()).isTrue();
+
+    // Other groups still need their owners, and an open group needs no request.
+    assertThat(status(dave.post("/api/groups/def-groups/join" + q(SALES), null))).isEqualTo(403);
+    assertThat(member(dave, SALES)).isFalse();
+    assertThat(status(dave.post("/api/groups/def-groups/requests" + q(SOCIAL), Map.of("reason", "Lunch")))).isEqualTo(409);
+    assertThat(status(dave.post("/api/groups/def-groups/join" + q("cn=nope,ou=groups," + B), null))).isEqualTo(404);
+
+    MvcResult[] joined = new MvcResult[1];
+    List<EntryChanged> changes = changesDuring(() -> joined[0] = dave.post("/api/groups/def-groups/join" + q(SOCIAL), null));
+    assertThat(status(joined[0])).as(joined[0].getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(joined[0]).get("added").get(0).asString()).isEqualTo(daveDn);
+    assertThat(member(dave, SOCIAL)).isTrue();
+    assertThat(status(dave.post("/api/groups/def-groups/join" + q(SOCIAL), null))).isEqualTo(409);
+    // Audited as dave's own change, and passed on like every membership change (the webhook).
+    JsonNode update = body(login("admin").get("/api/admin/audit?action=entry.update")).get("events").get(0);
+    assertThat(update.get("actor").get("id").asString()).isEqualTo("dave");
+    assertThat(update.get("details").get("via").asString()).isEqualTo("group-join");
+    assertThat(update.get("details").get("member.new").asString()).isEqualTo(daveDn);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.get(0).dn()).isEqualTo(SOCIAL);
+    assertThat(changes.get(0).changes().get(0).attribute()).isEqualTo("member");
+    assertThat(changes.get(0).changes().get(0).after()).containsExactly(daveDn);
+
+    // Only groups that take requests at all are open, whatever the filter says.
+    setGroups(groups(Map.of("requestFilter", "(!(cn=directory-admins))", "openFilter", "(|(cn=directory-admins)(cn=sales))")));
+    assertThat(byName(body(dave.get("/api/groups"))).get("directory-admins").get("open").asBoolean()).isFalse();
+    assertThat(status(dave.post("/api/groups/def-groups/join" + q(ADMINS), null))).isEqualTo(403);
+    assertThat(byName(body(dave.get("/api/groups"))).get("social-club").get("open").asBoolean()).isFalse();
+
+    // A request made before the group was opened is withdrawn by joining.
+    setGroups(groups(Map.of()));
+    Client george = login("george");
+    String asked = ask(george, SALES, null);
+    assertThat(status(george.post("/api/groups/def-groups/join" + q(SALES), null))).isEqualTo(403);
+    setGroups(groups(Map.of("openFilter", "(cn=sales)")));
+    assertThat(status(george.post("/api/groups/def-groups/join" + q(SALES), null))).isEqualTo(200);
+    assertThat(requests.find(asked).status()).isEqualTo(AccessRequests.CANCELLED);
+    assertThat(member(george, SALES)).isTrue();
+
+    Map<String, Object> def = definitionInput();
+    def.put("groups", groups(Map.of("openFilter", "(oops")));
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+  }
+
   @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
@@ -385,6 +459,7 @@ class GroupsTest extends ApiTestSupport {
     assertThat(settings.enabled()).isTrue();
     assertThat(settings.ownersManage()).isFalse();
     assertThat(settings.requestExpiry()).isZero();
+    assertThat(settings.openFilter()).isNull();
   }
 
   /** Enabled group access with the given settings (the booleans are always sent, as by the editor). */

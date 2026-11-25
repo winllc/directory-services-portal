@@ -82,6 +82,12 @@ public class GroupsController {
     return ResponseEntity.status(HttpStatus.CREATED).body(groups.request(user, definitionId, dn(dn), in.reason()));
   }
 
+  /** Joins an open group at once, without approval. */
+  @PostMapping("/{definitionId}/join")
+  public Memberships.Change join(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn) {
+    return groups.join(user, definitionId, dn(dn));
+  }
+
   @PostMapping("/{definitionId}/leave")
   public Memberships.Change leave(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn) {
     return groups.leave(user, definitionId, dn(dn));

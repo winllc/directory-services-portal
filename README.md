@@ -676,6 +676,9 @@ doesn't take the portal out of service. It is DOWN when none answers.
   after how many days, and can ask again. A job checks every 15 minutes; with several API
   instances one of them runs it and each request expires once. Like other scheduled work it
   pauses while the license is read-only.
+- **Open groups**, when the directory names them with an LDAP filter (none by default): a group
+  that matches, and takes requests at all, is joined at once with **Join**, without a request or
+  approval. Meant for groups that give no access worth guarding.
 - **Owners approve.** A group's owner attribute (default `owner`) names its owners: people, or
   groups whose members all approve. Anyone who may edit the definition, administrators included,
   can approve too. *To review* lists the requests they can decide, and the menu shows how many
@@ -693,20 +696,22 @@ doesn't take the portal out of service. It is DOWN when none answers.
   the owner attribute, an LDAP filter for the groups that take requests (for example
   `(!(cn=domain admins))`; the others can be looked up but not requested), whether a reason is
   required, whether members may leave, whether owners may change owners (the owner attribute
-  must then be a multi-valued field of the form), and the days after which an unanswered request
-  expires (empty: never; at most 365). The definition must be read/write.
+  must then be a multi-valued field of the form), the days after which an unanswered request
+  expires (empty: never; at most 365), and an LDAP filter for open groups (for example
+  `(cn=social-*)`; empty: none). The definition must be read/write.
 - **Audit and webhooks.** Requests and decisions are audited (`group.access-requested`,
   `group.access-cancelled`, `group.access-approved`, `group.access-rejected`, and
-  `group.access-expired` by the system). Every membership
-  change is the usual `entry.update` event, and its `details.via` says why someone without write
-  access could make it: `group-access-request`, `group-owner` or `group-leave`. Membership
-  changes also send the `group.membership_changed` webhook. A change of owners by an owner is
-  an `entry.update` with `details.via` `group-owners`.
+  `group.access-expired` by the system). Every membership change is the usual `entry.update`
+  event, and its `details.via` says why someone without write access could make it:
+  `group-access-request`, `group-owner`, `group-leave` or `group-join` (an open group).
+  Membership changes also send the `group.membership_changed` webhook. A change of owners by an
+  owner is an `entry.update` with `details.via` `group-owners`.
 - Requests are kept in `group-access-requests.json` in the data directory, or in the shared
   database when one is configured. Closed requests are kept for a year (at most 5,000); the
   audit trail keeps them for good.
 - The demo turns it on for *Groups*. Carol Chen co-owns *engineering* (and may change its
-  owners), *directory-admins* doesn't take requests, and requests expire after 30 days.
+  owners), *directory-admins* doesn't take requests, *social-club* is open, and requests expire
+  after 30 days.
 
 ### Metrics
 *Metrics* (every signed-in user)

@@ -1045,6 +1045,10 @@ export function useGroupMutations() {
         api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(v.id)}/${v.approve ? 'approve' : 'reject'}`, { note: v.note || undefined }),
       onSuccess: refresh,
     }),
+    join: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'join', v.dn)),
+      onSuccess: refresh,
+    }),
     leave: useMutation({
       mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'leave', v.dn)),
       onSuccess: refresh,

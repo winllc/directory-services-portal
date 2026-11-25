@@ -10,6 +10,7 @@ import { expect, test, type Page } from '@playwright/test';
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 const ALICE = 'uid=alice,ou=people,dc=example,dc=com';
 const ENGINEERING = 'cn=engineering,ou=groups,dc=example,dc=com';
+const SOCIAL = 'cn=social-club,ou=groups,dc=example,dc=com';
 
 async function check(page: Page, name: string) {
   // Settle: no loading spinners left.
@@ -72,6 +73,7 @@ const pages: [string, string][] = [
   ['groups', '/groups'],
   ['groups-review', '/groups?tab=review'],
   ['group-access', `/groups/def-groups/group?dn=${encodeURIComponent(ENGINEERING)}`],
+  ['group-access-open', `/groups/def-groups/group?dn=${encodeURIComponent(SOCIAL)}`],
   ['metrics', '/metrics'],
   ['admin-definitions', '/admin/definitions'],
   ['admin-definition', '/admin/definitions/def-staff'],

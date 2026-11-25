@@ -36,7 +36,8 @@ import org.springframework.stereotype.Service;
  * Self-service group access (see {@link GroupAccess}): people look up the groups of definitions
  * that have it enabled, in the LDAP directory they signed in to, and ask to join; a group's owners
  * (its owner attribute names them, or a group they belong to) and anyone who may edit the
- * definition decide, and manage the group's members. Looking groups up needs no grant on the
+ * definition decide, and manage the group's members; groups the definition marks open are joined
+ * without asking. Looking groups up needs no grant on the
  * definition: only names, descriptions and owners are shown, and the member list only to those who
  * manage the group.
  *
@@ -61,6 +62,8 @@ public class GroupService {
   public static final String VIA_REQUEST = "group-access-request";
   public static final String VIA_OWNER = "group-owner";
   public static final String VIA_LEAVE = "group-leave";
+  /** Someone joined an open group, without approval. */
+  public static final String VIA_JOIN = "group-join";
   /** An owner without write access changed the group's owners. */
   public static final String VIA_OWNERS = "group-owners";
   /** Most owners added or removed in one change. */
@@ -71,10 +74,11 @@ public class GroupService {
   /**
    * A group as listed. {@code member}: the user belongs to it; {@code owner}: its owner attribute
    * names the user (or a group of theirs); {@code canManage}: owner, or may edit the definition;
-   * {@code requestable}: it takes requests; {@code pendingRequestId}: the user's open request.
+   * {@code requestable}: it takes requests; {@code open}: and can be joined at once, without
+   * approval; {@code pendingRequestId}: the user's open request.
    */
   public record GroupSummary(String definitionId, String definitionName, String dn, String name, String description, boolean member,
-      boolean owner, boolean canManage, boolean requestable, String pendingRequestId) {}
+      boolean owner, boolean canManage, boolean requestable, boolean open, String pendingRequestId) {}
 
   /** A person or group named by a group (owner, member), with the name the directory gives it. */
   public record Person(String value, String dn, String name) {}
@@ -174,12 +178,20 @@ public class GroupService {
   }
 
   private Filter requestFilter(DirectoryDefinition def) {
-    String f = def.groups().requestFilter();
+    return filter(def, def.groups().requestFilter(), "request");
+  }
+
+  /** The filter of the groups joined without approval; null: none is. */
+  private Filter openFilter(DirectoryDefinition def) {
+    return filter(def, def.groups().openFilter(), "open-group");
+  }
+
+  private static Filter filter(DirectoryDefinition def, String f, String what) {
     if (f == null) return null;
     try {
       return Filter.create(f);
     } catch (LDAPException e) {
-      throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "The group directory \"" + def.name() + "\" has an invalid request filter");
+      throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "The group directory \"" + def.name() + "\" has an invalid " + what + " filter");
     }
   }
 
@@ -239,6 +251,8 @@ public class GroupService {
       Set<String> mine = dnsMatching(def, q, memberFilter(user, member));
       Filter rf = requestFilter(def);
       Set<String> requestable = rf == null ? null : dnsMatching(def, q, rf);
+      Filter of = openFilter(def);
+      Set<String> open = of == null ? Set.of() : dnsMatching(def, q, of);
       boolean editor = canEdit(user, def);
       var found = entries.searchInNamespace(def, q, onlyMine ? memberFilter(user, member) : null, SEARCH_LIMIT, displayAttributes(def));
       truncated |= found.truncated();
@@ -246,8 +260,9 @@ public class GroupService {
         String key = normal(e.dn());
         boolean isMember = mine.contains(key);
         boolean owner = names(e.values(def.groups().ownerAttributeOrDefault()), user);
+        boolean takesRequests = requestable == null || requestable.contains(key);
         out.add(new GroupSummary(def.id(), def.name(), e.dn(), title(def, e), e.first("description"), isMember, owner, owner || editor,
-            requestable == null || requestable.contains(key), pending.get(def.id() + "|" + key)));
+            takesRequests, takesRequests && open.contains(key), pending.get(def.id() + "|" + key)));
       }
     }
     out.sort(Comparator.comparing(GroupSummary::name, String.CASE_INSENSITIVE_ORDER).thenComparing(GroupSummary::definitionName));
@@ -277,10 +292,12 @@ public class GroupService {
     boolean canManage = owner || canEdit(user, def);
     Filter rf = requestFilter(def);
     boolean requestable = rf == null || entries.matchesInNamespace(def, e.dn(), rf);
+    Filter of = openFilter(def);
+    boolean joinable = requestable && of != null && entries.matchesInNamespace(def, e.dn(), of);
     String pending = myPending(user).get(def.id() + "|" + normal(e.dn()));
     int open = canManage ? requests.list(r -> r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn())).size() : 0;
     GroupSummary summary = new GroupSummary(def.id(), def.name(), e.dn(), title(def, e), e.first("description"), isMember, owner, canManage,
-        requestable, pending);
+        requestable, joinable, pending);
     List<Person> ownerList = people(def, owners.stream().limit(MAX_OWNERS_SHOWN).toList(), true);
     return new GroupDetail(summary, ownerList, owners.size() > MAX_OWNERS_SHOWN, partial ? null : values.size(), member.attribute(),
         def.groups().requireReason(), def.groups().allowLeave(), open, canManage && def.groups().ownersManage());
@@ -411,11 +428,34 @@ public class GroupService {
         .target("group", d.group().dn(), d.group().name());
     if (d.group().member()) throw new ApiException(HttpStatus.CONFLICT, "You are already a member of this group");
     if (!d.group().requestable()) throw ApiException.forbidden("This group doesn't take requests");
+    if (d.group().open()) throw new ApiException(HttpStatus.CONFLICT, "This group is open: join it without a request");
     FormField member = memberField(def);
     AccessRequests.Request r = requests.add(def.id(), d.group().dn(), d.group().name(), user.key(), user.dn(), displayName(user),
         memberValue(user, member), why, MAX_PENDING_PER_USER);
     event.detail("request", r.id()).detail("reason", why).success();
     return r;
+  }
+
+  /**
+   * Adds the user to an open group at once (it must take requests and match the directory's
+   * open-group filter). A request the user made before the group was opened is withdrawn.
+   */
+  public Memberships.Change join(SessionUser user, String definitionId, String dn) {
+    DirectoryDefinition def = definition(user, definitionId);
+    GroupDetail d = detail(user, def.id(), dn);
+    if (d.group().member()) throw new ApiException(HttpStatus.CONFLICT, "You are already a member of this group");
+    if (!d.group().open()) throw ApiException.forbidden("This group can't be joined without its owners' approval");
+    FormField member = memberField(def);
+    Memberships.Change change = memberships.change(user, def, d.group().dn(), member.attribute(), List.of(memberValue(user, member)), List.of(),
+        VIA_JOIN);
+    if (d.group().pendingRequestId() != null) {
+      try {
+        cancel(user, d.group().pendingRequestId());
+      } catch (ApiException e) {
+        // Decided meanwhile: nothing left to withdraw.
+      }
+    }
+    return change;
   }
 
   /** Withdraws the user's own open request. */

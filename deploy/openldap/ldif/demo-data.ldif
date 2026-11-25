@@ -309,6 +309,14 @@ description: Human resources
 member: uid=erin,ou=people,dc=example,dc=com
 owner: uid=admin,ou=people,dc=example,dc=com
 
+dn: cn=social-club,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: social-club
+description: Lunches and events, open to everyone
+member: uid=erin,ou=people,dc=example,dc=com
+owner: uid=erin,ou=people,dc=example,dc=com
+
 dn: cn=LT-0001,ou=devices,dc=example,dc=com
 objectClass: top
 objectClass: acmeDevice

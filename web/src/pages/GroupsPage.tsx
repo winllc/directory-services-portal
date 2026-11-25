@@ -11,7 +11,7 @@ import {
   useMyGroups,
 } from '../api/hooks';
 import { Alert, Button, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, useDebounced, useToast } from '../components/ui';
-import { DecisionDialog, expiredText, GroupBadges, GroupLink, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
+import { DecisionDialog, expiredText, GroupBadges, GroupLink, JoinButton, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
 
 type Tab = 'find' | 'mine' | 'requests' | 'review';
 const TABS: Tab[] = ['find', 'mine', 'requests', 'review'];
@@ -64,12 +64,13 @@ function settingsOf(directories: GroupDirectory[], definitionId: string) {
   return directories.find((d) => d.id === definitionId);
 }
 
-/** Request access, withdraw the open request, or nothing (member, closed group). */
+/** Join (an open group), request access, withdraw the open request, or nothing (member, closed group). */
 function GroupAction({ group, directories }: { group: GroupSummary; directories: GroupDirectory[] }) {
   const [asking, setAsking] = useState(false);
   const { cancel } = useGroupMutations();
   const toast = useToast();
   if (group.member) return null;
+  if (group.open) return <JoinButton group={group} size="sm" />;
   if (group.pendingRequestId) {
     return (
       <Button

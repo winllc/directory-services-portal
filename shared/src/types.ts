@@ -232,6 +232,8 @@ export interface GroupAccess {
   ownersManageOwners?: boolean;
   /** Days after which an open request nobody answered is closed as expired (none or 0: never). */
   requestExpiryDays?: number;
+  /** Groups matching this LDAP filter (and taking requests) are joined at once, without approval. */
+  openFilter?: string;
 }
 
 export interface GroupDirectory {
@@ -253,6 +255,8 @@ export interface GroupSummary {
   owner: boolean;
   canManage: boolean;
   requestable: boolean;
+  /** Can be joined at once, without approval. */
+  open: boolean;
   pendingRequestId?: string;
 }
 

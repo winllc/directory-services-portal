@@ -4,7 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Search, UserMinus, UserPl
 import type { GroupDetail, GroupPerson } from '@dsp/shared';
 import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
 import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
-import { GroupBadges, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
+import { GroupBadges, JoinButton, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
 /** One group: what it is, who owns it, the user's membership; for its owners, members and requests. */
@@ -71,6 +71,13 @@ function Membership({ detail }: { detail: GroupDetail }) {
                 </Button>
               </div>
             )}
+          </>
+        ) : g.open ? (
+          <>
+            <p>You aren't a member. This group is open: you can join at once, without approval.</p>
+            <div>
+              <JoinButton group={g} primary />
+            </div>
           </>
         ) : g.pendingRequestId ? (
           <>

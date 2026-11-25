@@ -808,7 +808,8 @@
         "requireReason": true,
         "allowLeave": true,
         "ownersManageOwners": true,
-        "requestExpiryDays": 30
+        "requestExpiryDays": 30,
+        "openFilter": "(cn=social-club)"
       }
     },
     {

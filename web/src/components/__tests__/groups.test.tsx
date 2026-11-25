@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import type { AccessRequest, GroupDetail, GroupPerson } from '@dsp/shared';
+import type { AccessRequest, GroupDetail, GroupPerson, GroupSummary } from '@dsp/shared';
 import { App } from '../../App';
 import { AuthProvider } from '../../lib/auth';
 import { ToastProvider } from '../ui';
@@ -38,8 +38,26 @@ const request = (id: string, patch: Partial<AccessRequest>): AccessRequest => ({
   ...patch,
 });
 
+const SOCIAL = `cn=social-club,ou=groups,${B}`;
+const summary = (dn: string, name: string, patch: Partial<GroupSummary>): GroupSummary => ({
+  definitionId: 'def-groups',
+  definitionName: 'Groups',
+  dn,
+  name,
+  member: false,
+  owner: false,
+  canManage: false,
+  requestable: true,
+  open: false,
+  ...patch,
+});
+
 function server(overrides: Partial<GroupDetail> = {}) {
-  const state = { owners: [ADA, CAROL], mine: [] as AccessRequest[] };
+  const state = {
+    owners: [ADA, CAROL],
+    mine: [] as AccessRequest[],
+    groups: [summary(SOCIAL, 'social-club', { open: true }), summary(`cn=sales,ou=groups,${B}`, 'sales', {})],
+  };
   const sent: { method: string; path: string; body: unknown }[] = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
   const detail = (): GroupDetail => ({
@@ -53,6 +71,7 @@ function server(overrides: Partial<GroupDetail> = {}) {
       owner: true,
       canManage: true,
       requestable: true,
+      open: false,
     },
     owners: state.owners,
     moreOwners: false,
@@ -77,6 +96,12 @@ function server(overrides: Partial<GroupDetail> = {}) {
       if (path === '/api/groups/directories') return json([{ id: 'def-groups', name: 'Groups', slug: 'groups', requireReason: true, allowLeave: true }]);
       if (path === '/api/groups/requests/summary') return json({ toReview: 0, myPending: 0 });
       if (path === '/api/groups/requests' && url.includes('scope=mine')) return json(state.mine.map((r) => ({ request: r, definitionName: 'Groups', canDecide: false })));
+      if (path === '/api/groups') return json({ groups: state.groups, truncated: false });
+      if (path === '/api/groups/def-groups/join') {
+        const dn = new URLSearchParams(url.split('?')[1]).get('dn');
+        state.groups = state.groups.map((g) => (g.dn === dn ? { ...g, member: true } : g));
+        return json({ dn, attribute: 'member', added: [CAROL.value], removed: [], partial: false });
+      }
       if (path === '/api/groups/def-groups/group') return json(detail());
       if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: [CAROL], total: 1, page: 1, pageSize: 25, partial: false });
       if (path === '/api/groups/def-groups/people') return json([GEORGE]);
@@ -164,5 +189,40 @@ describe('my requests', () => {
     const rejected = screen.getByText('Rejected').closest('tr')!;
     expect(rejected).toHaveTextContent('Ada Admin');
     expect(rejected).toHaveTextContent('Not now');
+  });
+});
+
+describe('open groups', () => {
+  it('offers Join instead of Request access, and joins at once', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    renderAt('/groups');
+
+    const social = (await screen.findByRole('link', { name: 'social-club' })).closest('tr')!;
+    expect(social).toHaveTextContent('Open to join');
+    expect(within(social).queryByRole('button', { name: 'Request access' })).not.toBeInTheDocument();
+    const sales = screen.getByRole('link', { name: 'sales' }).closest('tr')!;
+    expect(within(sales).getByRole('button', { name: 'Request access' })).toBeInTheDocument();
+    expect(within(sales).queryByRole('button', { name: 'Join' })).not.toBeInTheDocument();
+
+    await u.click(within(social).getByRole('button', { name: 'Join' }));
+    expect(await screen.findByText('You joined social-club.')).toBeInTheDocument();
+    expect(api.sent.map((x) => `${x.method} ${x.path}`)).toEqual(['POST /api/groups/def-groups/join']);
+    // A member now: nothing left to join.
+    expect(await within(social).findByText('Member')).toBeInTheDocument();
+    expect(within(social).queryByRole('button', { name: 'Join' })).not.toBeInTheDocument();
+  });
+
+  it('offers Join on the page of an open group', async () => {
+    const u = userEvent.setup();
+    const base = summary(ENGINEERING, 'engineering', { open: true });
+    const api = server({ group: base, canManageOwners: false });
+    renderAt(GROUP_PAGE);
+
+    expect(await screen.findByText(/This group is open: you can join at once/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request access' })).not.toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Join' }));
+    expect(await screen.findByText('You joined engineering.')).toBeInTheDocument();
+    expect(api.sent[0].path).toBe('/api/groups/def-groups/join');
   });
 });

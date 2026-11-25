@@ -22,6 +22,7 @@ export function GroupBadges({ group }: { group: GroupSummary }) {
       {group.member && <Badge tone="success">Member</Badge>}
       {group.owner && <Badge tone="accent">Owner</Badge>}
       {group.pendingRequestId && <Badge tone="info">Requested</Badge>}
+      {!group.member && group.open && <Badge tone="info">Open to join</Badge>}
       {!group.member && !group.pendingRequestId && !group.requestable && <Badge>Closed to requests</Badge>}
     </span>
   );
@@ -216,5 +217,22 @@ export function PersonSearch({
         </ul>
       )}
     </div>
+  );
+}
+
+/** Joins an open group at once: no request, no approval. */
+export function JoinButton({ group, primary, size }: { group: Pick<GroupSummary, 'definitionId' | 'dn' | 'name'>; primary?: boolean; size?: 'sm' }) {
+  const toast = useToast();
+  const { join } = useGroupMutations();
+  return (
+    <Button
+      size={size}
+      variant={primary ? 'primary' : undefined}
+      icon={<UserPlus size={size ? 14 : 16} />}
+      loading={join.isPending}
+      onClick={() => join.mutate({ definitionId: group.definitionId, dn: group.dn }, { onSuccess: () => toast.success(`You joined ${group.name}.`), onError: (e) => toast.error(e) })}
+    >
+      Join
+    </Button>
   );
 }
