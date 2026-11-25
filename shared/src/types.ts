@@ -228,6 +228,8 @@ export interface GroupAccess {
   requestFilter?: string;
   requireReason: boolean;
   allowLeave: boolean;
+  /** A group's owners may add and remove its owners on the group page (default: off). */
+  ownersManageOwners?: boolean;
 }
 
 export interface GroupDirectory {
@@ -275,6 +277,8 @@ export interface GroupDetail {
   allowLeave: boolean;
   /** Open requests (for those who manage the group). */
   pendingRequests: number;
+  /** The viewer may add and remove the group's owners. */
+  canManageOwners: boolean;
 }
 
 export interface GroupMemberPage {

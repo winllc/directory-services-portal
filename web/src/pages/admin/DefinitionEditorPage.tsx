@@ -513,6 +513,12 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                 label="Members may leave on their own"
                 description="Otherwise they ask the owners to remove them."
               />
+              <Toggle
+                checked={groups.ownersManageOwners ?? false}
+                onChange={(v) => setGroups({ ownersManageOwners: v })}
+                label="Owners may add and remove owners"
+                description="On the group's page, without write access to this directory. The owner attribute must be a multi-valued field of the form. A group always keeps one owner."
+              />
             </>
           )}
         </div>

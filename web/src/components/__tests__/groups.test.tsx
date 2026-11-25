@@ -1,0 +1,134 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import type { GroupDetail, GroupPerson } from '@dsp/shared';
+import { App } from '../../App';
+import { AuthProvider } from '../../lib/auth';
+import { ToastProvider } from '../ui';
+
+/*
+ * Group access as a group's owner sees it: what the group page offers follows what the server
+ * says the viewer may do, and each action sends exactly the change the owner chose.
+ */
+
+const B = 'dc=example,dc=com';
+const ENGINEERING = `cn=engineering,ou=groups,${B}`;
+const person = (uid: string, name: string): GroupPerson => ({ value: `uid=${uid},ou=people,${B}`, dn: `uid=${uid},ou=people,${B}`, name });
+const CAROL = person('carol', 'Carol Chen');
+const ADA = person('admin', 'Ada Admin');
+const GEORGE = person('george', 'George Gupta');
+const carol = { username: 'carol', dn: CAROL.dn, displayName: 'Carol Chen', groups: [ENGINEERING], isAdmin: false, authMethod: 'password' };
+const features = ['directory-editor', 'self-service-profile'].map((id) => ({ id, enabled: true }));
+const GROUP_PAGE = `/groups/def-groups/group?dn=${encodeURIComponent(ENGINEERING)}`;
+
+function server(overrides: Partial<GroupDetail> = {}) {
+  const state = { owners: [ADA, CAROL] };
+  const sent: { method: string; path: string; body: unknown }[] = [];
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  const detail = (): GroupDetail => ({
+    group: {
+      definitionId: 'def-groups',
+      definitionName: 'Groups',
+      dn: ENGINEERING,
+      name: 'engineering',
+      description: 'Engineering department',
+      member: true,
+      owner: true,
+      canManage: true,
+      requestable: true,
+    },
+    owners: state.owners,
+    moreOwners: false,
+    memberCount: 3,
+    memberAttribute: 'member',
+    requireReason: true,
+    allowLeave: true,
+    pendingRequests: 0,
+    canManageOwners: true,
+    ...overrides,
+  });
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      const path = url.split('?')[0];
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (method !== 'GET') sent.push({ method, path, body });
+      if (path === '/api/auth/me') return json({ user: carol, consentRequired: false });
+      if (path === '/api/info') return json({ mode: 'memory', connected: true, version: '1' });
+      if (path === '/api/license') return json({ mode: 'FULL', state: 'VALID', message: '', evaluation: false, features });
+      if (path === '/api/groups/directories') return json([{ id: 'def-groups', name: 'Groups', slug: 'groups', requireReason: true, allowLeave: true }]);
+      if (path === '/api/groups/requests/summary') return json({ toReview: 0, myPending: 0 });
+      if (path === '/api/groups/def-groups/group') return json(detail());
+      if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: [CAROL], total: 1, page: 1, pageSize: 25, partial: false });
+      if (path === '/api/groups/def-groups/people') return json([GEORGE]);
+      if (path === '/api/groups/def-groups/owners') {
+        const change = body as { add: string[]; remove: string[] };
+        state.owners = [...state.owners.filter((o) => !change.remove.includes(o.value)), ...[GEORGE].filter((p) => change.add.includes(p.value))];
+        return json({ dn: ENGINEERING, attribute: 'owner', added: change.add, removed: change.remove, partial: false });
+      }
+      return json([]);
+    }),
+  );
+  return { sent, state };
+}
+
+function renderAt(path: string) {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={[path]}>
+        <ToastProvider>
+          <AuthProvider>
+            <App />
+          </AuthProvider>
+        </ToastProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const card = (title: string | RegExp) => screen.getByRole('heading', { name: title }).closest('.card') as HTMLElement;
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('group page: owners', () => {
+  it('lets an owner add and remove owners where the directory allows it, never the last one', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    renderAt(GROUP_PAGE);
+
+    await screen.findByRole('heading', { name: 'Owners' });
+    const owners = card('Owners');
+    await u.type(within(owners).getByLabelText('Find someone to make an owner'), 'geo');
+    await u.click(await within(owners).findByRole('button', { name: 'Make owner' }));
+    expect(await screen.findByText('George Gupta is now an owner.')).toBeInTheDocument();
+    expect(api.sent).toEqual([{ method: 'POST', path: '/api/groups/def-groups/owners', body: { add: [GEORGE.dn], remove: [] } }]);
+
+    // Removing asks first, and sends the owner's value.
+    await u.click(await within(owners).findByRole('button', { name: 'Remove owner Ada Admin' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Remove Ada Admin as an owner?' });
+    expect(api.sent).toHaveLength(1);
+    await u.click(within(confirm).getByRole('button', { name: 'Remove owner' }));
+    expect(await screen.findByText('Ada Admin is no longer an owner.')).toBeInTheDocument();
+    expect(api.sent[1].body).toEqual({ add: [], remove: [ADA.value] });
+
+    // Down to one owner, nothing offers to remove them.
+    await u.click(await within(owners).findByRole('button', { name: 'Remove owner George Gupta' }));
+    await u.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove owner' }));
+    expect(await within(owners).findByText("The last owner can't be removed. Add another one first.")).toBeInTheDocument();
+    expect(within(owners).queryByRole('button', { name: /Remove owner/ })).not.toBeInTheDocument();
+  });
+
+  it('only lists the owners where owners may not change them', async () => {
+    server({ canManageOwners: false });
+    renderAt(GROUP_PAGE);
+
+    await screen.findByRole('heading', { name: 'Owners' });
+    const owners = card('Owners');
+    expect(within(owners).getByText('Ada Admin')).toBeInTheDocument();
+    expect(within(owners).queryByLabelText('Find someone to make an owner')).not.toBeInTheDocument();
+    expect(within(owners).queryByRole('button', { name: /Remove owner/ })).not.toBeInTheDocument();
+  });
+});

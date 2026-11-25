@@ -231,6 +231,58 @@ class GroupsTest extends ApiTestSupport {
   }
 
   @Test
+  void ownersManageOwnersWhenTheDirectoryAllowsIt() throws Exception {
+    String george = "uid=george,ou=people," + B;
+    String carolDn = "uid=carol,ou=people," + B;
+    String adminDn = "uid=admin,ou=people," + B;
+    Client carol = login("carol");
+    // Off unless the definition says so (as stored before there was the setting).
+    setGroups(Map.of("enabled", true, "requireReason", false, "allowLeave", true));
+    assertThat(body(carol.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("canManageOwners").asBoolean()).isFalse();
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(george), "remove", List.of())))).isEqualTo(403);
+
+    setGroups(groups(Map.of("ownersManageOwners", true)));
+    assertThat(body(carol.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("canManageOwners").asBoolean()).isTrue();
+    assertThat(body(login("alice").get("/api/groups/def-groups/group" + q(ENGINEERING))).get("canManageOwners").asBoolean()).isFalse();
+    MvcResult added = carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(george), "remove", List.of()));
+    assertThat(status(added)).as(added.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(added).get("added").get(0).asString()).isEqualTo(george);
+    // George owns the group now: he manages it too.
+    assertThat(body(login("george").get("/api/groups/def-groups/group" + q(ENGINEERING))).get("group").get("canManage").asBoolean()).isTrue();
+    Client admin = login("admin");
+    JsonNode update = body(admin.get("/api/admin/audit?action=entry.update")).get("events").get(0);
+    assertThat(update.get("actor").get("id").asString()).isEqualTo("carol");
+    assertThat(update.get("details").get("via").asString()).isEqualTo("group-owners");
+    assertThat(update.get("details").get("owner.new").asString()).isEqualTo(george);
+
+    // Only people of the directory become owners; members, strangers and other groups' owners change nothing.
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(SALES), "remove", List.of())))).isEqualTo(400);
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of("not a dn"), "remove", List.of())))).isEqualTo(400);
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(), "remove", List.of())))).isEqualTo(400);
+    List<String> many = new ArrayList<>();
+    for (int i = 0; i < 21; i++) many.add("uid=u" + i + ",ou=people," + B);
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", many, "remove", List.of())))).isEqualTo(400);
+    assertThat(status(login("alice").post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(ALICE), "remove", List.of())))).isEqualTo(403);
+    assertThat(status(login("bob").post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(), "remove", List.of(carolDn))))).isEqualTo(403);
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(SALES), Map.of("add", List.of(carolDn), "remove", List.of())))).isEqualTo(403);
+
+    // Any owner value can go, but never the last one.
+    MvcResult removed = carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(), "remove", List.of(adminDn, george.toUpperCase())));
+    assertThat(status(removed)).as(removed.getResponse().getContentAsString()).isEqualTo(200);
+    assertThat(body(removed).get("removed")).hasSize(2);
+    MvcResult last = carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(), "remove", List.of(carolDn)));
+    assertThat(status(last)).isEqualTo(400);
+    assertThat(body(last).get("error").asString()).contains("at least one owner");
+    // ... unless another one replaces them in the same change.
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(george), "remove", List.of(carolDn))))).isEqualTo(200);
+    assertThat(status(carol.post("/api/groups/def-groups/owners" + q(ENGINEERING), Map.of("add", List.of(carolDn), "remove", List.of())))).isEqualTo(403);
+
+    // Those who may edit the definition change owners as editors (no via).
+    assertThat(status(admin.post("/api/groups/def-groups/owners" + q(SALES), Map.of("add", List.of(carolDn), "remove", List.of())))).isEqualTo(200);
+    assertThat(body(admin.get("/api/admin/audit?action=entry.update")).get("events").get(0).get("details").has("via")).isFalse();
+  }
+
+  @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
     Map<String, Object> def = definitionInput();
@@ -238,6 +290,9 @@ class GroupsTest extends ApiTestSupport {
     assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("details").has("groups.memberAttribute")).isTrue();
     def.put("groups", groups(Map.of("ownerAttribute", "member")));
     assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("details").has("groups.ownerAttribute")).isTrue();
+    // Owners change owners through the form's owner field.
+    def.put("groups", groups(Map.of("ownersManageOwners", true, "ownerAttribute", "seeAlso")));
+    assertThat(body(admin.put("/api/admin/definitions/def-groups", def)).get("details").has("groups.ownersManageOwners")).isTrue();
     def.put("groups", groups(Map.of("requestFilter", "(oops")));
     assertThat(status(admin.put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
     def.put("groups", groups(Map.of()));

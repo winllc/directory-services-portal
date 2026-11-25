@@ -1,9 +1,10 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { AccessRequest, AccessRequestStatus, GroupSummary } from '@dsp/shared';
+import { UserPlus } from 'lucide-react';
+import type { AccessRequest, AccessRequestStatus, GroupPerson, GroupSummary } from '@dsp/shared';
 import { dnParam } from '../../api/client';
-import { useGroupMutations } from '../../api/hooks';
-import { Badge, Button, ErrorAlert, FormRow, Modal, useToast } from '../ui';
+import { useGroupMutations, useGroupPeople } from '../../api/hooks';
+import { Badge, Button, ErrorAlert, FormRow, Modal, useDebounced, useToast } from '../ui';
 
 export const groupPath = (definitionId: string, dn: string) => `/groups/${encodeURIComponent(definitionId)}/group?${dnParam(dn)}`;
 
@@ -155,5 +156,60 @@ export function DecisionDialog({ request, approve, onClose }: { request: AccessR
         </FormRow>
       </div>
     </Modal>
+  );
+}
+
+/** Finds people of the group's directory by name, login or e-mail, for those who manage the group, with one action per person. */
+export function PersonSearch({
+  definitionId,
+  dn,
+  label,
+  placeholder,
+  actionLabel,
+  pending,
+  onPick,
+}: {
+  definitionId: string;
+  dn: string;
+  label: string;
+  placeholder: string;
+  actionLabel: string;
+  pending: boolean;
+  onPick: (person: GroupPerson) => void;
+}) {
+  const [text, setText] = useState('');
+  const who = useDebounced(text.trim(), 300);
+  const people = useGroupPeople(definitionId, dn, who, who.length >= 2);
+  return (
+    <div className="member-add">
+      <div className="search-box">
+        <UserPlus size={16} aria-hidden />
+        <input className="input" type="search" placeholder={placeholder} aria-label={label} value={text} onChange={(e) => setText(e.target.value)} />
+      </div>
+      {who.length >= 2 && (
+        <ul className="plain-list person-results" aria-live="polite">
+          {people.isFetching && <li className="muted small">Searching…</li>}
+          {!people.isFetching && people.data?.length === 0 && <li className="muted small">No one matches “{who}”.</li>}
+          {people.data?.map((p) => (
+            <li key={p.value} className="person-result">
+              <span>
+                {p.name}
+                {p.dn && <span className="muted small mono"> {p.dn}</span>}
+              </span>
+              <Button
+                size="sm"
+                loading={pending}
+                onClick={() => {
+                  onPick(p);
+                  setText('');
+                }}
+              >
+                {actionLabel}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

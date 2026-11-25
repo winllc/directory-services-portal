@@ -806,7 +806,8 @@
         "ownerAttribute": "owner",
         "requestFilter": "(!(cn=directory-admins))",
         "requireReason": true,
-        "allowLeave": true
+        "allowLeave": true,
+        "ownersManageOwners": true
       }
     },
     {

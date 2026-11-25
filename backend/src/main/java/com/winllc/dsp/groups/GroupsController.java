@@ -41,6 +41,9 @@ public class GroupsController {
 
   public record MembersInput(@NotNull @Size(max = 1000) List<@Size(max = 1024) String> add, @NotNull @Size(max = 1000) List<@Size(max = 1024) String> remove) {}
 
+  public record OwnersInput(@NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> add,
+      @NotNull @Size(max = GroupService.MAX_OWNER_CHANGES) List<@Size(max = 1024) String> remove) {}
+
   private static String dn(String dn) {
     if (dn == null || dn.isBlank() || dn.length() > 1024) throw ApiException.badRequest("Name the group with ?dn=");
     return dn;
@@ -96,6 +99,13 @@ public class GroupsController {
   public Memberships.Change changeMembers(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn,
       @Valid @RequestBody MembersInput in) {
     return groups.changeMembers(user, definitionId, dn(dn), in.add(), in.remove());
+  }
+
+  /** Adds people to and removes values from the group's owners (when its directory lets owners do so). */
+  @PostMapping("/{definitionId}/owners")
+  public Memberships.Change changeOwners(@AuthenticationPrincipal SessionUser user, @PathVariable String definitionId, @RequestParam String dn,
+      @Valid @RequestBody OwnersInput in) {
+    return groups.changeOwners(user, definitionId, dn(dn), in.add(), in.remove());
   }
 
   @GetMapping("/{definitionId}/people")

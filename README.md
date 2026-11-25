@@ -679,22 +679,27 @@ doesn't take the portal out of service. It is DOWN when none answers.
   decision and the owner's note. Nobody decides their own request.
 - **Owners manage members** on the group's page: find people by name, login or e-mail to add
   them, and remove members. They don't need write access to the whole definition for this.
+- **Owners manage owners**, where the directory allows it (off by default): on the group's page
+  they add people as owners and remove any owner, person or group. The last owner can't be
+  removed. Those who may edit the definition can do the same there.
 - **My groups** lists the user's groups. Members can **leave** a group when its directory allows
   it; otherwise they ask the owners.
 - **Settings** (per definition): the member field (automatic: member, uniqueMember or memberUid),
   the owner attribute, an LDAP filter for the groups that take requests (for example
   `(!(cn=domain admins))`; the others can be looked up but not requested), whether a reason is
-  required, and whether members may leave. The definition must be read/write.
+  required, whether members may leave, and whether owners may change owners (the owner attribute
+  must then be a multi-valued field of the form). The definition must be read/write.
 - **Audit and webhooks.** Requests and decisions are audited (`group.access-requested`,
   `group.access-cancelled`, `group.access-approved`, `group.access-rejected`). Every membership
   change is the usual `entry.update` event, and its `details.via` says why someone without write
   access could make it: `group-access-request`, `group-owner` or `group-leave`. Membership
-  changes also send the `group.membership_changed` webhook.
+  changes also send the `group.membership_changed` webhook. A change of owners by an owner is
+  an `entry.update` with `details.via` `group-owners`.
 - Requests are kept in `group-access-requests.json` in the data directory, or in the shared
   database when one is configured. Closed requests are kept for a year (at most 5,000); the
   audit trail keeps them for good.
-- The demo turns it on for *Groups*. Carol Chen co-owns *engineering*, and *directory-admins*
-  doesn't take requests.
+- The demo turns it on for *Groups*. Carol Chen co-owns *engineering* (and may change its
+  owners), and *directory-admins* doesn't take requests.
 
 ### Metrics
 *Metrics* (every signed-in user)

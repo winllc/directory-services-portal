@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
-import type { GroupDetail } from '@dsp/shared';
-import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupPeople, useGroupRequestsFor } from '../api/hooks';
+import type { GroupDetail, GroupPerson } from '@dsp/shared';
+import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
 import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
-import { GroupBadges, RequestAccessDialog } from '../components/groups/GroupParts';
+import { GroupBadges, PersonSearch, RequestAccessDialog } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
 /** One group: what it is, who owns it, the user's membership; for its owners, members and requests. */
@@ -40,25 +40,7 @@ export function GroupPage() {
       />
       <div className="split split-even">
         <Membership detail={d} />
-        <Card title="Owners" subtitle="They approve requests to join.">
-          {d.owners.length === 0 ? (
-            <p className="muted">This group has no owners: an administrator decides its requests.</p>
-          ) : (
-            <ul className="plain-list person-list">
-              {d.owners.map((o) => (
-                <li key={o.value}>
-                  {o.name}
-                  {o.dn && (
-                    <div className="muted small mono ellipsis" title={o.dn}>
-                      {o.dn}
-                    </div>
-                  )}
-                </li>
-              ))}
-              {d.moreOwners && <li className="muted small">and more</li>}
-            </ul>
-          )}
-        </Card>
+        <Owners detail={d} />
       </div>
       {d.group.canManage && definitionId && dn && (
         <>
@@ -141,6 +123,83 @@ function Membership({ detail }: { detail: GroupDetail }) {
   );
 }
 
+/** Who owns the group; where the directory allows it, owners add and remove owners here. */
+function Owners({ detail }: { detail: GroupDetail }) {
+  const g = detail.group;
+  const toast = useToast();
+  const { owners: change } = useGroupMutations();
+  const [removing, setRemoving] = useState<GroupPerson | null>(null);
+  const manage = detail.canManageOwners;
+  // The last owner stays: someone has to decide the group's requests.
+  const removable = manage && (detail.owners.length > 1 || detail.moreOwners);
+  const apply = (add: string[], remove: string[], done: string) =>
+    change.mutate(
+      { definitionId: g.definitionId, dn: g.dn, add, remove },
+      {
+        onSuccess: (r) => {
+          toast.success(r.added.length || r.removed.length ? done : 'Nothing changed: already so.');
+          setRemoving(null);
+        },
+        onError: (e) => {
+          toast.error(e);
+          setRemoving(null);
+        },
+      },
+    );
+  return (
+    <Card title="Owners" subtitle={manage ? 'They approve requests to join. You can add and remove owners.' : 'They approve requests to join.'}>
+      <div className="stack">
+        {detail.owners.length === 0 ? (
+          <p className="muted">This group has no owners: an administrator decides its requests.</p>
+        ) : (
+          <ul className="plain-list person-list">
+            {detail.owners.map((o) => (
+              <li key={o.value} className="person-result">
+                <span>
+                  {o.name}
+                  {o.dn && (
+                    <span className="muted small mono ellipsis" title={o.dn}>
+                      {' '}
+                      {o.dn}
+                    </span>
+                  )}
+                </span>
+                {removable && (
+                  <Button size="sm" variant="ghost" icon={<UserMinus size={14} />} aria-label={`Remove owner ${o.name}`} onClick={() => setRemoving(o)}>
+                    Remove
+                  </Button>
+                )}
+              </li>
+            ))}
+            {detail.moreOwners && <li className="muted small">and more</li>}
+          </ul>
+        )}
+        {manage && !removable && detail.owners.length === 1 && <p className="muted small">The last owner can't be removed. Add another one first.</p>}
+        {manage && (
+          <PersonSearch
+            definitionId={g.definitionId}
+            dn={g.dn}
+            label="Find someone to make an owner"
+            placeholder="Add an owner: type a name, login or e-mail…"
+            actionLabel="Make owner"
+            pending={change.isPending}
+            onPick={(p) => apply([p.dn ?? p.value], [], `${p.name} is now an owner.`)}
+          />
+        )}
+      </div>
+      <ConfirmDialog
+        open={!!removing}
+        title={`Remove ${removing?.name} as an owner?`}
+        message={`They no longer decide requests or manage the members of ${g.name}.`}
+        confirmLabel="Remove owner"
+        loading={change.isPending}
+        onCancel={() => setRemoving(null)}
+        onConfirm={() => removing && apply([], [removing.value], `${removing.name} is no longer an owner.`)}
+      />
+    </Card>
+  );
+}
+
 function GroupRequests({ definitionId, dn, count }: { definitionId: string; dn: string; count: number }) {
   const requests = useGroupRequestsFor(definitionId, dn, true);
   const list = requests.data ?? [];
@@ -160,9 +219,6 @@ function Members({ detail }: { detail: GroupDetail }) {
   const [page, setPage] = useState(1);
   const q = useDebounced(search.trim(), 300);
   const members = useGroupAccessMembers(g.definitionId, g.dn, q, page, true);
-  const [adding, setAdding] = useState('');
-  const who = useDebounced(adding.trim(), 300);
-  const people = useGroupPeople(g.definitionId, g.dn, who, who.length >= 2);
   const [removing, setRemoving] = useState<{ value: string; name: string } | null>(null);
   const data = members.data;
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -184,43 +240,15 @@ function Members({ detail }: { detail: GroupDetail }) {
   return (
     <Card title={`Members (${detail.memberCount ?? data?.total ?? '…'})`} subtitle="As an owner you can add and remove members directly.">
       <div className="stack">
-        <div className="member-add">
-          <div className="search-box">
-            <UserPlus size={16} aria-hidden />
-            <input
-              className="input"
-              type="search"
-              placeholder="Add someone: type a name, login or e-mail…"
-              aria-label="Find someone to add"
-              value={adding}
-              onChange={(e) => setAdding(e.target.value)}
-            />
-          </div>
-          {who.length >= 2 && (
-            <ul className="plain-list person-results" aria-live="polite">
-              {people.isFetching && <li className="muted small">Searching…</li>}
-              {!people.isFetching && people.data?.length === 0 && <li className="muted small">No one matches “{who}”.</li>}
-              {people.data?.map((p) => (
-                <li key={p.value} className="person-result">
-                  <span>
-                    {p.name}
-                    {p.dn && <span className="muted small mono"> {p.dn}</span>}
-                  </span>
-                  <Button
-                    size="sm"
-                    loading={change.isPending}
-                    onClick={() => {
-                      apply([p.value], [], `${p.name} was added.`);
-                      setAdding('');
-                    }}
-                  >
-                    Add
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <PersonSearch
+          definitionId={g.definitionId}
+          dn={g.dn}
+          label="Find someone to add"
+          placeholder="Add someone: type a name, login or e-mail…"
+          actionLabel="Add"
+          pending={change.isPending}
+          onPick={(p) => apply([p.value], [], `${p.name} was added.`)}
+        />
 
         <div className="toolbar">
           <div className="search-box search-sm">

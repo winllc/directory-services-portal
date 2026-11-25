@@ -59,6 +59,10 @@ public class GroupService {
   public static final String VIA_REQUEST = "group-access-request";
   public static final String VIA_OWNER = "group-owner";
   public static final String VIA_LEAVE = "group-leave";
+  /** An owner without write access changed the group's owners. */
+  public static final String VIA_OWNERS = "group-owners";
+  /** Most owners added or removed in one change. */
+  static final int MAX_OWNER_CHANGES = 20;
 
   public record GroupDirectory(String id, String name, String slug, String icon, boolean requireReason, boolean allowLeave) {}
 
@@ -75,9 +79,12 @@ public class GroupService {
 
   public record GroupList(List<GroupSummary> groups, boolean truncated) {}
 
-  /** {@code memberCount} is null when the directory returned the members in part (Active Directory, over 1,500). */
+  /**
+   * {@code memberCount} is null when the directory returned the members in part (Active Directory,
+   * over 1,500). {@code canManageOwners}: the viewer may add and remove the group's owners.
+   */
   public record GroupDetail(GroupSummary group, List<Person> owners, boolean moreOwners, Integer memberCount, String memberAttribute,
-      boolean requireReason, boolean allowLeave, int pendingRequests) {}
+      boolean requireReason, boolean allowLeave, int pendingRequests, boolean canManageOwners) {}
 
   public record MemberPage(List<Person> items, int total, int page, int pageSize, boolean partial) {}
 
@@ -274,7 +281,7 @@ public class GroupService {
         requestable, pending);
     List<Person> ownerList = people(def, owners.stream().limit(MAX_OWNERS_SHOWN).toList(), true);
     return new GroupDetail(summary, ownerList, owners.size() > MAX_OWNERS_SHOWN, partial ? null : values.size(), member.attribute(),
-        def.groups().requireReason(), def.groups().allowLeave(), open);
+        def.groups().requireReason(), def.groups().allowLeave(), open, canManage && def.groups().ownersManage());
   }
 
   /**
@@ -339,6 +346,39 @@ public class GroupService {
     DirectoryDefinition def = definition(user, definitionId);
     DirectoryEntry e = managed(user, def, dn);
     return memberships.change(user, def, e.dn(), memberField(def).attribute(), add, remove, canEdit(user, def) ? null : VIA_OWNER);
+  }
+
+  /**
+   * Adds people to and removes values (people or groups) from the group's owners, for those who
+   * manage it, when its directory lets owners do so. The group keeps at least one owner.
+   */
+  public Memberships.Change changeOwners(SessionUser user, String definitionId, String dn, List<String> add, List<String> remove) {
+    DirectoryDefinition def = definition(user, definitionId);
+    DirectoryEntry e = managed(user, def, dn);
+    if (!def.groups().ownersManage()) throw ApiException.forbidden("This directory's owners can't change a group's owners");
+    String attr = def.groups().ownerAttributeOrDefault();
+    FormField field = entries.form(def).fields().stream().filter(f -> f.multiValued() && f.attribute().equalsIgnoreCase(attr)).findFirst()
+        .orElseThrow(() -> ApiException.badRequest("This directory's form has no field for the owner attribute (" + attr + ")"));
+    List<String> present = e.values(attr);
+    List<String> toAdd = distinct(add).stream().filter(v -> present.stream().noneMatch(p -> sameOwner(p, v))).toList();
+    List<String> wanted = distinct(remove);
+    List<String> toRemove = present.stream().filter(p -> wanted.stream().anyMatch(v -> sameOwner(p, v))).toList();
+    if (toAdd.isEmpty() && toRemove.isEmpty()) throw ApiException.badRequest("Nothing to add or remove");
+    Directories.Directory dir = directories.forDefinition(def);
+    for (String v : toAdd) {
+      if (People.byDn(dir, v) == null) throw ApiException.badRequest("\"" + (v.length() > 80 ? v.substring(0, 80) + "..." : v) + "\" is not a person of this directory");
+    }
+    if (present.size() - toRemove.size() + toAdd.size() < 1) throw ApiException.badRequest("A group keeps at least one owner: add another one first");
+    EntryService.ValueChange c = entries.changeValues(user, def, e.dn(), field, toAdd, toRemove, true, canEdit(user, def) ? null : VIA_OWNERS);
+    return new Memberships.Change(c.dn(), c.attribute(), c.added(), c.removed(), c.partial());
+  }
+
+  private static boolean sameOwner(String a, String b) {
+    return Dns.isValid(a) && Dns.isValid(b) ? Dns.equal(a, b) : a.equalsIgnoreCase(b);
+  }
+
+  private static List<String> distinct(List<String> values) {
+    return values == null ? List.of() : values.stream().filter(v -> v != null && !v.isBlank()).map(String::trim).distinct().toList();
   }
 
   /** People of the group's directory to add, for those who manage it: {@code value} is what the member attribute holds. */

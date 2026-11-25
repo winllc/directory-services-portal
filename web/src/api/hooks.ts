@@ -1049,6 +1049,11 @@ export function useGroupMutations() {
       mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'leave', v.dn)),
       onSuccess: refresh,
     }),
+    owners: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[] }) =>
+        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'owners', v.dn), { add: v.add, remove: v.remove }),
+      onSuccess: refresh,
+    }),
     members: useMutation({
       mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[] }) =>
         api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove }),
