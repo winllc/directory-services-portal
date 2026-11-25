@@ -561,14 +561,25 @@ export function useJobMutations() {
  * the job computing it (202). While the job runs, {@code job} reports its progress; when it
  * succeeds its result replaces the pending answer in the cache, and the job is marked seen (this
  * page showed it, so the global notifier stays quiet).
+ *
+ * <p>With {@code keep}, an answer stays as it is until {@code refresh} is called, also while no
+ * page shows it: coming back to the page shows it again instead of asking the server to compute it
+ * once more. For the pages with a Refresh button and a bounded number of keys (not the explorer's
+ * ad-hoc requests). A pending answer is never kept: the page asks again and joins the job, or
+ * starts over if the job is gone.
  */
-export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise<T | PendingResponse>, opts: { enabled?: boolean; staleTime?: number } = {}) {
+export function useBackgroundQuery<T>(
+  queryKey: QueryKey,
+  fetcher: () => Promise<T | PendingResponse>,
+  opts: { enabled?: boolean; staleTime?: number; keep?: boolean } = {},
+) {
   const qc = useQueryClient();
   const query = useQuery<T | PendingResponse>({
     queryKey,
     queryFn: fetcher,
     enabled: opts.enabled ?? true,
-    staleTime: opts.staleTime ?? 30_000,
+    staleTime: opts.keep ? (q) => (q.state.data === undefined || isPending(q.state.data) ? 0 : Infinity) : (opts.staleTime ?? 30_000),
+    ...(opts.keep ? { gcTime: Infinity } : {}),
     placeholderData: (prev) => prev,
     retry: false,
   });
@@ -606,6 +617,8 @@ export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise
     error: query.error ?? jobError,
     isLoading: query.isLoading,
     isFetching: query.isFetching || (!!current && jobActive(current)),
+    /** When the answer shown was received (0 while there is none). */
+    updatedAt: data === undefined ? 0 : query.dataUpdatedAt,
     /** Recompute on the server (bypassing caches); the answer may again be a job. */
     refresh: async (fetchFresh: () => Promise<T | PendingResponse>) => {
       const r = await fetchFresh();
@@ -618,7 +631,10 @@ export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise
 // Metrics
 // ---------------------------------------------------------------------------
 
-/** Results are cached on the server for a minute; "refresh" recomputes them. */
+/**
+ * Metric results stay on the page until the user refreshes them: visiting a page again does not
+ * recompute it. "refresh" recomputes on the server, bypassing its cache.
+ */
 const withRefresh = (url: string, refresh: boolean) => (refresh ? `${url}${url.includes('?') ? '&' : '?'}refresh=true` : url);
 
 export const useMetricSources = () =>
@@ -626,12 +642,12 @@ export const useMetricSources = () =>
 
 const summaryUrl = (refresh = false) => withRefresh('/api/metrics/summary', refresh);
 export const useMetricSummary = () =>
-  useBackgroundQuery<DirectorySummaryRow[]>(keys.metricSummary, () => api.get(summaryUrl()));
+  useBackgroundQuery<DirectorySummaryRow[]>(keys.metricSummary, () => api.get(summaryUrl()), { keep: true });
 export const fetchSummary = (refresh: boolean) => api.get<DirectorySummaryRow[] | PendingResponse>(summaryUrl(refresh));
 
 const overviewUrl = (id: string, refresh = false) => withRefresh(`/api/metrics/overview/${encodeURIComponent(id)}`, refresh);
 export const useOverview = (id: string | undefined) =>
-  useBackgroundQuery<OverviewResponse>(keys.overview(id ?? ''), () => api.get(overviewUrl(id!)), { enabled: !!id });
+  useBackgroundQuery<OverviewResponse>(keys.overview(id ?? ''), () => api.get(overviewUrl(id!)), { enabled: !!id, keep: true });
 export const fetchOverview = (id: string, refresh: boolean) => api.get<OverviewResponse | PendingResponse>(overviewUrl(id, refresh));
 
 export const useDashboards = () =>
@@ -647,7 +663,7 @@ export const useDashboard = (id: string | undefined) =>
 type DashboardResults = { results: Record<string, MetricOutcome> };
 const dashboardUrl = (id: string, refresh = false) => withRefresh(`/api/metrics/dashboards/${encodeURIComponent(id)}/results`, refresh);
 export const useDashboardResults = (id: string | undefined, enabled = true) =>
-  useBackgroundQuery<DashboardResults>(keys.dashboardResults(id ?? ''), () => api.get(dashboardUrl(id!)), { enabled: !!id && enabled });
+  useBackgroundQuery<DashboardResults>(keys.dashboardResults(id ?? ''), () => api.get(dashboardUrl(id!)), { enabled: !!id && enabled, keep: true });
 export const fetchDashboardResults = (id: string, refresh: boolean) => api.get<DashboardResults | PendingResponse>(dashboardUrl(id, refresh));
 
 /**
@@ -670,14 +686,21 @@ export interface DashboardInput {
 
 export function useDashboardMutations() {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['metrics'] });
+  // Only what the change touches: the other pages keep the results they show (see withRefresh).
+  const changed = (id?: string) => {
+    void qc.invalidateQueries({ queryKey: keys.dashboards });
+    if (id) {
+      void qc.invalidateQueries({ queryKey: keys.dashboard(id) });
+      void qc.invalidateQueries({ queryKey: keys.dashboardResults(id) });
+    }
+  };
   return {
-    create: useMutation({ mutationFn: (d: DashboardInput) => api.post<Dashboard>('/api/admin/dashboards', d), onSuccess: invalidate }),
+    create: useMutation({ mutationFn: (d: DashboardInput) => api.post<Dashboard>('/api/admin/dashboards', d), onSuccess: () => changed() }),
     update: useMutation({
       mutationFn: ({ id, ...d }: DashboardInput & { id: string }) => api.put<Dashboard>(`/api/admin/dashboards/${encodeURIComponent(id)}`, d),
-      onSuccess: invalidate,
+      onSuccess: (_, { id }) => changed(id),
     }),
-    remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/dashboards/${encodeURIComponent(id)}`), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/dashboards/${encodeURIComponent(id)}`), onSuccess: (_, id) => changed(id) }),
   };
 }
 
