@@ -838,7 +838,7 @@ public class GroupService {
     DirectoryDefinition def = definition(user, definitionId);
     DirectoryEntry e = managed(user, def, dn);
     List<AccessRequests.Request> closed = requests.list(r -> !r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn())).stream()
-        .sorted(Comparator.comparing((AccessRequests.Request r) -> r.decidedAt() != null ? r.decidedAt() : r.createdAt()).reversed()).toList();
+        .sorted(Comparator.comparing(AccessRequests.Request::closedAt).reversed()).toList();
     int p = Math.max(1, page);
     int from = (int) Math.min((long) (p - 1) * HISTORY_PAGE, closed.size());
     List<RequestView> items = closed.subList(from, Math.min(from + HISTORY_PAGE, closed.size())).stream().map(r -> new RequestView(r, def.name(), false))

@@ -59,6 +59,15 @@ public class AccessRequests {
       return PENDING.equals(status);
     }
 
+    /**
+     * When the request was closed (when it was made, while it is open), to order requests by. The
+     * stored texts must not be compared as text: an instant on a whole second is written without
+     * a fraction ("...:10Z") and so sorts after every other instant of that second ("...:10.250Z").
+     */
+    public Instant closedAt() {
+      return Instant.parse(decidedAt != null ? decidedAt : createdAt);
+    }
+
     Request reopened() {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, PENDING, createdAt, null,
           null, null, null, null, until, null);
@@ -218,7 +227,7 @@ public class AccessRequests {
   private void prune(List<Request> list) {
     Instant cutoff = clock.instant().minus(KEEP_FOR);
     list.removeIf(r -> !r.pending() && r.decidedAt() != null && Instant.parse(r.decidedAt()).isBefore(cutoff));
-    List<Request> closed = list.stream().filter(r -> !r.pending()).sorted(Comparator.comparing(Request::decidedAt)).toList();
+    List<Request> closed = list.stream().filter(r -> !r.pending()).sorted(Comparator.comparing(Request::closedAt)).toList();
     for (int i = 0; i < closed.size() - KEEP_CLOSED; i++) list.remove(closed.get(i));
   }
 }
