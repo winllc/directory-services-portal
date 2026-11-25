@@ -727,8 +727,12 @@ a manager's `uid`) or its parent container, the first N characters, a regular ex
 group, or a date's year, quarter, month, week or day. Drop-down values are shown with their
 option labels (so `manager` DNs show as people's names). An extra LDAP filter narrows any chart.
 
-Every chart has a table view and a CSV download. Results are cached for
-`METRICS_CACHE_SECONDS` (**Refresh** recomputes them); charts that read the same directory share
+Every chart has a table view and a CSV download. Once computed, a page's results stay as they are
+while the portal is open in the browser: going back to the metrics home page, an overview or a
+dashboard shows them again, with the time they were computed, and does not compute them again.
+**Refresh** (**Refresh counts** on the home page) recomputes them; saving a dashboard recomputes
+that dashboard. After the browser page is reloaded, the server answers from its own cache for
+`METRICS_CACHE_SECONDS` and computes afresh after that. Charts that read the same directory share
 one paged scan of it. Charts that take longer than `METRICS_WAIT_MILLIS` to compute continue in
 the background (see [Background tasks](#background-tasks)).
 
