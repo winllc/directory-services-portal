@@ -42,12 +42,14 @@ public class AccessRequests {
   /**
    * A request by {@code requester} (their {@code SessionUser.key()}; {@code requesterDn},
    * {@code requesterName} for display) to be added to {@code groupDn} of {@code definitionId} as
-   * {@code member} (their DN, or their login name for memberUid groups).
+   * {@code member} (their DN, or their login name for memberUid groups). In governed mode
+   * {@code governanceId} is the request's id in the governance console and {@code governanceState}
+   * its state there, as last read.
    */
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Request(String id, String definitionId, String groupDn, String groupName, String requester, String requesterDn,
       String requesterName, String member, String reason, String status, String createdAt, String decidedAt, String decidedBy,
-      String decidedByName, String note) {
+      String decidedByName, String note, String governanceId, String governanceState) {
 
     public boolean pending() {
       return PENDING.equals(status);
@@ -55,12 +57,22 @@ public class AccessRequests {
 
     Request reopened() {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, PENDING, createdAt, null,
-          null, null, null);
+          null, null, null, governanceId, governanceState);
     }
 
     Request closed(String newStatus, String at, String by, String byName, String withNote) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, newStatus, createdAt, at,
-          by, byName, withNote);
+          by, byName, withNote, governanceId, governanceState);
+    }
+
+    Request mirrored(String state) {
+      return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, status, createdAt,
+          decidedAt, decidedBy, decidedByName, note, governanceId, state);
+    }
+
+    /** Decided in the governance console rather than by the group's owners. */
+    public boolean governed() {
+      return governanceId != null;
     }
   }
 
@@ -97,8 +109,14 @@ public class AccessRequests {
   /** Adds a pending request, unless the requester already has one for the group (409). */
   public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
       String member, String reason, int maxPendingPerUser) {
+    return add(definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, maxPendingPerUser, null, null);
+  }
+
+  /** As {@link #add}, for a request the governance console decides ({@code governanceId}). */
+  public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
+      String member, String reason, int maxPendingPerUser, String governanceId, String governanceState) {
     Request r = new Request("req-" + UUID.randomUUID(), definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason,
-        PENDING, now(), null, null, null, null);
+        PENDING, now(), null, null, null, null, governanceId, governanceState);
     store(list -> {
       List<Request> mine = list.stream().filter(x -> x.pending() && x.requester().equals(requester)).toList();
       if (mine.stream().anyMatch(x -> x.definitionId().equals(definitionId) && com.winllc.dsp.ldap.Dns.equal(x.groupDn(), groupDn))) {
@@ -126,6 +144,22 @@ public class AccessRequests {
         return;
       }
       throw ApiException.notFound("Request not found");
+    });
+    return out[0];
+  }
+
+  /** Records the state a governed request has in the console, while it is still pending here. */
+  public Request mirror(String id, String state) {
+    Request[] out = new Request[1];
+    store(list -> {
+      for (int i = 0; i < list.size(); i++) {
+        Request r = list.get(i);
+        if (r.id().equals(id) && r.pending()) {
+          out[0] = r.mirrored(state);
+          list.set(i, out[0]);
+          return;
+        }
+      }
     });
     return out[0];
   }

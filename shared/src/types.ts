@@ -303,12 +303,17 @@ export interface AccessRequest {
   decidedBy?: string;
   decidedByName?: string;
   note?: string;
+  /** Governed mode: the request's id in the governance console, and its state there as last read. */
+  governanceId?: string;
+  governanceState?: string;
 }
 
 export interface AccessRequestView {
   request: AccessRequest;
   definitionName?: string;
   canDecide: boolean;
+  /** Governed mode: where the request is followed in the governance console. */
+  governanceUrl?: string;
 }
 
 export interface GroupRequestSummary {

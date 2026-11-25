@@ -24,6 +24,7 @@ class GroupsTest extends ApiTestSupport {
 
   @Autowired AccessRequests requests;
   @Autowired LoginThrottle throttle;
+  @Autowired com.winllc.dsp.groups.GovernanceClient governance;
 
   @BeforeEach
   void noRequests() {
@@ -228,6 +229,98 @@ class GroupsTest extends ApiTestSupport {
     // Not carol's group, and bob owns none.
     assertThat(status(carol.post("/api/groups/def-groups/members" + q(SALES), Map.of("add", List.of(ALICE), "remove", List.of())))).isEqualTo(403);
     assertThat(status(login("bob").get("/api/groups/def-groups/people" + q(ENGINEERING)))).isEqualTo(403);
+  }
+
+  /**
+   * Governed mode against a stand-in governance console: requests go there on the requester's
+   * behalf, owners can't decide them, groups governance closes are closed to requests, and the
+   * console's state is mirrored into "my requests".
+   */
+  @Test
+  void governedRequestsGoToTheGovernanceConsole() throws Exception {
+    List<String> posted = new java.util.concurrent.CopyOnWriteArrayList<>();
+    List<String> auth = new java.util.concurrent.CopyOnWriteArrayList<>();
+    java.util.concurrent.atomic.AtomicReference<String> remoteState = new java.util.concurrent.atomic.AtomicReference<>("pending_approval");
+    com.sun.net.httpserver.HttpServer console = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    console.createContext("/api/v1/governance/", ex -> {
+      auth.add(ex.getRequestHeaders().getFirst("Authorization"));
+      String path = ex.getRequestURI().getPath();
+      String query = java.net.URLDecoder.decode(String.valueOf(ex.getRequestURI().getRawQuery()), java.nio.charset.StandardCharsets.UTF_8);
+      String answer;
+      if (path.endsWith("/entitlements/lookup")) {
+        String dn = query.toLowerCase(java.util.Locale.ROOT);
+        answer = dn.contains("cn=sales") ? "{\"id\":\"e-sales\",\"known\":true,\"requestable\":true,\"managed_by\":\"grant\"}"
+            : dn.contains("cn=hr") ? "{\"id\":\"e-hr\",\"known\":true,\"requestable\":false,\"managed_by\":\"rule\"}"
+            : "{\"id\":null,\"known\":false,\"requestable\":false,\"managed_by\":\"\"}";
+      } else if (path.equals("/api/v1/governance/requests") && "POST".equals(ex.getRequestMethod())) {
+        posted.add(new String(ex.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+        answer = "{\"id\":\"g-1\",\"state\":\"pending_approval\"}";
+      } else if (path.equals("/api/v1/governance/requests/g-1/state")) {
+        answer = "{\"id\":\"g-1\",\"state\":\"" + remoteState.get() + "\",\"detail\":\"\"}";
+      } else {
+        answer = "{\"error\":\"not_found\",\"message\":\"no such path\"}";
+        byte[] b = answer.getBytes();
+        ex.sendResponseHeaders(404, b.length);
+        ex.getResponseBody().write(b);
+        ex.close();
+        return;
+      }
+      byte[] b = answer.getBytes();
+      ex.getResponseHeaders().add("Content-Type", "application/json");
+      ex.sendResponseHeaders(200, b.length);
+      ex.getResponseBody().write(b);
+      ex.close();
+    });
+    console.start();
+    var props = governance.properties();
+    try {
+      props.setUrl("http://127.0.0.1:" + console.getAddress().getPort());
+      props.setToken("sdt_portal-token");
+      props.setPortalUrl("https://governance.example");
+      props.setSystems("*=sys-1");
+      governance.forget();
+
+      Client dave = login("dave");
+      Map<String, JsonNode> groups = byName(body(dave.get("/api/groups")));
+      assertThat(groups.get("sales").get("requestable").asBoolean()).isTrue();
+      // Computed by a rule in governance: closed to requests here.
+      assertThat(groups.get("hr").get("requestable").asBoolean()).isFalse();
+
+      String id = ask(dave, SALES, "Quarterly forecast");
+      assertThat(posted).hasSize(1);
+      JsonNode sent = mapper.readTree(posted.get(0));
+      assertThat(sent.get("on_behalf_of").asString()).isEqualTo("dave");
+      assertThat(sent.get("source").asString()).isEqualTo("dsp");
+      assertThat(sent.get("items").get(0).get("entitlement_id").asString()).isEqualTo("e-sales");
+      assertThat(auth).allMatch("Bearer sdt_portal-token"::equals);
+      assertThat(requests.find(id).governanceId()).isEqualTo("g-1");
+      assertThat(status(dave.post("/api/groups/def-groups/requests" + q(HR), Map.of("reason", "x")))).isEqualTo(403);
+
+      // Owners and editors don't decide it, and don't see it to review.
+      Client admin = login("admin");
+      MvcResult decided = admin.post("/api/groups/requests/" + id + "/approve", Map.of());
+      assertThat(status(decided)).isEqualTo(409);
+      assertThat(decided.getResponse().getContentAsString()).contains("governance portal");
+      assertThat(body(admin.get("/api/groups/requests?scope=review")).valueStream().map(v -> v.get("request").get("id").asString()))
+          .doesNotContain(id);
+      assertThat(status(dave.post("/api/groups/requests/" + id + "/cancel", Map.of()))).isEqualTo(409);
+
+      // Mirrored when the requester lists their requests.
+      JsonNode mine = body(dave.get("/api/groups/requests?scope=mine")).get(0);
+      assertThat(mine.get("governanceUrl").asString()).isEqualTo("https://governance.example/my/requests/g-1");
+      assertThat(mine.get("request").get("governanceState").asString()).isEqualTo("pending_approval");
+      remoteState.set("completed");
+      mine = body(dave.get("/api/groups/requests?scope=mine")).get(0);
+      assertThat(mine.get("request").get("status").asString()).isEqualTo(AccessRequests.APPROVED);
+      assertThat(mine.get("request").get("decidedBy").asString()).isEqualTo("governance");
+    } finally {
+      props.setUrl(null);
+      props.setToken(null);
+      props.setPortalUrl(null);
+      props.setSystems(null);
+      governance.forget();
+      console.stop(0);
+    }
   }
 
   @Test

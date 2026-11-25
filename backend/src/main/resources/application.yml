@@ -203,6 +203,17 @@ portal:
       # SAML single logout (SP-initiated, HTTP-Redirect, signed): needs the signing key and
       # certificate above and an IdP whose metadata offers a SingleLogoutService by HTTP-Redirect.
       single-logout: ${SSO_SAML_SINGLE_LOGOUT:false}
+  # Governed mode: group requests go to the ENS identity governance console (syncd's console),
+  # whose approval workflow decides, instead of the groups' owners. Off while GOVERNANCE_URL or
+  # the token is empty. GOVERNANCE_SYSTEMS maps directory ids to governance system ids
+  # ("dir-a=<uuid>;dir-b=<uuid>", or "*=<uuid>" for every directory); the token needs the
+  # console scope governance:delegate.
+  governance:
+    url: ${GOVERNANCE_URL:}
+    token: ${GOVERNANCE_TOKEN:}
+    token-file: ${GOVERNANCE_TOKEN_FILE:}
+    portal-url: ${GOVERNANCE_PORTAL_URL:}
+    systems: ${GOVERNANCE_SYSTEMS:}
   # The integration API (/api/v1, API tokens), outbound webhooks, and entry import and export
   # (see README, Integration API).
   integration:

@@ -696,6 +696,41 @@ doesn't take the portal out of service. It is DOWN when none answers.
 - The demo turns it on for *Groups*. Carol Chen co-owns *engineering*, and *directory-admins*
   doesn't take requests.
 
+#### Governed mode
+
+With the ENS identity governance console (syncd's console) in charge of who holds which
+group, the portal hands its group requests to the console's approval workflows instead of the
+groups' owners.
+
+| Setting | What |
+| --- | --- |
+| `GOVERNANCE_URL` | The console's address, e.g. `https://syncd.example.com`. Empty: governed mode off |
+| `GOVERNANCE_TOKEN` (or `GOVERNANCE_TOKEN_FILE`) | A console API token with the scope `governance:delegate`, made by a governance administrator |
+| `GOVERNANCE_SYSTEMS` | Which directory's groups belong to which governance system: `dir-a=<system id>;dir-b=<system id>`, or `*=<system id>` for every directory. A directory not listed stays ungoverned |
+| `GOVERNANCE_PORTAL_URL` | Where people follow their requests in the console (its *My requests* page); by default `GOVERNANCE_URL` |
+
+In the Helm chart: `integrations.governance.url`, `.portalUrl`, `.systems` (a map) and
+`.token` (`value`, or `existingSecret` and `existingSecretKey`).
+
+What changes for a governed directory:
+
+- **Requesting** a group asks the console, on the user's behalf (`on_behalf_of`, their login
+  name, which must be their login in the console's identity source). The portal keeps its own
+  record with the console's request id, and the `group.access-requested` audit event says
+  `governed: true` and `governanceRequest`.
+- **Owners don't decide**: approve and reject answer 409 with a link to the governance portal,
+  and such requests don't appear under *To review*. The console's workflow decides.
+- **Groups governance closes** (not requestable there, or computed by a syncd rule) show as
+  closed to requests. Lookups are cached for five minutes; when the console can't be reached,
+  groups show as closed rather than offering a request that would fail.
+- **My requests** reads each open governed request's state from the console and mirrors it:
+  completed becomes approved, rejected and failed become rejected, cancelled becomes cancelled;
+  the link opens it in the governance portal. A governed request is withdrawn there, not here.
+- **Owners still manage members** directly. To tell the console about those changes, add a
+  webhook (*Integrations → Webhooks*) for `group.membership_changed` to the console's
+  `/api/v1/governance/ingest/dsp`, with the signing secret the console shows when you add the
+  portal under *Governance → Workflows → Portals reporting group changes*.
+
 ### Metrics
 *Metrics* (every signed-in user)
 
