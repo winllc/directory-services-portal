@@ -11,7 +11,7 @@ import {
   useMyGroups,
 } from '../api/hooks';
 import { Alert, Button, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, useDebounced, useToast } from '../components/ui';
-import { day, DecisionDialog, expiredText, GroupBadges, GroupLink, JoinButton, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
+import { BulkDecisionDialog, day, DecisionDialog, expiredText, GroupBadges, GroupLink, JoinButton, RequestAccessDialog, RequestStatus, MAX_DECISIONS, when } from '../components/groups/GroupParts';
 
 type Tab = 'find' | 'mine' | 'requests' | 'review';
 const TABS: Tab[] = ['find', 'mine', 'requests', 'review'];
@@ -313,68 +313,137 @@ function MyRequests() {
   );
 }
 
-/** Open requests to decide: a table with the requester, their reason and approve / reject. */
-export function RequestQueue({ requests, showGroup = true }: { requests: { request: AccessRequest; definitionName?: string; canDecide: boolean }[]; showGroup?: boolean }) {
+/**
+ * Open requests to decide: a table with the requester, their reason and approve / reject. With
+ * several to decide, they can be ticked and approved or rejected together. `empty` is shown when
+ * there are none (here, so the answer to a decision stays up when it was the last request).
+ */
+export function RequestQueue({
+  requests,
+  showGroup = true,
+  empty,
+}: {
+  requests: { request: AccessRequest; definitionName?: string; canDecide: boolean }[];
+  showGroup?: boolean;
+  empty: React.ReactNode;
+}) {
   const [deciding, setDeciding] = useState<{ request: AccessRequest; approve: boolean } | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulk, setBulk] = useState<{ requests: AccessRequest[]; approve: boolean } | null>(null);
+  const decidable = requests.filter((r) => r.canDecide).map((r) => r.request);
+  const selectable = decidable.length > 1;
+  // Only what is still shown counts: a request decided meanwhile drops out of the selection.
+  const chosen = decidable.filter((r) => selected.has(r.id));
+  const all = chosen.length === decidable.length;
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (!next.delete(id)) next.add(id);
+    setSelected(next);
+  };
   return (
     <>
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Who</th>
-              {showGroup && <th>Group</th>}
-              <th>Reason</th>
-              <th>Asked</th>
-              <th className="actions-col">
-                <span className="sr-only">Decision</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {requests.map(({ request: r, definitionName, canDecide }) => (
-              <tr key={r.id}>
-                <td>
-                  {r.requesterName ?? r.requester}
-                  {r.requesterDn && (
-                    <div className="muted small mono ellipsis" title={r.requesterDn}>
-                      {r.requesterDn}
-                    </div>
-                  )}
-                </td>
-                {showGroup && (
-                  <td>
-                    <GroupLink definitionId={r.definitionId} dn={r.groupDn}>
-                      {r.groupName}
-                    </GroupLink>
-                    {definitionName && <div className="muted small">{definitionName}</div>}
-                  </td>
+      {selectable && chosen.length > 0 && (
+        <div className="toolbar" role="group" aria-label="Selected requests">
+          <span className="muted">{chosen.length} selected</span>
+          <div className="toolbar-actions">
+            <Button size="sm" icon={<Check size={14} />} disabled={chosen.length > MAX_DECISIONS} onClick={() => setBulk({ requests: chosen, approve: true })}>
+              Approve selected
+            </Button>
+            <Button size="sm" variant="ghost" icon={<X size={14} />} disabled={chosen.length > MAX_DECISIONS} onClick={() => setBulk({ requests: chosen, approve: false })}>
+              Reject selected
+            </Button>
+          </div>
+          {chosen.length > MAX_DECISIONS && <span className="muted small">At most {MAX_DECISIONS} at once.</span>}
+        </div>
+      )}
+      {requests.length === 0 ? (
+        empty
+      ) : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                {selectable && (
+                  <th className="check-col">
+                    <input type="checkbox" aria-label="Select all shown" checked={all} onChange={() => setSelected(all ? new Set() : new Set(decidable.map((r) => r.id)))} />
+                  </th>
                 )}
-                <td className="request-reason-cell">
-                  {r.reason ?? <span className="muted">—</span>}
-                  {r.until && <div className="muted small">Until {day(r.until)}</div>}
-                </td>
-                <td className="muted nowrap">{when(r.createdAt)}</td>
-                <td className="actions-col">
-                  {canDecide ? (
-                    <div className="toolbar-actions">
-                      <Button size="sm" icon={<Check size={14} />} onClick={() => setDeciding({ request: r, approve: true })}>
-                        Approve
-                      </Button>
-                      <Button size="sm" variant="ghost" icon={<X size={14} />} onClick={() => setDeciding({ request: r, approve: false })}>
-                        Reject
-                      </Button>
-                    </div>
-                  ) : (
-                    <span className="muted small">Your request</span>
-                  )}
-                </td>
+                <th>Who</th>
+                {showGroup && <th>Group</th>}
+                <th>Reason</th>
+                <th>Asked</th>
+                <th className="actions-col">
+                  <span className="sr-only">Decision</span>
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {requests.map(({ request: r, definitionName, canDecide }) => (
+                <tr key={r.id}>
+                  {selectable && (
+                    <td className="check-col">
+                      {canDecide && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select the request of ${r.requesterName ?? r.requester}${showGroup ? ` for ${r.groupName}` : ''}`}
+                          checked={selected.has(r.id)}
+                          onChange={() => toggle(r.id)}
+                        />
+                      )}
+                    </td>
+                  )}
+                  <td>
+                    {r.requesterName ?? r.requester}
+                    {r.requesterDn && (
+                      <div className="muted small mono ellipsis" title={r.requesterDn}>
+                        {r.requesterDn}
+                      </div>
+                    )}
+                  </td>
+                  {showGroup && (
+                    <td>
+                      <GroupLink definitionId={r.definitionId} dn={r.groupDn}>
+                        {r.groupName}
+                      </GroupLink>
+                      {definitionName && <div className="muted small">{definitionName}</div>}
+                    </td>
+                  )}
+                  <td className="request-reason-cell">
+                    {r.reason ?? <span className="muted">—</span>}
+                    {r.until && <div className="muted small">Until {day(r.until)}</div>}
+                  </td>
+                  <td className="muted nowrap">{when(r.createdAt)}</td>
+                  <td className="actions-col">
+                    {canDecide ? (
+                      <div className="toolbar-actions">
+                        <Button size="sm" icon={<Check size={14} />} onClick={() => setDeciding({ request: r, approve: true })}>
+                          Approve
+                        </Button>
+                        <Button size="sm" variant="ghost" icon={<X size={14} />} onClick={() => setDeciding({ request: r, approve: false })}>
+                          Reject
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="muted small">Your request</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <DecisionDialog request={deciding?.request ?? null} approve={deciding?.approve ?? true} onClose={() => setDeciding(null)} />
+      {bulk && (
+        <BulkDecisionDialog
+          requests={bulk.requests}
+          approve={bulk.approve}
+          onClose={() => {
+            setBulk(null);
+            setSelected(new Set());
+          }}
+        />
+      )}
     </>
   );
 }
@@ -388,13 +457,14 @@ function Review() {
   return (
     <div className="stack">
       <ErrorAlert error={open.error} />
-      {pending.length === 0 ? (
-        <EmptyState icon={<Check size={28} />} title="Nothing to review">
-          Requests to join groups you own appear here.
-        </EmptyState>
-      ) : (
-        <RequestQueue requests={pending} />
-      )}
+      <RequestQueue
+        requests={pending}
+        empty={
+          <EmptyState icon={<Check size={28} />} title="Nothing to review">
+            Requests to join groups you own appear here.
+          </EmptyState>
+        }
+      />
       {history.length > 0 && (
         <section className="stack">
           <h2 className="section-title">Recently decided</h2>

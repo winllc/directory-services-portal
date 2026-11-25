@@ -26,6 +26,7 @@ import type {
   GroupMembers,
   ImportResult,
   MembershipChangeResult,
+  AccessDecisions,
   AccessRequest,
   AccessRequestView,
   GroupDetail,
@@ -1052,6 +1053,12 @@ export function useGroupMutations() {
     }),
     join: useMutation({
       mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'join', v.dn)),
+      onSuccess: refresh,
+    }),
+    /** Approves or rejects several requests with one note; the answer says what was decided and what was not. */
+    decideMany: useMutation({
+      mutationFn: (v: { ids: string[]; approve: boolean; note?: string }) =>
+        api.post<AccessDecisions>('/api/groups/requests/decide', { ids: v.ids, approve: v.approve, note: v.note || undefined }),
       onSuccess: refresh,
     }),
     leave: useMutation({

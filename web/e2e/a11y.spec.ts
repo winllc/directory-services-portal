@@ -145,6 +145,27 @@ test('group access dialogs: a member\'s end date, a pasted list, a request', asy
   await check(page, 'dialog-request-access');
 });
 
+test('group access: several requests ticked to decide together', async ({ page }) => {
+  // Two people ask to join sales (again in the second colour scheme's run: then they have asked already).
+  for (const who of ['alice', 'dave']) {
+    await signIn(page, who);
+    const asked = await page.request.post(`/api/groups/def-groups/requests?dn=${encodeURIComponent(SALES)}`, {
+      headers: { 'X-DSP-Request': '1' },
+      data: { reason: 'Quarter end' },
+    });
+    expect([201, 409]).toContain(asked.status());
+    await page.context().clearCookies();
+  }
+  await signIn(page);
+  await page.goto('/groups?tab=review');
+  await page.getByRole('checkbox', { name: 'Select all shown' }).check();
+  await expect(page.getByRole('button', { name: 'Approve selected' })).toBeVisible();
+  await check(page, 'groups-review-selected');
+  await page.getByRole('button', { name: 'Approve selected' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await check(page, 'dialog-decide-selected');
+});
+
 test('as a user without administration: home and profile', async ({ page }) => {
   await signIn(page, 'alice');
   await check(page, 'user-home');

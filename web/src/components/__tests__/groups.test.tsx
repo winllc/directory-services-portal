@@ -102,6 +102,16 @@ function server(overrides: Partial<GroupDetail> = {}) {
       if (path === '/api/groups/requests/summary') return json({ toReview: 0, myPending: 0 });
       if (path === '/api/groups/requests' && url.includes('scope=mine')) return json(state.mine.map((r) => ({ request: r, definitionName: 'Groups', canDecide: false })));
       if (path === '/api/groups/requests' && url.includes('scope=review')) return json(state.review.map((r) => ({ request: r, definitionName: 'Groups', canDecide: true })));
+      if (path === '/api/groups/requests/decide') {
+        const sentIds = (body as { ids: string[] }).ids;
+        const approve = (body as { approve: boolean }).approve;
+        // The second request was decided by someone else meanwhile.
+        const results = sentIds.map((id) =>
+          id === 'req-2' ? { id, ok: false, error: 'This request was already rejected', code: 409 } : { id, ok: true, status: approve ? 'approved' : 'rejected' },
+        );
+        state.review = state.review.filter((r) => !sentIds.includes(r.id));
+        return json({ results, decided: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length });
+      }
       if (/^\/api\/groups\/requests\/[^/]+\/(approve|reject)$/.test(path)) {
         const id = path.split('/')[4];
         const decided = { ...state.review.find((r) => r.id === id)!, status: path.endsWith('approve') ? 'approved' : 'rejected' };
@@ -412,5 +422,70 @@ describe('group page: adding people from a pasted list', () => {
     expect(within(dialog).getByText('At most 200 lines at once: this list has 201.')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Check the list' })).toBeDisabled();
     expect(api.sent).toEqual([]);
+  });
+});
+
+describe('to review: deciding several requests at once', () => {
+  const three = () => [
+    request('req-1', {}),
+    request('req-2', { requester: 'erin', requesterName: 'Erin Evans', requesterDn: `uid=erin,ou=people,${B}` }),
+    request('req-3', { requester: 'bob', requesterName: 'Bob Baker', requesterDn: `uid=bob,ou=people,${B}`, groupName: 'sales' }),
+  ];
+
+  it('approves the ticked requests with one note and says what failed and why', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.review = three();
+    renderAt('/groups?tab=review');
+
+    await screen.findByText('Dave Diaz');
+    // Nothing is offered until something is ticked.
+    expect(screen.queryByRole('button', { name: 'Approve selected' })).not.toBeInTheDocument();
+    await u.click(screen.getByRole('checkbox', { name: 'Select the request of Dave Diaz for engineering' }));
+    await u.click(screen.getByRole('checkbox', { name: 'Select the request of Erin Evans for engineering' }));
+    expect(within(screen.getByRole('group', { name: 'Selected requests' })).getByText('2 selected')).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Approve 2 requests?' });
+    expect(dialog).toHaveTextContent('Dave Diaz · engineering');
+    expect(dialog).toHaveTextContent('Erin Evans · engineering');
+    expect(dialog).not.toHaveTextContent('Bob Baker');
+    await u.type(within(dialog).getByLabelText('Note for all (optional)'), 'Welcome');
+    expect(api.sent).toEqual([]);
+    await u.click(within(dialog).getByRole('button', { name: 'Approve and add 2' }));
+
+    const done = await screen.findByRole('dialog', { name: 'Requests approved' });
+    expect(api.sent).toEqual([{ method: 'POST', path: '/api/groups/requests/decide', body: { ids: ['req-1', 'req-2'], approve: true, note: 'Welcome' } }]);
+    expect(done).toHaveTextContent('1 of 2 requests were approved.');
+    expect(done).toHaveTextContent('1 could not be approved');
+    expect(done).toHaveTextContent('Erin Evans · engineering: This request was already rejected');
+    await u.click(within(done).getByRole('button', { name: 'Done' }));
+    // The decided ones are gone; one request left needs no ticking.
+    expect(await screen.findByText('Bob Baker')).toBeInTheDocument();
+    expect(screen.queryByText('Dave Diaz')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
+  it('selects all shown and rejects them together', async () => {
+    const u = userEvent.setup();
+    const api = server();
+    api.state.review = [three()[0], three()[2]];
+    renderAt('/groups?tab=review');
+
+    await u.click(await screen.findByRole('checkbox', { name: 'Select all shown' }));
+    expect(screen.getByRole('checkbox', { name: 'Select the request of Bob Baker for sales' })).toBeChecked();
+    // Unticking all clears the selection again.
+    await u.click(screen.getByRole('checkbox', { name: 'Select all shown' }));
+    expect(screen.queryByRole('button', { name: 'Reject selected' })).not.toBeInTheDocument();
+    await u.click(screen.getByRole('checkbox', { name: 'Select all shown' }));
+    await u.click(screen.getByRole('button', { name: 'Reject selected' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reject 2 requests?' });
+    await u.click(within(dialog).getByRole('button', { name: 'Reject 2' }));
+    // The answer stays up although nothing is left to review behind it.
+    const done = await screen.findByRole('dialog', { name: 'Requests rejected' });
+    expect(done).toHaveTextContent('2 of 2 requests were rejected.');
+    expect(api.sent[0].body).toEqual({ ids: ['req-1', 'req-3'], approve: false });
+    await u.click(within(done).getByRole('button', { name: 'Done' }));
+    expect(await screen.findByText('Nothing to review')).toBeInTheDocument();
   });
 });

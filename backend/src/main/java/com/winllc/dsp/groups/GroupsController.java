@@ -1,11 +1,13 @@
 package com.winllc.dsp.groups;
 
+import com.winllc.dsp.audit.AccessDenials;
 import com.winllc.dsp.license.LicensedFeature;
 import com.winllc.dsp.license.ReadOnlyAllowed;
 import com.winllc.dsp.license.RequiresFeature;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.service.Memberships;
 import com.winllc.dsp.web.ApiException;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -32,9 +34,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiresFeature({LicensedFeature.DIRECTORY_EDITOR, LicensedFeature.SELF_SERVICE_PROFILE})
 public class GroupsController {
   private final GroupService groups;
+  private final AccessDenials denials;
 
-  public GroupsController(GroupService groups) {
+  public GroupsController(GroupService groups, AccessDenials denials) {
     this.groups = groups;
+    this.denials = denials;
   }
 
   /** {@code until}: the last day of the access asked for ({@code yyyy-MM-dd}, UTC); none: no end asked. */
@@ -46,6 +50,12 @@ public class GroupsController {
   /** {@code until}: the last day of the memberships added; none: the directory's longest, or no end. */
   public record MembersInput(@NotNull @Size(max = 1000) List<@Size(max = 1024) String> add, @NotNull @Size(max = 1000) List<@Size(max = 1024) String> remove,
       @Size(max = 10) String until) {}
+
+  /** Several requests decided with one note: {@code approve} or reject. */
+  public record DecisionsInput(@NotNull @Size(min = 1, max = GroupService.MAX_DECISIONS) List<@NotBlank @Size(max = 64) String> ids,
+      @NotNull Boolean approve, @Size(max = GroupService.MAX_REASON) String note) {}
+
+  public record Decisions(List<GroupService.DecisionOutcome> results, int decided, int failed) {}
 
   public record MemberUntilInput(@NotBlank @Size(max = 1024) String member, @Size(max = 10) String until) {}
 
@@ -174,6 +184,19 @@ public class GroupsController {
   @PostMapping("/requests/{id}/approve")
   public AccessRequests.Request approve(@AuthenticationPrincipal SessionUser user, @PathVariable String id, @Valid @RequestBody DecisionInput in) {
     return groups.decide(user, id, true, in.note(), in.until());
+  }
+
+  /**
+   * Approves or rejects several requests with one note, each on its own: the answer lists what was
+   * decided and what was not, and why. Refusals are audited like those of single decisions.
+   */
+  @PostMapping("/requests/decide")
+  public Decisions decideAll(@AuthenticationPrincipal SessionUser user, @Valid @RequestBody DecisionsInput in, HttpServletRequest request) {
+    List<GroupService.DecisionOutcome> results = groups.decideAll(user, in.ids(), in.approve(), in.note());
+    results.stream().filter(r -> r.code() != null && r.code() == HttpStatus.FORBIDDEN.value())
+        .forEach(r -> denials.denied(request, "forbidden", r.error()));
+    int decided = (int) results.stream().filter(GroupService.DecisionOutcome::ok).count();
+    return new Decisions(results, decided, results.size() - decided);
   }
 
   @PostMapping("/requests/{id}/reject")

@@ -703,6 +703,66 @@ class GroupsTest extends ApiTestSupport {
   }
 
   @Test
+  void severalRequestsAreDecidedTogetherEachOnItsOwn() throws Exception {
+    Client carol = login("carol");
+    Client admin = login("admin");
+    String daves = ask(login("dave"), ENGINEERING, "On call");
+    String erins = ask(login("erin"), ENGINEERING, "Curious");
+    String fatimas = ask(login("fatima"), HR, "Benefits");
+    String georges = ask(login("george"), SALES, "Demo support");
+    String carols = ask(carol, SALES, "Forecasts");
+    // Someone else answers dave's first.
+    assertThat(status(admin.post("/api/groups/requests/" + daves + "/reject", Map.of()))).isEqualTo(200);
+
+    MvcResult r = carol.post("/api/groups/requests/decide",
+        Map.of("ids", List.of(daves, erins, georges, carols, "req-unknown", erins), "approve", true, "note", "Welcome aboard"));
+    assertThat(status(r)).as(r.getResponse().getContentAsString()).isEqualTo(200);
+    Map<String, JsonNode> results = new HashMap<>();
+    body(r).get("results").forEach(x -> results.put(x.get("id").asString(), x));
+    assertThat(body(r).get("results")).hasSize(5);
+    assertThat(body(r).get("decided").asInt()).isEqualTo(1);
+    assertThat(body(r).get("failed").asInt()).isEqualTo(4);
+    // Carol's group: approved, with the one note.
+    assertThat(results.get(erins).get("ok").asBoolean()).isTrue();
+    assertThat(results.get(erins).get("status").asString()).isEqualTo("approved");
+    assertThat(member(login("erin"), ENGINEERING)).isTrue();
+    assertThat(requests.find(erins).note()).isEqualTo("Welcome aboard");
+    assertThat(requests.find(erins).decidedBy()).isEqualTo("carol");
+    // Already decided, not hers to decide (answered as if it weren't there), her own, and unknown.
+    assertThat(results.get(daves).get("code").asInt()).isEqualTo(409);
+    assertThat(results.get(daves).get("error").asString()).isEqualTo("This request was already rejected");
+    assertThat(results.get(georges).get("code").asInt()).isEqualTo(404);
+    assertThat(results.get(georges).get("error").asString()).isEqualTo(results.get("req-unknown").get("error").asString());
+    assertThat(results.get(carols).get("code").asInt()).isEqualTo(403);
+    assertThat(results.get(carols).get("error").asString()).isEqualTo("You can't decide your own request");
+    assertThat(requests.find(georges).pending()).isTrue();
+    assertThat(requests.find(carols).pending()).isTrue();
+    assertThat(member(login("george"), SALES)).isFalse();
+    assertThat(member(carol, SALES)).isFalse();
+    // Each decision is audited as a single one is, and so is the refusal.
+    assertThat(events("group.access-approved", "request", erins)).hasSize(1);
+    assertThat(events("group.access-approved", "request", georges)).isEmpty();
+    assertThat(events("access.denied", "path", "/api/groups/requests/decide")).isNotEmpty();
+
+    // Rejecting together: the administrator decides any group's requests, but not without rights or beyond the limit.
+    MvcResult none = login("bob").post("/api/groups/requests/decide", Map.of("ids", List.of(georges, fatimas), "approve", false));
+    assertThat(body(none).get("decided").asInt()).isZero();
+    body(none).get("results").forEach(x -> assertThat(x.get("code").asInt()).isEqualTo(404));
+    MvcResult rejected = admin.post("/api/groups/requests/decide", Map.of("ids", List.of(georges, fatimas, carols), "approve", false, "note", "Not this quarter"));
+    assertThat(body(rejected).get("decided").asInt()).isEqualTo(3);
+    assertThat(requests.find(fatimas).status()).isEqualTo(AccessRequests.REJECTED);
+    assertThat(requests.find(carols).note()).isEqualTo("Not this quarter");
+    assertThat(member(login("fatima"), HR)).isFalse();
+
+    List<String> many = new ArrayList<>();
+    for (int i = 0; i <= 50; i++) many.add("req-" + i);
+    assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", many, "approve", true)))).isEqualTo(400);
+    assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", List.of(), "approve", true)))).isEqualTo(400);
+    assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", List.of(erins))))).isEqualTo(400);
+    assertThat(status(admin.post("/api/groups/requests/decide", Map.of("ids", List.of(erins), "approve", true, "note", "x".repeat(1001))))).isEqualTo(400);
+  }
+
+  @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
     Map<String, Object> def = definitionInput();

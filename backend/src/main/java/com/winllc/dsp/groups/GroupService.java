@@ -87,6 +87,8 @@ public class GroupService {
   static final Duration EXPIRY_RETRY = Duration.ofHours(24);
   /** An owner without write access changed the group's owners. */
   public static final String VIA_OWNERS = "group-owners";
+  /** Most requests decided by one call. */
+  static final int MAX_DECISIONS = 50;
   /** Most lines of a pasted list of people looked up at once. */
   static final int MAX_PASTED = 200;
   /** Most owners added or removed in one change. */
@@ -131,6 +133,12 @@ public class GroupService {
 
   /** A pasted list of people, looked up: who was found, the lines nobody matches, and those several people match. */
   public record ResolvedPeople(List<FoundPerson> found, List<String> notFound, List<AmbiguousLine> ambiguous) {}
+
+  /**
+   * How one request of several decided together fared: {@code ok} with its new {@code status}, or
+   * the {@code error} and HTTP {@code code} deciding it alone would have answered.
+   */
+  public record DecisionOutcome(String id, boolean ok, String status, String error, Integer code) {}
 
   /** A request as shown: {@code canDecide} when the viewer may approve or reject it. */
   public record RequestView(AccessRequests.Request request, String definitionName, boolean canDecide) {}
@@ -822,6 +830,26 @@ public class GroupService {
     }
     event.success();
     return closed;
+  }
+
+  /**
+   * Approves or rejects several requests with one note. Each is decided on its own, exactly as
+   * {@link #decide} would (the same rights, never the user's own request, the same audit events):
+   * one that can't be decided doesn't stop the others, and is answered with its reason.
+   */
+  public List<DecisionOutcome> decideAll(SessionUser user, List<String> ids, boolean approve, String note) {
+    List<DecisionOutcome> out = new ArrayList<>();
+    for (String id : distinct(ids)) {
+      try {
+        out.add(new DecisionOutcome(id, true, decide(user, id, approve, note).status(), null, null));
+      } catch (ApiException e) {
+        out.add(new DecisionOutcome(id, false, null, e.getMessage(), e.status().value()));
+      } catch (RuntimeException e) {
+        log.warn("Could not decide group access request {}: {}", LogSafe.of(id), LogSafe.of(e.getMessage()));
+        out.add(new DecisionOutcome(id, false, null, e instanceof DirectoryException ? e.getMessage() : "The request could not be decided", 500));
+      }
+    }
+    return out;
   }
 
   /** The end date an approval today gives the request's membership (null: none); see {@link #decide}. */

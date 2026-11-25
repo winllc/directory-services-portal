@@ -350,6 +350,13 @@ export interface AccessRequestView {
   canDecide: boolean;
 }
 
+/** Several requests decided together: each on its own, with the reason for those that were not. */
+export interface AccessDecisions {
+  results: { id: string; ok: boolean; status?: AccessRequestStatus | null; error?: string | null; code?: number | null }[];
+  decided: number;
+  failed: number;
+}
+
 export interface GroupRequestSummary {
   toReview: number;
   myPending: number;

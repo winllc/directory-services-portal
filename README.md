@@ -684,7 +684,10 @@ doesn't take the portal out of service. It is DOWN when none answers.
   can approve too. *To review* lists the requests they can decide, and the menu shows how many
   are waiting. Approving adds the requester to the group's member field (their DN, or their login
   name for `memberUid`). Rejecting leaves the group as it is. Either way the requester sees the
-  decision and the owner's note. Nobody decides their own request.
+  decision and the owner's note. Nobody decides their own request. Several requests can be
+  ticked (or *Select all shown*) and approved or rejected together with one note, at most 50 at
+  once: each is decided on its own, and the answer lists those that could not be decided and
+  why (for example one someone else has answered meanwhile).
 - **Owners manage members** on the group's page: find people by name, login or e-mail to add
   them, and remove members. They don't need write access to the whole definition for this.
   **Add from a list** takes pasted logins, e-mail addresses or DNs, one per line (at most 200):

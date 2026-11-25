@@ -1,10 +1,10 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { UserPlus } from 'lucide-react';
-import type { AccessRequest, AccessRequestStatus, GroupPerson, GroupSummary } from '@dsp/shared';
+import type { AccessDecisions, AccessRequest, AccessRequestStatus, GroupPerson, GroupSummary } from '@dsp/shared';
 import { dnParam } from '../../api/client';
 import { useGroupMutations, useGroupPeople } from '../../api/hooks';
-import { Badge, Button, ErrorAlert, FormRow, Modal, useDebounced, useToast } from '../ui';
+import { Alert, Badge, Button, ErrorAlert, FormRow, Modal, useDebounced, useToast } from '../ui';
 
 export const groupPath = (definitionId: string, dn: string) => `/groups/${encodeURIComponent(definitionId)}/group?${dnParam(dn)}`;
 
@@ -240,6 +240,86 @@ export function DecisionDialog({ request, approve, onClose }: { request: AccessR
           <textarea id={`${id}-note`} className="input" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />
         </FormRow>
       </div>
+    </Modal>
+  );
+}
+
+/** Most requests decided together (the server's limit). */
+export const MAX_DECISIONS = 50;
+
+/**
+ * Approves or rejects several requests with one note. Each is decided on its own: afterwards the
+ * dialog says how many were decided and lists those that were not, with the reason.
+ */
+export function BulkDecisionDialog({ requests, approve, onClose }: { requests: AccessRequest[]; approve: boolean; onClose: () => void }) {
+  const id = useId();
+  const { decideMany } = useGroupMutations();
+  const [note, setNote] = useState('');
+  const [result, setResult] = useState<AccessDecisions | null>(null);
+  const n = requests.length;
+  const label = (r: AccessRequest) => `${r.requesterName ?? r.requester} · ${r.groupName}`;
+  const failures = result?.results.filter((x) => !x.ok) ?? [];
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={result ? (approve ? 'Requests approved' : 'Requests rejected') : approve ? `Approve ${n} requests?` : `Reject ${n} requests?`}
+      footer={
+        result ? (
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              variant={approve ? 'primary' : 'danger'}
+              loading={decideMany.isPending}
+              onClick={() => decideMany.mutate({ ids: requests.map((r) => r.id), approve, note: note.trim() }, { onSuccess: setResult })}
+            >
+              {approve ? `Approve and add ${n}` : `Reject ${n}`}
+            </Button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <div className="stack" role="status">
+          <p>
+            {result.decided} of {result.results.length} {result.results.length === 1 ? 'request was' : 'requests were'} {approve ? 'approved' : 'rejected'}.
+          </p>
+          {failures.length > 0 && (
+            <Alert tone="warning" title={`${failures.length} could not be ${approve ? 'approved' : 'rejected'}`}>
+              <ul className="plain-list">
+                {failures.map((f) => {
+                  const r = requests.find((x) => x.id === f.id);
+                  return (
+                    <li key={f.id}>
+                      {r ? label(r) : f.id}: {f.error}
+                    </li>
+                  );
+                })}
+              </ul>
+            </Alert>
+          )}
+        </div>
+      ) : (
+        <div className="stack">
+          <ErrorAlert error={decideMany.error} />
+          <ul className="plain-list person-list">
+            {requests.map((r) => (
+              <li key={r.id}>{label(r)}</li>
+            ))}
+          </ul>
+          <FormRow
+            label={approve ? 'Note for all (optional)' : 'Why not? For all (optional)'}
+            htmlFor={`${id}-note`}
+            hint="Every requester sees this with the decision. Each request is decided on its own."
+          >
+            <textarea id={`${id}-note`} className="input" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />
+          </FormRow>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -219,7 +219,7 @@ function GroupRequests({ definitionId, dn, count }: { definitionId: string; dn: 
   return (
     <Card title={`Requests to join (${list.length || count})`}>
       <ErrorAlert error={requests.error} />
-      {requests.isLoading ? <Spinner /> : list.length === 0 ? <p className="muted">No open requests.</p> : <RequestQueue requests={list} showGroup={false} />}
+      {requests.isLoading ? <Spinner /> : <RequestQueue requests={list} showGroup={false} empty={<p className="muted">No open requests.</p>} />}
     </Card>
   );
 }
