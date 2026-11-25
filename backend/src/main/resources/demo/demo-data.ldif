@@ -18,6 +18,7 @@ objectClass: top
 objectClass: organizationalUnit
 ou: groups
 description: Groups container
+seeAlso: uid=carol,ou=people,dc=example,dc=com
 
 dn: ou=devices,dc=example,dc=com
 objectClass: top

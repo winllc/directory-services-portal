@@ -10,6 +10,7 @@ import { CreateEntryPage, EntryPage } from './pages/EntryPage';
 import { MyProfilePage } from './pages/MyProfilePage';
 import { GroupsPage } from './pages/GroupsPage';
 import { GroupPage } from './pages/GroupPage';
+import { NewGroupPage } from './pages/NewGroupPage';
 import { SchemaPage } from './pages/admin/SchemaPage';
 import { FormsPage } from './pages/admin/FormsPage';
 import { FormEditorPage } from './pages/admin/FormEditorPage';
@@ -68,6 +69,7 @@ export function App() {
           <Route index element={<HomePage />} />
           <Route path="me" element={profile(<MyProfilePage />)} />
           <Route path="groups" element={groups(<GroupsPage />)} />
+          <Route path="groups/new" element={directories(<NewGroupPage />)} />
           <Route path="groups/:definitionId/group" element={groups(<GroupPage />)} />
           <Route path="d/:slug" element={directories(<DirectoryPage />)} />
           <Route path="d/:slug/new" element={directories(<CreateEntryPage />)} />

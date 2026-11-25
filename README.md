@@ -261,6 +261,10 @@ administrator sets it, and stored definitions and requests are read as before. W
   `group.membership-expired`; new `details.via` values on `entry.update`: `group-owners`,
   `group-join` and `group-membership-expired` (by the system).
 - The demo directory has a sixth group, *social-club* (open to join).
+- Owners of an organizational unit create and delete the groups directly in it, once a
+  definition names the attribute that lists a unit's owners (empty until then: off). Both are
+  the usual `entry.create` and `entry.delete`, with the new `details.via` value
+  `group-container-owner`. In the demo Carol Chen owns `ou=groups` (by `seeAlso`).
 
 ## Releases
 
@@ -734,6 +738,26 @@ doesn't take the portal out of service. It is DOWN when none answers.
 - **Past requests.** On the group's page its owners see the group's closed requests, newest
   first, 20 a page: who asked and why, who approved or rejected it (or that it was withdrawn or
   expired), when, and the note. As long as the portal keeps them (a year).
+- **Owners of an organizational unit create and delete its groups**, where the directory names
+  the attribute that lists a unit's owners (none by default, so this is off). The units are the
+  base DN's own entry and, with scope *sub*, the containers below it (`organizationalUnit`,
+  `organization`, `container`, `domain`, `builtinDomain`, `locality`, `country`, `nsContainer`).
+  The attribute names people, or groups whose members all count, as a group's owner attribute
+  does. They don't need write access to the whole definition for this.
+  - **New group** on the Group access page, for someone who owns a unit: they pick the unit if
+    they own several and fill in the directory's own form for a new entry, so its required
+    fields, its validation and the definition's filter apply. The group goes directly into that
+    unit, and the server refuses any other parent. The creator becomes the group's owner and,
+    where the form or the object class requires a member, its first member, unless they name
+    others.
+  - **Delete group** on the page of a group directly in a unit they own, after a confirmation
+    that names the group. The directory is asked who owns the unit at that moment. Owning a
+    unit gives nothing over the groups of the units below it. Open requests to join the group
+    are closed as rejected with the note *The group was deleted.*, and its end dates dropped.
+  - Owning a unit gives nothing else: no access to the directory's other pages, and no say over
+    the members of groups one doesn't own. Those who may edit the definition keep creating and
+    deleting in the directory editor, as before. Like that, both need the directory editor's
+    license, and a license that isn't read-only.
 - **My groups** lists the user's groups. Members can **leave** a group when its directory allows
   it; otherwise they ask the owners.
 - **Settings** (per definition): the member field (automatic: member, uniqueMember or memberUid),
@@ -742,8 +766,11 @@ doesn't take the portal out of service. It is DOWN when none answers.
   required, whether members may leave, whether owners may change owners (the owner attribute
   must then be a multi-valued field of the form), the days after which an unanswered request
   expires (empty: never; at most 365), an LDAP filter for open groups (for example
-  `(cn=social-*)`; empty: none), and the longest membership in days (empty: no limit; at most
-  3650). The definition must be read/write.
+  `(cn=social-*)`; empty: none), the longest membership in days (empty: no limit; at most
+  3650), and the owner attribute of organizational units (empty: off; there is no default,
+  because the standard `organizationalUnit` class has no owner attribute: Active Directory has
+  `managedBy`, other directories need a schema that allows one). The definition must be
+  read/write.
 - **Audit and webhooks.** Requests and decisions are audited (`group.access-requested`,
   `group.access-cancelled`, `group.access-approved`, `group.access-rejected`, and
   `group.access-expired` by the system). Every membership change is the usual `entry.update`
@@ -753,15 +780,20 @@ doesn't take the portal out of service. It is DOWN when none answers.
   owner is an `entry.update` with `details.via` `group-owners`. An end date set, changed or
   removed is `group.membership-end-date`. A member removed after their end date is an
   `entry.update` by the system with `details.via` `group-membership-expired`, the webhook, and a
-  `group.membership-expired` event.
+  `group.membership-expired` event. A group created or deleted by an owner of its organizational
+  unit is the usual `entry.create` or `entry.delete`, with `details.via` `group-container-owner`
+  and the `entry.changed` webhook an editor's create or delete sends; the open requests closed
+  with a deleted group are `group.access-rejected` with the same `via`.
 - Requests are kept in `group-access-requests.json` in the data directory, or in the shared
   database when one is configured. Closed requests are kept for a year (at most 5,000); the
   audit trail keeps them for good. End dates are kept in `group-membership-expiries.json`, or
   in the shared database's `dsp_group_membership_expiry` table (Flyway V13; the file is imported
   once).
-- The demo turns it on for *Groups*. Carol Chen co-owns *engineering* (and may change its
-  owners), *directory-admins* doesn't take requests, *social-club* is open, and requests expire
-  after 30 days.
+- The demo turns it on for *Groups*. Carol Chen owns the unit `ou=groups` (the demo names a
+  unit's owners in `seeAlso`, the one DN attribute the standard class allows), so she creates
+  and deletes groups there. She also co-owns *engineering* (and may change its owners),
+  *directory-admins* doesn't take requests, *social-club* is open, and requests expire after 30
+  days.
 
 ### Metrics
 *Metrics* (every signed-in user)

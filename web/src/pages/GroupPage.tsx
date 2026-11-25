@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, Download, ListPlus, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, Download, ListPlus, LogOut, Search, Trash2, UserMinus, UserPlus, Users } from 'lucide-react';
 import type { AccessRequest, GroupDetail, GroupMember, GroupPeopleResolved, GroupPerson, GroupSummary } from '@dsp/shared';
 import { downloadGroupMembers, useGroup, useGroupAccessMembers, useGroupHistory, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
 import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
@@ -14,6 +14,8 @@ export function GroupPage() {
   const [params] = useSearchParams();
   const dn = params.get('dn');
   const group = useGroup(definitionId, dn);
+  // Deleting is the directory editor's, as on the directory's own pages.
+  const editor = useFeature('directory-editor');
 
   if (group.isLoading) return <Spinner label="Loading…" />;
   if (!group.data) {
@@ -38,6 +40,7 @@ export function GroupPage() {
             <span className="muted">{d.group.definitionName}</span> <GroupBadges group={d.group} />
           </>
         }
+        actions={d.canDelete && editor.enabled && <DeleteGroup group={d.group} />}
       />
       <div className="split split-even">
         <Membership detail={d} />
@@ -51,6 +54,49 @@ export function GroupPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** Deletes the group, for an owner of the organizational unit it is in: asks first, naming the group. */
+function DeleteGroup({ group }: { group: GroupSummary }) {
+  const [confirming, setConfirming] = useState(false);
+  const { remove } = useGroupMutations();
+  const navigate = useNavigate();
+  const toast = useToast();
+  return (
+    <>
+      <Button variant="danger" icon={<Trash2 size={16} />} onClick={() => setConfirming(true)}>
+        Delete group
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        title={`Delete ${group.name}?`}
+        message={
+          <>
+            This permanently removes the group <strong>{group.name}</strong> (<code>{group.dn}</code>) from the directory. Its members lose the access it
+            gives, and open requests to join it are closed.
+          </>
+        }
+        confirmLabel="Delete group"
+        loading={remove.isPending}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() =>
+          remove.mutate(
+            { definitionId: group.definitionId, dn: group.dn },
+            {
+              onSuccess: () => {
+                toast.success(`${group.name} was deleted.`);
+                navigate('/groups');
+              },
+              onError: (e) => {
+                toast.error(e);
+                setConfirming(false);
+              },
+            },
+          )
+        }
+      />
+    </>
   );
 }
 

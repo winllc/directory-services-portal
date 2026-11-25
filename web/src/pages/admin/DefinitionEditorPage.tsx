@@ -146,6 +146,7 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
             ...d.groups,
             memberAttribute: d.groups.memberAttribute || undefined,
             ownerAttribute: d.groups.ownerAttribute?.trim() || undefined,
+            containerOwnerAttribute: d.groups.containerOwnerAttribute?.trim() || undefined,
             requestFilter: d.groups.requestFilter?.trim() || undefined,
             openFilter: d.groups.openFilter?.trim() || undefined,
           }
@@ -492,6 +493,22 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                     onChange={(v) => setGroups({ ownerAttribute: v[0] || undefined })}
                   />
                 </FormRow>
+                <div className="span-2">
+                  <FormRow
+                    label="Owner attribute of organizational units"
+                    htmlFor="ga-container-owner"
+                    hint="The attribute of an organizational unit (or other container) in this namespace that names its owners: people, or groups whose members all count. They create groups directly in their unit and delete the groups directly in it, without write access to this directory. Empty: off. There is no default, because the standard organizationalUnit class has no owner attribute: Active Directory has managedBy, other directories need a schema that allows one."
+                  >
+                    <TagSelect
+                      id="ga-container-owner"
+                      single
+                      options={allAttrs}
+                      values={groups.containerOwnerAttribute ? [groups.containerOwnerAttribute] : []}
+                      placeholder="Off"
+                      onChange={(v) => setGroups({ containerOwnerAttribute: v[0] || undefined })}
+                    />
+                  </FormRow>
+                </div>
                 <div className="span-2">
                   <FormRow
                     label="Groups that take requests"

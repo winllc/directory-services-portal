@@ -2,6 +2,7 @@ package com.winllc.dsp.groups;
 
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.SearchScope;
 import com.winllc.dsp.audit.AuditEvent;
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.ldap.Directories;
@@ -10,11 +11,14 @@ import com.winllc.dsp.ldap.Dns;
 import com.winllc.dsp.model.AccessLevel;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.model.DirectoryEntry;
+import com.winllc.dsp.model.FormDefinition;
 import com.winllc.dsp.model.FormField;
 import com.winllc.dsp.model.GroupAccess;
 import com.winllc.dsp.model.SessionUser;
 import com.winllc.dsp.model.SubjectSearchResult;
+import com.winllc.dsp.service.DirectoryOptions;
 import com.winllc.dsp.service.EntryService;
+import com.winllc.dsp.service.FormValidator;
 import com.winllc.dsp.service.Memberships;
 import com.winllc.dsp.service.People;
 import com.winllc.dsp.store.ConfigStore;
@@ -59,6 +63,11 @@ import org.springframework.stereotype.Service;
  * {@link MembershipExpiries}): asked for with a request, shortened by the approver, set by an owner,
  * or the directory's longest membership. {@link #expireMemberships} removes the member when it has
  * passed.
+ *
+ * <p>Where the definition names the attribute that lists the owners of an organizational unit
+ * ({@link GroupAccess#containerOwnerAttribute}), those owners create groups directly in their unit
+ * and delete the groups directly in it, without write access to the definition
+ * ({@link #createGroup}, {@link #deleteGroup}).
  */
 @Service
 public class GroupService {
@@ -94,6 +103,19 @@ public class GroupService {
   static final int MAX_PASTED = 200;
   /** Most owners added or removed in one change. */
   static final int MAX_OWNER_CHANGES = 20;
+  /** The owner of an organizational unit created a group in it, or deleted one of its groups. */
+  public static final String VIA_CONTAINER_OWNER = "group-container-owner";
+  /** Most organizational units listed for one user in a definition. */
+  static final int MAX_CONTAINERS = 50;
+  /**
+   * The object classes of entries that hold others (organizational units and the like): the owner
+   * attribute counts on these only, never on a person, a device or a group that happens to have it.
+   */
+  static final List<String> CONTAINER_CLASSES = List.of("organizationalUnit", "organization", "container", "domain", "builtinDomain",
+      "locality", "country", "nsContainer");
+  /** The note on a request closed because its group was deleted. */
+  static final String GROUP_DELETED = "The group was deleted.";
+  private static final String NOT_CONTAINER_OWNER = "Only an owner of an organizational unit can create groups in it";
 
   /** {@code maxMembershipDays}: the longest membership the portal grants here (null: no limit). */
   public record GroupDirectory(String id, String name, String slug, String icon, boolean requireReason, boolean allowLeave,
@@ -120,9 +142,22 @@ public class GroupService {
   /**
    * {@code memberCount} is null when the directory returned the members in part (Active Directory,
    * over 1,500). {@code canManageOwners}: the viewer may add and remove the group's owners.
+   * {@code canDelete}: the viewer owns the organizational unit the group is in, and may delete it.
    */
   public record GroupDetail(GroupSummary group, List<Person> owners, boolean moreOwners, Integer memberCount, String memberAttribute,
-      boolean requireReason, boolean allowLeave, int pendingRequests, boolean canManageOwners, Integer maxMembershipDays) {}
+      boolean requireReason, boolean allowLeave, int pendingRequests, boolean canManageOwners, Integer maxMembershipDays, boolean canDelete) {}
+
+  /** An organizational unit (or other container) the user owns: they may create groups directly in it. */
+  public record Container(String definitionId, String definitionName, String dn, String name) {}
+
+  /**
+   * The form of a new group, for the owner of an organizational unit. {@code prefill}: the values
+   * (by attribute, lower case) a new group gets unless the creator gives others: the creator as
+   * its owner and, where a member is required, its first member.
+   */
+  public record NewGroupForm(FormDefinition form, Map<String, List<String>> prefill) {}
+
+  public record CreatedGroup(String definitionId, String dn, String name) {}
 
   public record MemberPage(List<Member> items, int total, int page, int pageSize, boolean partial) {}
 
@@ -218,7 +253,11 @@ public class GroupService {
 
   /** The owner attribute names the user, or one of their groups. */
   private static Filter ownerFilter(SessionUser user, DirectoryDefinition def) {
-    String attr = def.groups().ownerAttributeOrDefault();
+    return namedBy(def.groups().ownerAttributeOrDefault(), user);
+  }
+
+  /** {@code attr} names the user, or one of their groups. */
+  private static Filter namedBy(String attr, SessionUser user) {
     List<Filter> any = new ArrayList<>(List.of(Filter.createEqualityFilter(attr, user.dn())));
     user.groups().stream().limit(MAX_OWNER_GROUPS).forEach(g -> any.add(Filter.createEqualityFilter(attr, g)));
     return any.size() == 1 ? any.get(0) : Filter.createORFilter(any);
@@ -400,7 +439,8 @@ public class GroupService {
         requestable, joinable, pending, ends == null ? null : ends.until());
     List<Person> ownerList = people(def, owners.stream().limit(MAX_OWNERS_SHOWN).toList(), true);
     return new GroupDetail(summary, ownerList, owners.size() > MAX_OWNERS_SHOWN, partial ? null : values.size(), member.attribute(),
-        def.groups().requireReason(), def.groups().allowLeave(), open, canManage && def.groups().ownersManage(), maxDays(def));
+        def.groups().requireReason(), def.groups().allowLeave(), open, canManage && def.groups().ownersManage(), maxDays(def),
+        ownsContainer(user, def, parentOf(e.dn())));
   }
 
   /**
@@ -682,6 +722,166 @@ public class GroupService {
       }
     }
     return new ResolvedPeople(found, notFound, ambiguous);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Organizational units: their owners create and delete the groups directly in them
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The containers of the definition's namespace whose owner attribute names the user, or one of
+   * their groups; null where the definition names no such attribute (or can't be written through).
+   */
+  private static Filter containerFilter(SessionUser user, DirectoryDefinition def) {
+    String attr = def.groups().containerOwner();
+    if (attr == null || def.readOnly()) return null;
+    return Filter.createANDFilter(Filter.createORFilter(CONTAINER_CLASSES.stream().map(c -> Filter.createEqualityFilter("objectClass", c)).toList()),
+        namedBy(attr, user));
+  }
+
+  /**
+   * Up to {@code limit} containers of the definition the user owns: its base DN's entry and, with
+   * scope sub, the containers below it.
+   */
+  private List<DirectoryEntry> ownedContainers(SessionUser user, DirectoryDefinition def, int limit) {
+    Filter owned = containerFilter(user, def);
+    if (owned == null) return List.of();
+    try {
+      return directories.forDefinition(def).ldap()
+          .search(def.baseDn(), "one".equals(def.scope()) ? SearchScope.BASE : SearchScope.SUB, owned, limit, List.of("1.1")).entries();
+    } catch (DirectoryException e) {
+      if (e.code() == DirectoryException.Code.NO_SUCH_OBJECT) return List.of();
+      throw e;
+    }
+  }
+
+  /**
+   * Whether the user owns this container of the definition's namespace, as the directory says now.
+   * False for anything else (no such entry, outside the namespace, not a container, no owner
+   * attribute set): the caller answers all of them alike.
+   */
+  private boolean ownsContainer(SessionUser user, DirectoryDefinition def, String dn) {
+    Filter owned = containerFilter(user, def);
+    if (owned == null || !Dns.isValid(dn) || !Dns.isUnder(dn, def.baseDn(), false)) return false;
+    if ("one".equals(def.scope()) && !Dns.equal(dn, def.baseDn())) return false;
+    try {
+      return !directories.forDefinition(def).ldap().search(dn, SearchScope.BASE, owned, 1, List.of("1.1")).entries().isEmpty();
+    } catch (DirectoryException e) {
+      if (e.code() == DirectoryException.Code.NO_SUCH_OBJECT) return false;
+      throw e;
+    }
+  }
+
+  /** The entry a group is directly in; null for a DN without a parent. */
+  private static String parentOf(String dn) {
+    return Dns.isValid(dn) ? Dns.parse(dn).getParentString() : null;
+  }
+
+  /** The organizational units the user owns, by definition: where they may create groups. */
+  public List<Container> containers(SessionUser user) {
+    List<Container> out = new ArrayList<>();
+    for (DirectoryDefinition def : definitions(user)) {
+      try {
+        for (DirectoryEntry e : ownedContainers(user, def, MAX_CONTAINERS)) out.add(new Container(def.id(), def.name(), e.dn(), Dns.rdnValue(e.dn())));
+      } catch (DirectoryException e) {
+        // The page still lists the groups: only creating is not offered for this directory now.
+        log.warn("Could not look up the organizational units of {}: {}", LogSafe.of(def.name()), LogSafe.of(e.getMessage()));
+      }
+    }
+    out.sort(Comparator.comparing(Container::name, String.CASE_INSENSITIVE_ORDER).thenComparing(Container::dn, String.CASE_INSENSITIVE_ORDER));
+    return out;
+  }
+
+  /** The definition, when the user owns one of its organizational units; 403 otherwise. */
+  private DirectoryDefinition forContainerOwner(SessionUser user, String definitionId) {
+    DirectoryDefinition def = definition(user, definitionId);
+    if (ownedContainers(user, def, 1).isEmpty()) throw ApiException.forbidden(NOT_CONTAINER_OWNER);
+    return def;
+  }
+
+  /**
+   * What a new group gets unless its creator says otherwise (by attribute, lower case): the creator
+   * as its owner and, where the form or the object classes require a member, as its first member.
+   */
+  private Map<String, List<String>> creatorValues(SessionUser user, DirectoryDefinition def, FormDefinition form) {
+    Map<String, List<String>> out = new LinkedHashMap<>();
+    out.put(def.groups().ownerAttributeOrDefault(), List.of(user.dn()));
+    FormField member = memberField(def);
+    if (member.required() || entries.requiredByClasses(def, form, member.attribute())) {
+      out.put(member.attribute().toLowerCase(Locale.ROOT), List.of(memberValue(user, member)));
+    }
+    return out;
+  }
+
+  /** The definition's form for a new group, for someone who owns one of its organizational units. */
+  public NewGroupForm newGroupForm(SessionUser user, String definitionId) {
+    DirectoryDefinition def = forContainerOwner(user, definitionId);
+    FormDefinition form = entries.form(def);
+    return new NewGroupForm(form, creatorValues(user, def, form));
+  }
+
+  /** A drop down's options of that form (as the directory editor's), for someone who owns one of the definition's organizational units. */
+  public DirectoryOptions.Page newGroupOptions(SessionUser user, String definitionId, String fieldId, String q, List<String> values) {
+    return entries.optionPageInNamespace(forContainerOwner(user, definitionId), fieldId, q, values);
+  }
+
+  /**
+   * Creates a group directly in an organizational unit the user owns, from the definition's form:
+   * its validation, the definition's filter, the {@code entry.create} audit event
+   * ({@code details.via} {@value #VIA_CONTAINER_OWNER}) and the webhook apply as for an editor. The
+   * creator becomes the group's owner (where the form has the owner field, or the object classes
+   * allow the attribute) and, where a member is required, its first member, unless the values
+   * name others. Any other parent is refused (403), whatever it is.
+   */
+  public CreatedGroup createGroup(SessionUser user, String definitionId, String container, Map<String, Object> values) {
+    DirectoryDefinition def = definition(user, definitionId);
+    String parent = container == null ? "" : container.trim();
+    if (!ownsContainer(user, def, parent)) throw ApiException.forbidden(NOT_CONTAINER_OWNER);
+    FormDefinition form = entries.form(def);
+    Map<String, Object> input = new LinkedHashMap<>();
+    if (values != null) values.forEach((k, v) -> input.put(k.toLowerCase(Locale.ROOT), v));
+    Map<String, List<String>> extra = new LinkedHashMap<>();
+    creatorValues(user, def, form).forEach((attribute, mine) -> {
+      if (!FormValidator.normalize(input.get(attribute)).isEmpty()) return;
+      boolean onForm = form.fields().stream()
+          .anyMatch(f -> f.attribute().equalsIgnoreCase(attribute) && FormValidator.isWritable(form, f, FormValidator.Mode.CREATE));
+      if (onForm) input.put(attribute, mine);
+      // Not a field of the form: set all the same, where the group's object classes take it.
+      else if (entries.allowedByClasses(def, form, attribute)) extra.put(attribute, mine);
+    });
+    DirectoryEntry created = entries.create(user, def, parent, input, VIA_CONTAINER_OWNER, extra);
+    return new CreatedGroup(def.id(), created.dn(), title(def, created));
+  }
+
+  /**
+   * Deletes a group for an owner of the organizational unit it is directly in (the directory is
+   * asked now; an owner of a unit further up doesn't count): the usual {@code entry.delete} audit
+   * event ({@code details.via} {@value #VIA_CONTAINER_OWNER}) and webhook. The group's open
+   * requests are then closed as rejected, with a note saying why, and its end dates dropped.
+   */
+  public void deleteGroup(SessionUser user, String definitionId, String dn) {
+    DirectoryDefinition def = definition(user, definitionId);
+    DirectoryEntry e = entries.readInNamespace(def, dn, List.of(def.titleAttribute()));
+    if (!ownsContainer(user, def, parentOf(e.dn()))) throw ApiException.forbidden("Only an owner of the group's organizational unit can delete it");
+    String name = title(def, e);
+    entries.remove(user, def, e.dn(), VIA_CONTAINER_OWNER);
+    try {
+      for (AccessRequests.Request r : requests.list(r -> r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn()))) {
+        try {
+          requests.close(r.id(), AccessRequests.REJECTED, user.key(), displayName(user), GROUP_DELETED);
+        } catch (ApiException decided) {
+          // Decided or withdrawn meanwhile: nothing left to close.
+          continue;
+        }
+        audit.event("group.access-rejected").by(user).definition(def.id()).directory(entries.directoryId(def)).target("group", e.dn(), name)
+            .detail("request", r.id()).detail("requester", r.requesterDn() != null ? r.requesterDn() : r.requester()).detail("note", GROUP_DELETED)
+            .detail("via", VIA_CONTAINER_OWNER).success();
+      }
+      expiries.clear(def.id(), e.dn(), expiries.ofGroup(def.id(), e.dn()).stream().map(MembershipExpiries.Expiry::member).toList());
+    } catch (RuntimeException failed) {
+      // The group is gone (and that is audited): what is left over must not fail the delete.
+      log.error("Deleted {}, but could not close its open requests or drop its end dates: {}", LogSafe.of(e.dn()), LogSafe.of(failed.getMessage()));
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -809,7 +809,8 @@
         "allowLeave": true,
         "ownersManageOwners": true,
         "requestExpiryDays": 30,
-        "openFilter": "(cn=social-club)"
+        "openFilter": "(cn=social-club)",
+        "containerOwnerAttribute": "seeAlso"
       }
     },
     {
