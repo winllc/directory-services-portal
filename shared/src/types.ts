@@ -230,6 +230,8 @@ export interface GroupAccess {
   allowLeave: boolean;
   /** A group's owners may add and remove its owners on the group page (default: off). */
   ownersManageOwners?: boolean;
+  /** Days after which an open request nobody answered is closed as expired (none or 0: never). */
+  requestExpiryDays?: number;
 }
 
 export interface GroupDirectory {
@@ -289,7 +291,7 @@ export interface GroupMemberPage {
   partial: boolean;
 }
 
-export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired';
 
 export interface AccessRequest {
   id: string;
@@ -307,6 +309,8 @@ export interface AccessRequest {
   decidedBy?: string;
   decidedByName?: string;
   note?: string;
+  /** For an expired request: the days it waited without an answer. */
+  expiredAfterDays?: number;
 }
 
 export interface AccessRequestView {

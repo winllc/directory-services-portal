@@ -38,16 +38,20 @@ public class AccessRequests {
   public static final String APPROVED = "approved";
   public static final String REJECTED = "rejected";
   public static final String CANCELLED = "cancelled";
+  /** Nobody answered within the definition's {@code requestExpiryDays}. */
+  public static final String EXPIRED = "expired";
 
   /**
    * A request by {@code requester} (their {@code SessionUser.key()}; {@code requesterDn},
    * {@code requesterName} for display) to be added to {@code groupDn} of {@code definitionId} as
-   * {@code member} (their DN, or their login name for memberUid groups).
+   * {@code member} (their DN, or their login name for memberUid groups). {@code expiredAfterDays}:
+   * for an expired request, how long it had waited. Fields added after the first release are
+   * objects, so requests stored without them are still read.
    */
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Request(String id, String definitionId, String groupDn, String groupName, String requester, String requesterDn,
       String requesterName, String member, String reason, String status, String createdAt, String decidedAt, String decidedBy,
-      String decidedByName, String note) {
+      String decidedByName, String note, Integer expiredAfterDays) {
 
     public boolean pending() {
       return PENDING.equals(status);
@@ -55,12 +59,17 @@ public class AccessRequests {
 
     Request reopened() {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, PENDING, createdAt, null,
-          null, null, null);
+          null, null, null, null);
     }
 
     Request closed(String newStatus, String at, String by, String byName, String withNote) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, newStatus, createdAt, at,
-          by, byName, withNote);
+          by, byName, withNote, null);
+    }
+
+    Request expired(String at, int afterDays) {
+      return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, EXPIRED, createdAt, at,
+          null, null, null, afterDays);
     }
   }
 
@@ -98,7 +107,7 @@ public class AccessRequests {
   public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
       String member, String reason, int maxPendingPerUser) {
     Request r = new Request("req-" + UUID.randomUUID(), definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason,
-        PENDING, now(), null, null, null, null);
+        PENDING, now(), null, null, null, null, null);
     store(list -> {
       List<Request> mine = list.stream().filter(x -> x.pending() && x.requester().equals(requester)).toList();
       if (mine.stream().anyMatch(x -> x.definitionId().equals(definitionId) && com.winllc.dsp.ldap.Dns.equal(x.groupDn(), groupDn))) {
@@ -115,13 +124,25 @@ public class AccessRequests {
   /** Closes a pending request (409 when it was decided or cancelled meanwhile); returns it closed. */
   public Request close(String id, String status, String by, String byName, String note) {
     String at = now();
+    return close(id, r -> r.closed(status, at, by, byName, note));
+  }
+
+  /**
+   * Closes a pending request as expired at {@code at}, after {@code afterDays} without an answer
+   * (409 when it was decided or cancelled meanwhile, so one caller only expires it).
+   */
+  public Request expire(String id, Instant at, int afterDays) {
+    return close(id, r -> r.expired(at.truncatedTo(ChronoUnit.MILLIS).toString(), afterDays));
+  }
+
+  private Request close(String id, java.util.function.UnaryOperator<Request> closing) {
     Request[] out = new Request[1];
     store(list -> {
       for (int i = 0; i < list.size(); i++) {
         Request r = list.get(i);
         if (!r.id().equals(id)) continue;
         if (!r.pending()) throw new ApiException(HttpStatus.CONFLICT, "This request was already " + r.status());
-        out[0] = r.closed(status, at, by, byName, note);
+        out[0] = closing.apply(r);
         list.set(i, out[0]);
         return;
       }

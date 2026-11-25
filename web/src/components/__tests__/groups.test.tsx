@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import type { GroupDetail, GroupPerson } from '@dsp/shared';
+import type { AccessRequest, GroupDetail, GroupPerson } from '@dsp/shared';
 import { App } from '../../App';
 import { AuthProvider } from '../../lib/auth';
 import { ToastProvider } from '../ui';
@@ -23,8 +23,23 @@ const carol = { username: 'carol', dn: CAROL.dn, displayName: 'Carol Chen', grou
 const features = ['directory-editor', 'self-service-profile'].map((id) => ({ id, enabled: true }));
 const GROUP_PAGE = `/groups/def-groups/group?dn=${encodeURIComponent(ENGINEERING)}`;
 
+const request = (id: string, patch: Partial<AccessRequest>): AccessRequest => ({
+  id,
+  definitionId: 'def-groups',
+  groupDn: ENGINEERING,
+  groupName: 'engineering',
+  requester: 'dave',
+  requesterDn: `uid=dave,ou=people,${B}`,
+  requesterName: 'Dave Diaz',
+  member: `uid=dave,ou=people,${B}`,
+  reason: 'On-call rotation',
+  status: 'pending',
+  createdAt: '2026-03-01T09:00:00.000Z',
+  ...patch,
+});
+
 function server(overrides: Partial<GroupDetail> = {}) {
-  const state = { owners: [ADA, CAROL] };
+  const state = { owners: [ADA, CAROL], mine: [] as AccessRequest[] };
   const sent: { method: string; path: string; body: unknown }[] = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
   const detail = (): GroupDetail => ({
@@ -61,6 +76,7 @@ function server(overrides: Partial<GroupDetail> = {}) {
       if (path === '/api/license') return json({ mode: 'FULL', state: 'VALID', message: '', evaluation: false, features });
       if (path === '/api/groups/directories') return json([{ id: 'def-groups', name: 'Groups', slug: 'groups', requireReason: true, allowLeave: true }]);
       if (path === '/api/groups/requests/summary') return json({ toReview: 0, myPending: 0 });
+      if (path === '/api/groups/requests' && url.includes('scope=mine')) return json(state.mine.map((r) => ({ request: r, definitionName: 'Groups', canDecide: false })));
       if (path === '/api/groups/def-groups/group') return json(detail());
       if (path === '/api/groups/def-groups/members' && method === 'GET') return json({ items: [CAROL], total: 1, page: 1, pageSize: 25, partial: false });
       if (path === '/api/groups/def-groups/people') return json([GEORGE]);
@@ -130,5 +146,23 @@ describe('group page: owners', () => {
     expect(within(owners).getByText('Ada Admin')).toBeInTheDocument();
     expect(within(owners).queryByLabelText('Find someone to make an owner')).not.toBeInTheDocument();
     expect(within(owners).queryByRole('button', { name: /Remove owner/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('my requests', () => {
+  it('tells the requester that a request expired, and after how long', async () => {
+    const api = server();
+    api.state.mine = [
+      request('req-1', { requester: 'carol', status: 'expired', decidedAt: '2026-03-15T09:00:00.000Z', expiredAfterDays: 14 }),
+      request('req-2', { requester: 'carol', groupName: 'sales', status: 'rejected', decidedAt: '2026-03-02T09:00:00.000Z', decidedByName: 'Ada Admin', note: 'Not now' }),
+    ];
+    renderAt('/groups?tab=requests');
+
+    const expired = (await screen.findByText('Expired')).closest('tr')!;
+    expect(expired).toHaveTextContent('Nobody answered within 14 days. You can ask again.');
+    expect(within(expired).queryByRole('button', { name: 'Withdraw' })).not.toBeInTheDocument();
+    const rejected = screen.getByText('Rejected').closest('tr')!;
+    expect(rejected).toHaveTextContent('Ada Admin');
+    expect(rejected).toHaveTextContent('Not now');
   });
 });

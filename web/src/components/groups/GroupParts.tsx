@@ -32,7 +32,12 @@ const STATUS: Record<AccessRequestStatus, { label: string; tone: 'info' | 'succe
   approved: { label: 'Approved', tone: 'success' },
   rejected: { label: 'Rejected', tone: 'danger' },
   cancelled: { label: 'Withdrawn', tone: 'neutral' },
+  expired: { label: 'Expired', tone: 'neutral' },
 };
+
+/** What became of a request nobody answered in time, for the requester and the group's owners. */
+export const expiredText = (r: AccessRequest) =>
+  r.expiredAfterDays ? `Nobody answered within ${r.expiredAfterDays} ${r.expiredAfterDays === 1 ? 'day' : 'days'}.` : 'Nobody answered in time.';
 
 export function RequestStatus({ status }: { status: AccessRequestStatus }) {
   const s = STATUS[status];

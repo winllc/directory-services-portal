@@ -2,6 +2,8 @@ package com.winllc.dsp.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.winllc.dsp.web.validation.LdapFilter;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.util.Locale;
@@ -22,6 +24,8 @@ import java.util.Locale;
  *   <li>{@code allowLeave}: members may remove themselves.</li>
  *   <li>{@code ownersManageOwners}: a group's owners may add and remove its owners (the owner
  *       attribute must then be a multi-valued field of the form).</li>
+ *   <li>{@code requestExpiryDays}: an open request nobody answered is closed as expired after this
+ *       many days (none or 0: never; at most {@value #MAX_REQUEST_EXPIRY_DAYS}).</li>
  * </ul>
  *
  * <p>Settings added after the first release are objects, not primitives: definitions stored (and
@@ -35,9 +39,12 @@ public record GroupAccess(
     @Size(max = 1000) @LdapFilter String requestFilter,
     boolean requireReason,
     boolean allowLeave,
-    Boolean ownersManageOwners) {
+    Boolean ownersManageOwners,
+    @Min(0) @Max(GroupAccess.MAX_REQUEST_EXPIRY_DAYS) Integer requestExpiryDays) {
 
   public static final String DEFAULT_OWNER_ATTRIBUTE = "owner";
+  /** Closed requests are kept for a year, so an open one waits no longer than that. */
+  public static final int MAX_REQUEST_EXPIRY_DAYS = 365;
 
   public String ownerAttributeOrDefault() {
     return ownerAttribute == null || ownerAttribute.isBlank() ? DEFAULT_OWNER_ATTRIBUTE : ownerAttribute.toLowerCase(Locale.ROOT);
@@ -48,10 +55,15 @@ public record GroupAccess(
     return Boolean.TRUE.equals(ownersManageOwners);
   }
 
+  /** Days after which an open request expires; 0: never. */
+  public int requestExpiry() {
+    return requestExpiryDays == null ? 0 : Math.max(0, requestExpiryDays);
+  }
+
   /** As stored: blanks and settings that are off dropped. */
   public GroupAccess cleaned() {
     return new GroupAccess(enabled, blank(memberAttribute), blank(ownerAttribute), blank(requestFilter), requireReason, allowLeave,
-        ownersManage() ? Boolean.TRUE : null);
+        ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null);
   }
 
   private static String blank(String s) {

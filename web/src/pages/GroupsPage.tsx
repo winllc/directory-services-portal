@@ -11,7 +11,7 @@ import {
   useMyGroups,
 } from '../api/hooks';
 import { Alert, Button, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, Tabs, useDebounced, useToast } from '../components/ui';
-import { DecisionDialog, GroupBadges, GroupLink, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
+import { DecisionDialog, expiredText, GroupBadges, GroupLink, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
 
 type Tab = 'find' | 'mine' | 'requests' | 'review';
 const TABS: Tab[] = ['find', 'mine', 'requests', 'review'];
@@ -280,7 +280,12 @@ function MyRequests() {
                 <RequestStatus status={r.status} />
               </td>
               <td>
-                {r.status !== 'pending' && r.status !== 'cancelled' && (
+                {r.status === 'expired' && (
+                  <div className="small">
+                    {expiredText(r)} You can ask again. · <span className="muted">{when(r.decidedAt)}</span>
+                  </div>
+                )}
+                {(r.status === 'approved' || r.status === 'rejected') && (
                   <>
                     <div className="small">
                       {r.decidedByName ?? r.decidedBy} · <span className="muted">{when(r.decidedAt)}</span>

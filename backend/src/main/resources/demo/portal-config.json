@@ -807,7 +807,8 @@
         "requestFilter": "(!(cn=directory-admins))",
         "requireReason": true,
         "allowLeave": true,
-        "ownersManageOwners": true
+        "ownersManageOwners": true,
+        "requestExpiryDays": 30
       }
     },
     {

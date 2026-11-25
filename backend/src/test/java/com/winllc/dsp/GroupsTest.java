@@ -3,8 +3,11 @@ package com.winllc.dsp;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.winllc.dsp.groups.AccessRequests;
+import com.winllc.dsp.groups.GroupAccessJobs;
 import com.winllc.dsp.model.DirectoryDefinition;
 import com.winllc.dsp.service.LoginThrottle;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -23,6 +26,7 @@ class GroupsTest extends ApiTestSupport {
   static final String ADMINS = "cn=directory-admins,ou=groups," + B;
 
   @Autowired AccessRequests requests;
+  @Autowired GroupAccessJobs jobs;
   @Autowired LoginThrottle throttle;
 
   @BeforeEach
@@ -283,6 +287,59 @@ class GroupsTest extends ApiTestSupport {
   }
 
   @Test
+  void openRequestsExpireAfterTheDefinitionsDays() throws Exception {
+    Client dave = login("dave");
+    Client carol = login("carol");
+    // Without the setting (as stored before there was one) requests wait for good.
+    setGroups(Map.of("enabled", true, "requireReason", false, "allowLeave", true));
+    String waiting = ask(dave, ENGINEERING, "On-call rotation");
+    Instant asked = Instant.parse(requests.find(waiting).createdAt());
+    assertThat(jobs.expireRequests(asked.plus(400, ChronoUnit.DAYS))).isZero();
+    assertThat(requests.find(waiting).pending()).isTrue();
+
+    setGroups(groups(Map.of("requestExpiryDays", 14)));
+    String answered = ask(login("erin"), ENGINEERING, "Curious");
+    assertThat(status(carol.post("/api/groups/requests/" + answered + "/reject", Map.of()))).isEqualTo(200);
+    assertThat(jobs.expireRequests(asked.plus(13, ChronoUnit.DAYS))).isZero();
+    // The job pauses with the portal's other scheduled work while the license is read-only.
+    TestLicensing.use(TestLicenses.license().expired().sign());
+    assertThat(jobs.expireRequests(asked.plus(15, ChronoUnit.DAYS))).isZero();
+    TestLicensing.use(TestLicenses.full());
+    Instant due = asked.plus(14, ChronoUnit.DAYS).plusSeconds(60);
+    assertThat(jobs.expireRequests(due)).isEqualTo(1);
+    // Once: a second run (another replica's, a later one) finds nothing to close.
+    assertThat(jobs.expireRequests(due.plusSeconds(60))).isZero();
+
+    JsonNode mine = body(dave.get("/api/groups/requests")).get(0).get("request");
+    assertThat(mine.get("status").asString()).isEqualTo("expired");
+    assertThat(mine.get("expiredAfterDays").asInt()).isEqualTo(14);
+    assertThat(mine.get("decidedAt").asString()).isEqualTo(due.truncatedTo(ChronoUnit.MILLIS).toString());
+    assertThat(mine.has("decidedBy")).isFalse();
+    // It is nobody's to decide any more, and the requester may ask again.
+    assertThat(body(carol.get("/api/groups/requests?scope=review"))).isEmpty();
+    assertThat(status(carol.post("/api/groups/requests/" + waiting + "/approve", Map.of()))).isEqualTo(409);
+    assertThat(member(dave, ENGINEERING)).isFalse();
+    assertThat(body(dave.get("/api/groups/def-groups/group" + q(ENGINEERING))).get("group").get("pendingRequestId").isNull()).isTrue();
+    assertThat(body(carol.get("/api/groups/requests?scope=decided"))).hasSize(1);
+    assertThat(requests.find(answered).status()).isEqualTo(AccessRequests.REJECTED);
+
+    JsonNode events = body(login("admin").get("/api/admin/audit?action=group.access-expired")).get("events");
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).get("actor").get("type").asString()).isEqualTo("system");
+    assertThat(events.get(0).get("target").get("id").asString()).isEqualTo(ENGINEERING);
+    assertThat(events.get(0).get("details").get("request").asString()).isEqualTo(waiting);
+    assertThat(events.get(0).get("details").get("afterDays").asInt()).isEqualTo(14);
+    ask(dave, ENGINEERING, "Still on call");
+
+    // The days are capped: closed requests are kept for a year.
+    Map<String, Object> def = definitionInput();
+    def.put("groups", groups(Map.of("requestExpiryDays", 366)));
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+    def.put("groups", groups(Map.of("requestExpiryDays", -1)));
+    assertThat(status(login("admin").put("/api/admin/definitions/def-groups", def))).isEqualTo(400);
+  }
+
+  @Test
   void validatesTheSettingsAndCanBeTurnedOff() throws Exception {
     Client admin = login("admin");
     Map<String, Object> def = definitionInput();
@@ -303,6 +360,31 @@ class GroupsTest extends ApiTestSupport {
     Client alice = login("alice");
     assertThat(body(alice.get("/api/groups/directories"))).isEmpty();
     assertThat(status(alice.get("/api/groups/def-groups/group" + q(ENGINEERING)))).isEqualTo(404);
+  }
+
+  @Test
+  void readsRequestsAndSettingsStoredBeforeTheNewFields() throws Exception {
+    // Exactly what the first release wrote.
+    java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("dsp-requests");
+    java.nio.file.Files.writeString(dir.resolve("group-access-requests.json"), """
+        [{"id":"req-1","definitionId":"def-groups","groupDn":"cn=engineering,ou=groups,dc=example,dc=com","groupName":"engineering",
+          "requester":"dave","requesterDn":"uid=dave,ou=people,dc=example,dc=com","requesterName":"Dave Diaz",
+          "member":"uid=dave,ou=people,dc=example,dc=com","reason":"On-call","status":"pending","createdAt":"2026-01-05T10:00:00.000Z"},
+         {"id":"req-2","definitionId":"def-groups","groupDn":"cn=sales,ou=groups,dc=example,dc=com","groupName":"sales","requester":"erin",
+          "member":"uid=erin,ou=people,dc=example,dc=com","status":"rejected","createdAt":"2026-01-05T10:00:00.000Z",
+          "decidedAt":"2026-01-06T10:00:00.000Z","decidedBy":"admin","decidedByName":"Ada Admin","note":"No"}]""");
+    com.winllc.dsp.config.PortalProperties props = new com.winllc.dsp.config.PortalProperties();
+    props.setDataDir(dir.toString());
+    AccessRequests stored = new AccessRequests(props, mapper, com.winllc.dsp.cluster.Cluster.standalone());
+    assertThat(stored.list()).extracting(AccessRequests.Request::id).containsExactly("req-2", "req-1");
+    assertThat(stored.find("req-1").pending()).isTrue();
+    assertThat(stored.find("req-2").note()).isEqualTo("No");
+
+    com.winllc.dsp.model.GroupAccess settings = mapper.readValue(
+        "{\"enabled\":true,\"memberAttribute\":\"member\",\"requireReason\":true,\"allowLeave\":true}", com.winllc.dsp.model.GroupAccess.class);
+    assertThat(settings.enabled()).isTrue();
+    assertThat(settings.ownersManage()).isFalse();
+    assertThat(settings.requestExpiry()).isZero();
   }
 
   /** Enabled group access with the given settings (the booleans are always sent, as by the editor). */

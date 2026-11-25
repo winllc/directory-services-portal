@@ -18,6 +18,12 @@ import { DEFINITION_ICONS } from '../../components/Layout';
 import { TagSelect } from '../../components/TagSelect';
 import { Alert, Button, Card, ErrorAlert, FormRow, PageHeader, Spinner, Toggle, cx, useToast } from '../../components/ui';
 
+/** A number-of-days setting as typed: a whole number from 1 to `max`, or none. */
+const wholeDays = (text: string, max: number) => {
+  const n = Math.floor(Number(text));
+  return text.trim() && Number.isFinite(n) && n >= 1 ? Math.min(n, max) : undefined;
+};
+
 function blank(formId: string, baseDn: string): DefinitionInput {
   return {
     name: '',
@@ -500,6 +506,22 @@ function DefinitionEditor({ existing, index }: { existing?: DirectoryDefinition;
                     />
                   </FormRow>
                 </div>
+                <FormRow
+                  label="Requests expire after (days)"
+                  htmlFor="ga-expiry"
+                  hint="An open request nobody answered is closed as expired, and the requester can ask again. Empty: never. At most 365."
+                >
+                  <input
+                    id="ga-expiry"
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={365}
+                    placeholder="Never"
+                    value={groups.requestExpiryDays || ''}
+                    onChange={(e) => setGroups({ requestExpiryDays: wholeDays(e.target.value, 365) })}
+                  />
+                </FormRow>
               </div>
               <Toggle
                 checked={groups.requireReason}

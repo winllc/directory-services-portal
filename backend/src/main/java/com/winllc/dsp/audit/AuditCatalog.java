@@ -29,7 +29,8 @@ public final class AuditCatalog {
     ACTIONS.put("api.token-created", "account");
     ACTIONS.put("api.token-revoked", "account");
     // Self-service group access (the membership change itself is an entry.update).
-    for (String a : List.of("group.access-requested", "group.access-cancelled", "group.access-approved", "group.access-rejected")) {
+    for (String a : List.of("group.access-requested", "group.access-cancelled", "group.access-approved", "group.access-rejected",
+        "group.access-expired")) {
       ACTIONS.put(a, "account");
     }
     for (String a : List.of("entry.create", "entry.update", "entry.self_update", "entry.delete",

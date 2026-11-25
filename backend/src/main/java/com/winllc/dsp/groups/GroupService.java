@@ -18,6 +18,8 @@ import com.winllc.dsp.service.Memberships;
 import com.winllc.dsp.service.People;
 import com.winllc.dsp.store.ConfigStore;
 import com.winllc.dsp.web.ApiException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -474,7 +476,8 @@ public class GroupService {
 
   /**
    * Requests: {@code mine} (the user's own), {@code review} (open requests the user may decide,
-   * never their own), {@code decided} (closed ones the user decided; administrators: all of them).
+   * never their own), {@code decided} (approved and rejected ones the user decided; administrators:
+   * all of them).
    */
   public List<RequestView> requests(SessionUser user, String scope) {
     Reviewer reviewer = new Reviewer(user);
@@ -489,7 +492,7 @@ public class GroupService {
         }
       }
       case "decided" -> {
-        for (AccessRequests.Request r : requests.list(r -> !r.pending() && !AccessRequests.CANCELLED.equals(r.status())
+        for (AccessRequests.Request r : requests.list(r -> (AccessRequests.APPROVED.equals(r.status()) || AccessRequests.REJECTED.equals(r.status()))
             && (user.isAdmin() || user.key().equals(r.decidedBy())))) {
           out.add(new RequestView(r, reviewer.name(r.definitionId()), false));
         }
@@ -548,6 +551,32 @@ public class GroupService {
     }
     event.success();
     return closed;
+  }
+
+  /**
+   * Closes the open requests nobody answered within their definition's {@code requestExpiryDays},
+   * as of {@code now}, recording {@code group.access-expired} for each; returns how many. A request
+   * decided or withdrawn meanwhile is left alone, so each is expired (and recorded) once.
+   */
+  public int expireRequests(Instant now) {
+    Map<String, DirectoryDefinition> defs = new HashMap<>();
+    store.snapshot().definitions.stream().filter(DirectoryDefinition::groupAccess).forEach(d -> defs.put(d.id(), d));
+    int expired = 0;
+    for (AccessRequests.Request r : requests.list(AccessRequests.Request::pending)) {
+      DirectoryDefinition def = defs.get(r.definitionId());
+      int days = def == null ? 0 : def.groups().requestExpiry();
+      if (days <= 0 || Instant.parse(r.createdAt()).plus(days, ChronoUnit.DAYS).isAfter(now)) continue;
+      try {
+        requests.expire(r.id(), now, days);
+      } catch (ApiException e) {
+        continue;
+      }
+      audit.event("group.access-expired").system().definition(def.id()).directory(entries.directoryId(def))
+          .target("group", r.groupDn(), r.groupName()).detail("request", r.id())
+          .detail("requester", r.requesterDn() != null ? r.requesterDn() : r.requester()).detail("afterDays", days).success();
+      expired++;
+    }
+    return expired;
   }
 
   private static String displayName(SessionUser user) {
