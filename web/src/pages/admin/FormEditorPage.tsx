@@ -305,6 +305,7 @@ function FieldEditor({
                     <option value="url">URL</option>
                     <option value="number">Number</option>
                     <option value="dn">Distinguished name</option>
+                    <option value="date">Date (yyyy-mm-dd)</option>
                   </select>
                 </FormRow>
                 <FormRow label="Pattern (regular expression)" htmlFor={id('pattern')} hint="The whole value must match.">

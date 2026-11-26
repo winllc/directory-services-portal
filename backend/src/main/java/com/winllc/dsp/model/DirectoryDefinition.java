@@ -30,7 +30,8 @@ public record DirectoryDefinition(
     String createdAt,
     String updatedAt,
     String directory,
-    GroupAccess groups) {
+    GroupAccess groups,
+    EntryExpiry expiry) {
 
   public static final String READ_ONLY = "readonly";
 
@@ -39,7 +40,7 @@ public record DirectoryDefinition(
       String filter, String mode, boolean everyoneCanRead, List<String> listAttributes, List<String> searchAttributes,
       String titleAttribute, List<String> createContainers, SelfMatch selfMatch, String icon, String createdAt, String updatedAt) {
     this(id, name, slug, description, formId, baseDn, scope, filter, mode, everyoneCanRead, listAttributes, searchAttributes, titleAttribute,
-        createContainers, selfMatch, icon, createdAt, updatedAt, null, null);
+        createContainers, selfMatch, icon, createdAt, updatedAt, null, null, null);
   }
 
   /** Without group access settings (as definitions stored before there was group access). */
@@ -48,13 +49,27 @@ public record DirectoryDefinition(
       String titleAttribute, List<String> createContainers, SelfMatch selfMatch, String icon, String createdAt, String updatedAt,
       String directory) {
     this(id, name, slug, description, formId, baseDn, scope, filter, mode, everyoneCanRead, listAttributes, searchAttributes, titleAttribute,
-        createContainers, selfMatch, icon, createdAt, updatedAt, directory, null);
+        createContainers, selfMatch, icon, createdAt, updatedAt, directory, null, null);
   }
 
   /** The same definition in another directory. */
   public DirectoryDefinition withDirectory(String directoryId) {
     return new DirectoryDefinition(id, name, slug, description, formId, baseDn, scope, filter, mode, everyoneCanRead, listAttributes,
-        searchAttributes, titleAttribute, createContainers, selfMatch, icon, createdAt, updatedAt, directoryId, groups);
+        searchAttributes, titleAttribute, createContainers, selfMatch, icon, createdAt, updatedAt, directoryId, groups, expiry);
+  }
+
+  /** With group access settings, without entry expiry (as definitions stored before there was expiry). */
+  public DirectoryDefinition(String id, String name, String slug, String description, String formId, String baseDn, String scope,
+      String filter, String mode, boolean everyoneCanRead, List<String> listAttributes, List<String> searchAttributes,
+      String titleAttribute, List<String> createContainers, SelfMatch selfMatch, String icon, String createdAt, String updatedAt,
+      String directory, GroupAccess groups) {
+    this(id, name, slug, description, formId, baseDn, scope, filter, mode, everyoneCanRead, listAttributes, searchAttributes, titleAttribute,
+        createContainers, selfMatch, icon, createdAt, updatedAt, directory, groups, null);
+  }
+
+  /** Whether entries of this definition end on a date their sponsor can extend. */
+  public boolean entryExpiry() {
+    return expiry != null && expiry.dateAttribute() != null && expiry.sponsorAttribute() != null;
   }
 
   /** Whether users can look up this definition's groups and ask to join them. */

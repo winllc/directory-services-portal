@@ -48,12 +48,15 @@ public class AccessRequests {
    * for an expired request, how long it had waited. {@code until}: the last day of the access
    * asked for (a day, UTC, as {@code yyyy-MM-dd}; none: no end asked); {@code grantedUntil}: the
    * end date an approval gave the membership (none: no end). Fields added after the first release
-   * are objects, so requests stored without them are still read.
+   * are objects, so requests stored without them are still read. In governed mode
+   * {@code governanceId} is the request's id in the governance console and {@code governanceState}
+   * its state there, as last read.
    */
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Request(String id, String definitionId, String groupDn, String groupName, String requester, String requesterDn,
       String requesterName, String member, String reason, String status, String createdAt, String decidedAt, String decidedBy,
-      String decidedByName, String note, Integer expiredAfterDays, String until, String grantedUntil) {
+      String decidedByName, String note, Integer expiredAfterDays, String until, String grantedUntil, String governanceId,
+      String governanceState) {
 
     public boolean pending() {
       return PENDING.equals(status);
@@ -70,17 +73,27 @@ public class AccessRequests {
 
     Request reopened() {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, PENDING, createdAt, null,
-          null, null, null, null, until, null);
+          null, null, null, null, until, null, governanceId, governanceState);
     }
 
     Request closed(String newStatus, String at, String by, String byName, String withNote, String withGrantedUntil) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, newStatus, createdAt, at,
-          by, byName, withNote, null, until, withGrantedUntil);
+          by, byName, withNote, null, until, withGrantedUntil, governanceId, governanceState);
     }
 
     Request expired(String at, int afterDays) {
       return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, EXPIRED, createdAt, at,
-          null, null, null, afterDays, until, null);
+          null, null, null, afterDays, until, null, governanceId, governanceState);
+    }
+
+    Request mirrored(String state) {
+      return new Request(id, definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, status, createdAt,
+          decidedAt, decidedBy, decidedByName, note, expiredAfterDays, until, grantedUntil, governanceId, state);
+    }
+
+    /** Decided in the governance console rather than by the group's owners. */
+    public boolean governed() {
+      return governanceId != null;
     }
   }
 
@@ -123,8 +136,14 @@ public class AccessRequests {
   /** As above, for access until the end of {@code until} (a day as {@code yyyy-MM-dd}; null: no end asked). */
   public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
       String member, String reason, String until, int maxPendingPerUser) {
+    return add(definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason, until, maxPendingPerUser, null, null);
+  }
+
+  /** As above, for a request the governance console decides ({@code governanceId}). */
+  public Request add(String definitionId, String groupDn, String groupName, String requester, String requesterDn, String requesterName,
+      String member, String reason, String until, int maxPendingPerUser, String governanceId, String governanceState) {
     Request r = new Request("req-" + UUID.randomUUID(), definitionId, groupDn, groupName, requester, requesterDn, requesterName, member, reason,
-        PENDING, now(), null, null, null, null, null, until, null);
+        PENDING, now(), null, null, null, null, null, until, null, governanceId, governanceState);
     store(list -> {
       List<Request> mine = list.stream().filter(x -> x.pending() && x.requester().equals(requester)).toList();
       if (mine.stream().anyMatch(x -> x.definitionId().equals(definitionId) && com.winllc.dsp.ldap.Dns.equal(x.groupDn(), groupDn))) {
@@ -169,6 +188,22 @@ public class AccessRequests {
         return;
       }
       throw ApiException.notFound("Request not found");
+    });
+    return out[0];
+  }
+
+  /** Records the state a governed request has in the console, while it is still pending here. */
+  public Request mirror(String id, String state) {
+    Request[] out = new Request[1];
+    store(list -> {
+      for (int i = 0; i < list.size(); i++) {
+        Request r = list.get(i);
+        if (r.id().equals(id) && r.pending()) {
+          out[0] = r.mirrored(state);
+          list.set(i, out[0]);
+          return;
+        }
+      }
     });
     return out[0];
   }

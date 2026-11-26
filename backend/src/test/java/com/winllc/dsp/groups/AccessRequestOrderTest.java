@@ -16,7 +16,7 @@ class AccessRequestOrderTest {
   private static AccessRequests.Request closed(String id, String decidedAt) {
     return new AccessRequests.Request(id, "def-groups", "cn=engineering,ou=groups,dc=example,dc=com", "engineering", "default:dave",
         "uid=dave,ou=people,dc=example,dc=com", "Dave Diaz", "uid=dave,ou=people,dc=example,dc=com", null, AccessRequests.APPROVED,
-        "2026-03-01T09:00:00Z", decidedAt, "default:carol", "Carol Chen", null, null, null, null);
+        "2026-03-01T09:00:00Z", decidedAt, "default:carol", "Carol Chen", null, null, null, null, null, null);
   }
 
   @Test

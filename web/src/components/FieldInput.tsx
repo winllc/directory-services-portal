@@ -26,6 +26,8 @@ const inputType = (field: FormField) => {
       return 'tel';
     case 'url':
       return 'url';
+    case 'date':
+      return 'date';
     default:
       return 'text';
   }

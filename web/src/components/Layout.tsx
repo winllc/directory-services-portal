@@ -1,4 +1,7 @@
 import { useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import type { SponsoredEntry } from '@dsp/shared';
+import { api } from '../api/client';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   BadgeCheck,
@@ -27,6 +30,7 @@ import {
   UsersRound,
   Workflow,
   X,
+  CalendarClock,
 } from 'lucide-react';
 import { useDefinitions, useGroupDirectories, useGroupRequestSummary, useLicense, useServerInfo } from '../api/hooks';
 import { useAuth, useUser } from '../lib/auth';
@@ -83,6 +87,14 @@ export function Layout() {
   const showGroups = groupFeature && (groupDirs.data?.length ?? 0) > 0;
   const groupSummary = useGroupRequestSummary(showGroups);
   const toReview = groupSummary.data?.toReview ?? 0;
+  // Entries that end and name this user as sponsor: shown only when there are some.
+  const sponsored = useQuery({
+    queryKey: ['sponsored'],
+    queryFn: () => api.get<SponsoredEntry[]>('/api/sponsored', { background: true }),
+    staleTime: 5 * 60_000,
+    enabled: has('directory-editor') || has('self-service-profile'),
+  });
+  const ending = (sponsored.data ?? []).filter((e) => e.daysLeft <= 14).length;
   const info = useServerInfo();
   const [open, setOpen] = useState(false);
   const location = useLocation();
@@ -135,6 +147,11 @@ export function Layout() {
               countLabel={`${toReview} ${toReview === 1 ? 'request' : 'requests'} to review`}
             >
               Group access
+            </NavItem>
+          )}
+          {(sponsored.data?.length ?? 0) > 0 && (
+            <NavItem to="/sponsored" icon={<CalendarClock size={18} />} count={ending} countLabel={`${ending} ending soon`}>
+              Sponsored entries
             </NavItem>
           )}
           {has('metrics') && (

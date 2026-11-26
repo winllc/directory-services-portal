@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.winllc.dsp.audit.AuditLog;
 import com.winllc.dsp.cluster.Cluster;
 import com.winllc.dsp.config.PortalProperties;
+import com.winllc.dsp.groups.GovernanceClient;
 import com.winllc.dsp.groups.AccessRequests;
 import com.winllc.dsp.groups.GroupService;
 import com.winllc.dsp.groups.MembershipExpiries;
@@ -84,7 +85,7 @@ class SharedGroupAccessTest extends ApiTestSupport {
   /** The other replica's group service, on its own view of the shared requests and end dates. */
   GroupService onOtherReplica(AccessRequests otherRequests, MembershipExpiries otherExpiries) {
     return new GroupService(store, context.getBean(EntryService.class), context.getBean(Memberships.class), context.getBean(Directories.class),
-        otherRequests, otherExpiries, context.getBean(AuditLog.class));
+        otherRequests, otherExpiries, context.getBean(AuditLog.class), context.getBean(GovernanceClient.class));
   }
 
   /** Sends as the signed-in administrator (the session cookie only: Spring Session, no container session). */

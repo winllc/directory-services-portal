@@ -163,7 +163,7 @@ secretKeyRef:
 {{- $v := .Values -}}
 {{- $directorySecret := false -}}
 {{- range $v.directories -}}{{- if include "dsp.directoryInlineSecret" . -}}{{- $directorySecret = true -}}{{- end -}}{{- end -}}
-{{- if or $directorySecret (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
+{{- if or $directorySecret (and $v.ldap.bindPassword.value (not $v.ldap.bindPassword.existingSecret)) (and $v.audit.splunk.token.value (not $v.audit.splunk.token.existingSecret)) (and $v.integrations.governance.token.value (not $v.integrations.governance.token.existingSecret)) (and $v.ldap.truststore.password.value (not $v.ldap.truststore.password.existingSecret)) (and $v.database.password.value (not $v.database.password.existingSecret)) (and $v.sso.oidc.clientSecret.value (not $v.sso.oidc.clientSecret.existingSecret)) (include "dsp.secretsKeyValue" .) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "dsp.licenseSecretName" -}}
@@ -407,4 +407,14 @@ rather than make a new id if it wasn't), so the pods get an emptyDir and the PVC
 {{- define "dsp.licensePvcMounted" -}}
 {{- $v := .Values -}}
 {{- if and $v.persistence.license.enabled (or (not $v.database.url) (le (int $v.api.replicaCount) 1) (has "ReadWriteMany" $v.persistence.license.accessModes)) -}}true{{- end -}}
+{{- end -}}
+
+{{/* GOVERNANCE_SYSTEMS from integrations.governance.systems: "dir=system;..." in key order. */}}
+{{- define "dsp.governanceSystems" -}}
+{{- $m := .Values.integrations.governance.systems -}}
+{{- $out := list -}}
+{{- range $k := keys $m | sortAlpha -}}
+{{- $out = append $out (printf "%s=%s" $k (index $m $k)) -}}
+{{- end -}}
+{{- join ";" $out -}}
 {{- end -}}

@@ -1620,6 +1620,39 @@
               "minimum": 1
             }
           }
+        },
+        "governance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "portalUrl": {
+              "type": "string"
+            },
+            "systems": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "token": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "existingSecret": {
+                  "type": "string"
+                },
+                "existingSecretKey": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     }

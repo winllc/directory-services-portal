@@ -282,7 +282,7 @@ function MyRequests() {
           </tr>
         </thead>
         <tbody>
-          {list.map(({ request: r, definitionName }) => (
+          {list.map(({ request: r, definitionName, governanceUrl }) => (
             <tr key={r.id}>
               <td>
                 <GroupLink definitionId={r.definitionId} dn={r.groupDn}>
@@ -296,6 +296,14 @@ function MyRequests() {
               <td>
                 <RequestStatus status={r.status} />
                 {r.status === 'approved' && r.grantedUntil && <div className="muted small">Access until {day(r.grantedUntil)}</div>}
+                {governanceUrl && (
+                  <div className="small">
+                    {r.status === 'pending' && r.governanceState && <span className="muted">In governance: {r.governanceState.replace('_', ' ')} · </span>}
+                    <a href={governanceUrl} target="_blank" rel="noreferrer">
+                      Follow it in the governance portal
+                    </a>
+                  </div>
+                )}
               </td>
               <td>
                 {r.status === 'expired' && (
@@ -313,7 +321,7 @@ function MyRequests() {
                 )}
               </td>
               <td className="actions-col">
-                {r.status === 'pending' && (
+                {r.status === 'pending' && !r.governanceId && (
                   <Button size="sm" variant="ghost" onClick={() => cancel.mutate(r.id, { onSuccess: () => toast.success('Request withdrawn.'), onError: (e) => toast.error(e) })}>
                     Withdraw
                   </Button>

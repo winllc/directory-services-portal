@@ -84,6 +84,9 @@ public final class FormValidator {
         case "dn" -> {
           if (!Dns.isValid(v)) return "\"" + v + "\" is not a valid distinguished name";
         }
+        case "date" -> {
+          if (Dates.parse(v) == null) return "\"" + v + "\" is not a date (yyyy-mm-dd)";
+        }
         default -> {}
       }
       if (field.pattern() != null && !field.pattern().isEmpty()) {

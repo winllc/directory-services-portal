@@ -25,7 +25,7 @@ public record FormField(
     boolean required,
     boolean readOnly,
     boolean selfEditable,
-    @Pattern(regexp = "plain|email|phone|url|number|dn") String format,
+    @Pattern(regexp = "plain|email|phone|url|number|dn|date") String format,
     @Size(max = 500) String pattern,
     @Positive @Max(65536) Integer maxLength,
     @Size(max = 200) String placeholder,

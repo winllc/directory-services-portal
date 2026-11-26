@@ -138,6 +138,11 @@ spec:
                   name: {{ include "dsp.licenseSecretName" . }}
                   key: license.lic
             {{- end }}
+            {{- if include "dsp.secretSet" (dict "v" $v.integrations.governance.token) }}
+            - name: GOVERNANCE_TOKEN
+              valueFrom:
+                {{- include "dsp.secretRef" (dict "v" $v.integrations.governance.token "chartKey" "governance-token" "root" .) | nindent 16 }}
+            {{- end }}
             {{- if include "dsp.secretSet" (dict "v" $v.audit.splunk.token) }}
             - name: ENS_AUDIT_SPLUNK_TOKEN
               valueFrom:

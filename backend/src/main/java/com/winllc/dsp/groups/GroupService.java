@@ -68,6 +68,13 @@ import org.springframework.stereotype.Service;
  * ({@link GroupAccess#containerOwnerAttribute}), those owners create groups directly in their unit
  * and delete the groups directly in it, without write access to the definition
  * ({@link #createGroup}, {@link #deleteGroup}).
+ *
+ * <p>In governed mode ({@link GovernanceProperties}) requests for groups of a governed directory go
+ * to the governance console, on the requester's behalf: its approval workflow decides, not the
+ * group's owners, whose approve and reject answer 409. Groups governance doesn't let people ask
+ * for (not requestable, or computed by a rule) are shown as closed to requests, and no group of a
+ * governed directory is joined without a request. A request's state in the console is mirrored
+ * into the portal's record when its requester lists their requests; the portal doesn't expire it.
  */
 @Service
 public class GroupService {
@@ -179,8 +186,15 @@ public class GroupService {
   /** A group's members as CSV; {@code truncated}: the group has more than the export's limit. */
   public record MemberExport(String content, int count, boolean truncated, String groupName) {}
 
-  /** A request as shown: {@code canDecide} when the viewer may approve or reject it. */
-  public record RequestView(AccessRequests.Request request, String definitionName, boolean canDecide) {}
+  /**
+   * A request as shown: {@code canDecide} when the viewer may approve or reject it;
+   * {@code governanceUrl} where a governed request is followed in the governance console.
+   */
+  public record RequestView(AccessRequests.Request request, String definitionName, boolean canDecide, String governanceUrl) {
+    public RequestView(AccessRequests.Request request, String definitionName, boolean canDecide) {
+      this(request, definitionName, canDecide, null);
+    }
+  }
 
   /** A page of a group's closed requests, newest first. */
   public record RequestHistory(List<RequestView> items, int total, int page, int pageSize) {}
@@ -194,9 +208,10 @@ public class GroupService {
   private final AccessRequests requests;
   private final MembershipExpiries expiries;
   private final AuditLog audit;
+  private final GovernanceClient governance;
 
   public GroupService(ConfigStore store, EntryService entries, Memberships memberships, Directories directories, AccessRequests requests,
-      MembershipExpiries expiries, AuditLog audit) {
+      MembershipExpiries expiries, AuditLog audit, GovernanceClient governance) {
     this.store = store;
     this.entries = entries;
     this.memberships = memberships;
@@ -204,6 +219,63 @@ public class GroupService {
     this.requests = requests;
     this.expiries = expiries;
     this.audit = audit;
+    this.governance = governance;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Governed mode
+  // ---------------------------------------------------------------------------
+
+  /** The governance system of the definition's directory, or null when it isn't governed. */
+  private String governedSystem(DirectoryDefinition def) {
+    return governance.properties().systemFor(entries.directoryId(def));
+  }
+
+  /** Whether governance lets people ask for the group (true when the directory isn't governed). */
+  private boolean governanceAllows(DirectoryDefinition def, String dn) {
+    String system = governedSystem(def);
+    if (system == null) return true;
+    try {
+      return governance.lookup(system, dn).requestable();
+    } catch (ApiException e) {
+      // The console can't answer: no request button rather than one that fails.
+      return false;
+    }
+  }
+
+  private RequestView view(AccessRequests.Request r, String definitionName, boolean canDecide) {
+    return new RequestView(r, definitionName, canDecide && !r.governed(),
+        r.governed() ? governance.properties().requestLink(r.governanceId()) : null);
+  }
+
+  /**
+   * Reads a governed request's state from the console and brings the portal's record in step:
+   * completed is approved, rejected, failed and cancelled close it; anything else is mirrored.
+   */
+  private AccessRequests.Request mirror(AccessRequests.Request r) {
+    if (!r.governed() || !r.pending()) return r;
+    GovernanceClient.Remote remote;
+    try {
+      remote = governance.state(r.governanceId());
+    } catch (ApiException e) {
+      return r;
+    }
+    String note = remote.detail() == null || remote.detail().isBlank() ? null : remote.detail();
+    try {
+      return switch (remote.state()) {
+        case "completed" -> requests.close(r.id(), AccessRequests.APPROVED, "governance", "Governance", note);
+        case "rejected", "failed" -> requests.close(r.id(), AccessRequests.REJECTED, "governance", "Governance", note);
+        case "cancelled" -> requests.close(r.id(), AccessRequests.CANCELLED, "governance", "Governance", note);
+        default -> {
+          AccessRequests.Request m = remote.state().equals(r.governanceState()) ? r : requests.mirror(r.id(), remote.state());
+          yield m == null ? r : m;
+        }
+      };
+    } catch (ApiException e) {
+      // Closed meanwhile (409): the stored one is current.
+      AccessRequests.Request now = requests.find(r.id());
+      return now == null ? r : now;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -392,15 +464,16 @@ public class GroupService {
       Filter of = openFilter(def);
       Set<String> open = of == null ? Set.of() : dnsMatching(def, q, of);
       boolean editor = canEdit(user, def);
+      boolean governed = governedSystem(def) != null;
       var found = entries.searchInNamespace(def, q, onlyMine ? memberFilter(user, member) : null, SEARCH_LIMIT, displayAttributes(def));
       truncated |= found.truncated();
       for (DirectoryEntry e : found.entries()) {
         String key = normal(e.dn());
         boolean isMember = mine.contains(key);
         boolean owner = names(e.values(def.groups().ownerAttributeOrDefault()), user);
-        boolean takesRequests = requestable == null || requestable.contains(key);
+        boolean takesRequests = (requestable == null || requestable.contains(key)) && (isMember || governanceAllows(def, e.dn()));
         out.add(new GroupSummary(def.id(), def.name(), e.dn(), title(def, e), e.first("description"), isMember, owner, owner || editor,
-            takesRequests, takesRequests && open.contains(key), pending.get(def.id() + "|" + key), isMember ? until.get(key) : null));
+            takesRequests, takesRequests && !governed && open.contains(key), pending.get(def.id() + "|" + key), isMember ? until.get(key) : null));
       }
     }
     out.sort(Comparator.comparing(GroupSummary::name, String.CASE_INSENSITIVE_ORDER).thenComparing(GroupSummary::definitionName));
@@ -429,9 +502,9 @@ public class GroupService {
     boolean owner = names(owners, user);
     boolean canManage = owner || canEdit(user, def);
     Filter rf = requestFilter(def);
-    boolean requestable = rf == null || entries.matchesInNamespace(def, e.dn(), rf);
+    boolean requestable = (rf == null || entries.matchesInNamespace(def, e.dn(), rf)) && (isMember || governanceAllows(def, e.dn()));
     Filter of = openFilter(def);
-    boolean joinable = requestable && of != null && entries.matchesInNamespace(def, e.dn(), of);
+    boolean joinable = requestable && governedSystem(def) == null && of != null && entries.matchesInNamespace(def, e.dn(), of);
     String pending = myPending(user).get(def.id() + "|" + normal(e.dn()));
     int open = canManage ? requests.list(r -> r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn())).size() : 0;
     MembershipExpiries.Expiry ends = isMember ? expiries.find(def.id(), e.dn(), mine) : null;
@@ -909,9 +982,22 @@ public class GroupService {
     if (!d.group().requestable()) throw ApiException.forbidden("This group doesn't take requests");
     if (d.group().open()) throw new ApiException(HttpStatus.CONFLICT, "This group is open: join it without a request");
     FormField member = memberField(def);
+    String system = governedSystem(def);
+    if (system == null) {
+      AccessRequests.Request r = requests.add(def.id(), d.group().dn(), d.group().name(), user.key(), user.dn(), displayName(user),
+          memberValue(user, member), why, asked, MAX_PENDING_PER_USER);
+      event.detail("request", r.id()).detail("reason", why).detail("until", asked).detail("governed", false).success();
+      return r;
+    }
+    // Governed: the console's workflow decides. Asked there first, on the user's behalf.
+    GovernanceClient.Lookup found = governance.lookup(system, d.group().dn());
+    if (found.id() == null || !found.requestable()) throw ApiException.forbidden("This group doesn't take requests");
+    GovernanceClient.Remote remote = governance.submit(user.username(), found.id(),
+        why != null ? why : "Asked in the Directory Services Portal to join " + d.group().name(), asked);
     AccessRequests.Request r = requests.add(def.id(), d.group().dn(), d.group().name(), user.key(), user.dn(), displayName(user),
-        memberValue(user, member), why, asked, MAX_PENDING_PER_USER);
-    event.detail("request", r.id()).detail("reason", why).detail("until", asked).success();
+        memberValue(user, member), why, asked, MAX_PENDING_PER_USER, remote.id(), remote.state());
+    event.detail("request", r.id()).detail("reason", why).detail("until", asked).detail("governed", true)
+        .detail("governanceRequest", remote.id()).success();
     return r;
   }
 
@@ -941,6 +1027,10 @@ public class GroupService {
   public AccessRequests.Request cancel(SessionUser user, String id) {
     AccessRequests.Request r = requests.find(id);
     if (r == null || !r.requester().equals(user.key())) throw ApiException.notFound("Request not found");
+    if (r.governed()) {
+      throw new ApiException(HttpStatus.CONFLICT, "This request is handled in the governance portal; cancel it there: "
+          + governance.properties().requestLink(r.governanceId()));
+    }
     AccessRequests.Request closed = requests.close(id, AccessRequests.CANCELLED, user.key(), displayName(user), null);
     audit.event("group.access-cancelled").by(user).definition(r.definitionId()).target("group", r.groupDn(), r.groupName())
         .detail("request", r.id()).success();
@@ -1003,17 +1093,18 @@ public class GroupService {
     List<RequestView> out = new ArrayList<>();
     switch (scope == null ? "mine" : scope) {
       case "mine" -> {
-        for (AccessRequests.Request r : requests.list(r -> r.requester().equals(user.key()))) out.add(new RequestView(r, reviewer.name(r.definitionId()), false));
+        for (AccessRequests.Request r : requests.list(r -> r.requester().equals(user.key()))) out.add(view(mirror(r), reviewer.name(r.definitionId()), false));
       }
       case "review" -> {
-        for (AccessRequests.Request r : requests.list(r -> r.pending() && !r.requester().equals(user.key()))) {
+        // Governed requests are decided in the governance console, not by owners.
+        for (AccessRequests.Request r : requests.list(r -> r.pending() && !r.governed() && !r.requester().equals(user.key()))) {
           if (reviewer.canDecide(r)) out.add(new RequestView(r, reviewer.name(r.definitionId()), true));
         }
       }
       case "decided" -> {
         for (AccessRequests.Request r : requests.list(r -> (AccessRequests.APPROVED.equals(r.status()) || AccessRequests.REJECTED.equals(r.status()))
             && (user.isAdmin() || user.key().equals(r.decidedBy())))) {
-          out.add(new RequestView(r, reviewer.name(r.definitionId()), false));
+          out.add(view(r, reviewer.name(r.definitionId()), false));
         }
       }
       default -> throw ApiException.badRequest("Unknown scope");
@@ -1026,7 +1117,7 @@ public class GroupService {
     DirectoryDefinition def = definition(user, definitionId);
     DirectoryEntry e = managed(user, def, dn);
     return requests.list(r -> r.pending() && r.definitionId().equals(def.id()) && Dns.equal(r.groupDn(), e.dn())).stream()
-        .map(r -> new RequestView(r, def.name(), !r.requester().equals(user.key()))).toList();
+        .map(r -> view(r, def.name(), !r.requester().equals(user.key()))).toList();
   }
 
   /**
@@ -1041,7 +1132,7 @@ public class GroupService {
         .sorted(Comparator.comparing(AccessRequests.Request::closedAt).reversed()).toList();
     int p = Math.max(1, page);
     int from = (int) Math.min((long) (p - 1) * HISTORY_PAGE, closed.size());
-    List<RequestView> items = closed.subList(from, Math.min(from + HISTORY_PAGE, closed.size())).stream().map(r -> new RequestView(r, def.name(), false))
+    List<RequestView> items = closed.subList(from, Math.min(from + HISTORY_PAGE, closed.size())).stream().map(r -> view(r, def.name(), false))
         .toList();
     return new RequestHistory(items, closed.size(), p, HISTORY_PAGE);
   }
@@ -1052,7 +1143,7 @@ public class GroupService {
     int mine = 0;
     for (AccessRequests.Request r : requests.list(AccessRequests.Request::pending)) {
       if (r.requester().equals(user.key())) mine++;
-      else if (reviewer.canDecide(r)) review++;
+      else if (!r.governed() && reviewer.canDecide(r)) review++;
     }
     return new Summary(review, mine);
   }
@@ -1077,6 +1168,10 @@ public class GroupService {
     if (r == null || (!r.requester().equals(user.key()) && !reviewer.canDecide(r))) throw ApiException.notFound("Request not found");
     if (r.requester().equals(user.key())) throw ApiException.forbidden("You can't decide your own request");
     if (!r.pending()) throw new ApiException(HttpStatus.CONFLICT, "This request was already " + r.status());
+    if (r.governed() || governedSystem(managedDefinition(user, r.definitionId())) != null) {
+      String link = r.governed() ? governance.properties().requestLink(r.governanceId()) : governance.properties().requestLink("");
+      throw new ApiException(HttpStatus.CONFLICT, "Requests for this group are decided in the governance portal: " + link);
+    }
     String why = note == null || note.isBlank() ? null : note.trim();
     if (why != null && why.length() > MAX_REASON) throw ApiException.badRequest("The note is too long", Map.of("note", "At most " + MAX_REASON + " characters"));
     DirectoryDefinition def = managedDefinition(user, r.definitionId());
@@ -1224,6 +1319,8 @@ public class GroupService {
     store.snapshot().definitions.stream().filter(DirectoryDefinition::groupAccess).forEach(d -> defs.put(d.id(), d));
     int expired = 0;
     for (AccessRequests.Request r : requests.list(AccessRequests.Request::pending)) {
+      // A governed request is decided, and timed out, in the governance console.
+      if (r.governed()) continue;
       DirectoryDefinition def = defs.get(r.definitionId());
       int days = def == null ? 0 : def.groups().requestExpiry();
       if (days <= 0 || Instant.parse(r.createdAt()).plus(days, ChronoUnit.DAYS).isAfter(now)) continue;

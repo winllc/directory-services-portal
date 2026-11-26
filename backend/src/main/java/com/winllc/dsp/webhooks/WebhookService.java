@@ -282,6 +282,34 @@ public class WebhookService {
     if (accepted < item.deliveries.size()) dropped(item.deliveries.size() - accepted);
   }
 
+  /**
+   * Queues an event that is not an entry change (e.g. {@code entry.expiring}) for every enabled
+   * webhook subscribed to it. Best effort: a failure is logged, and the caller (a daily job)
+   * raises it again on its next run.
+   */
+  public int raise(String type, String definitionId, Map<String, Object> actor, Map<String, Object> data) {
+    if (!props.getWebhooks().isEnabled()) return 0;
+    Instant at = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+    List<Deliveries.Delivery> queued = new ArrayList<>();
+    String payload = null;
+    String eventId = null;
+    for (Webhooks.Webhook w : webhooks.all()) {
+      if (!w.enabled() || !w.wants(type, definitionId)) continue;
+      if (payload == null) {
+        eventId = "evt_" + UUID.randomUUID();
+        payload = payload(eventId, type, actor, data, at);
+      }
+      queued.add(newDelivery(w.id(), eventId, type, payload, at));
+    }
+    if (queued.isEmpty()) return 0;
+    try {
+      return deliveries.enqueue(queued);
+    } catch (RuntimeException e) {
+      log.warn("Could not queue the {} event: {}", type, LogSafe.of(e.getMessage()));
+      return 0;
+    }
+  }
+
   /** Keeps a change to queue later (the caller holds the spool's lock); a full spool drops it, audited. */
   private void keep(Spooled item, RuntimeException cause) {
     if (spool.size() >= SPOOL_MAX) {

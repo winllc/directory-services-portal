@@ -716,6 +716,22 @@ integrations:
       existingSecret: ""
       existingSecretKey: secrets-key
       generate: true
+  # Governed mode: group requests go to the ENS identity governance console (syncd's console),
+  # whose approval workflow decides, instead of the groups' owners (see the README, Governed
+  # mode). Off while url or the token is empty. systems maps directory ids to governance system
+  # ids ("*" for every directory). The token is a console API token with governance:delegate.
+  governance:
+    # GOVERNANCE_URL, e.g. https://syncd.example.com
+    url: ""
+    # GOVERNANCE_PORTAL_URL: where people follow their requests (default: url).
+    portalUrl: ""
+    # GOVERNANCE_SYSTEMS, e.g. {"*": "8d2c...-uuid"}
+    systems: {}
+    # GOVERNANCE_TOKEN: inline, or from a Secret of your own.
+    token:
+      value: ""
+      existingSecret: ""
+      existingSecretKey: governance-token
   transfer:
     exportMaxEntries: 10000
     # IMPORT_MAX_BYTES: the largest import file. The web tier's upload limit (MAX_BODY_SIZE) follows

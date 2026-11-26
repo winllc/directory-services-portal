@@ -795,6 +795,69 @@ doesn't take the portal out of service. It is DOWN when none answers.
   *directory-admins* doesn't take requests, *social-club* is open, and requests expire after 30
   days.
 
+#### Governed mode
+
+With the ENS identity governance console (syncd's console) in charge of who holds which
+group, the portal hands its group requests to the console's approval workflows instead of the
+groups' owners.
+
+| Setting | What |
+| --- | --- |
+| `GOVERNANCE_URL` | The console's address, e.g. `https://syncd.example.com`. Empty: governed mode off |
+| `GOVERNANCE_TOKEN` (or `GOVERNANCE_TOKEN_FILE`) | A console API token with the scope `governance:delegate`, made by a governance administrator |
+| `GOVERNANCE_SYSTEMS` | Which directory's groups belong to which governance system: `dir-a=<system id>;dir-b=<system id>`, or `*=<system id>` for every directory. A directory not listed stays ungoverned |
+| `GOVERNANCE_PORTAL_URL` | Where people follow their requests in the console (its *My requests* page); by default `GOVERNANCE_URL` |
+
+In the Helm chart: `integrations.governance.url`, `.portalUrl`, `.systems` (a map) and
+`.token` (`value`, or `existingSecret` and `existingSecretKey`).
+
+What changes for a governed directory:
+
+- **Requesting** a group asks the console, on the user's behalf (`on_behalf_of`, their login
+  name, which must be their login in the console's identity source). The portal keeps its own
+  record with the console's request id, and the `group.access-requested` audit event says
+  `governed: true` and `governanceRequest`.
+- **Owners don't decide**: approve and reject answer 409 with a link to the governance portal,
+  and such requests don't appear under *To review*. The console's workflow decides.
+- **Groups governance closes** (not requestable there, or computed by a syncd rule) show as
+  closed to requests. Lookups are cached for five minutes; when the console can't be reached,
+  groups show as closed rather than offering a request that would fail.
+- **My requests** reads each open governed request's state from the console and mirrors it:
+  completed becomes approved, rejected and failed become rejected, cancelled becomes cancelled;
+  the link opens it in the governance portal. A governed request is withdrawn there, not here.
+- **End dates**: a request's *until* goes to the console as the item's end (`ends_at`, the
+  start of the day after); the console's workflow, not the portal, sets the membership's end.
+  The portal's `requestExpiryDays` doesn't expire governed requests: the console's timeouts
+  apply.
+- **Open groups** are not joined at once: in a governed directory every join is a request.
+- **Owners still manage members** directly. To tell the console about those changes, add a
+  webhook (*Integrations → Webhooks*) for `group.membership_changed` to the console's
+  `/api/v1/governance/ingest/dsp`, with the signing secret the console shows when you add the
+  portal under *Governance → Workflows → Portals reporting group changes*.
+
+### Entry expiry (contractors, guests)
+
+Entries that end on a date: a contractor container, guest accounts. In the form, give the end
+date field the format **Date** (`yyyy-mm-dd`; a generalized time such as `20261231000000Z` is
+read too, and kept in that form when changed), and have a field holding the sponsor's DN (the
+format **Distinguished name**, or a directory drop down of DNs). Then on the directory
+definition, under **Entry expiry**, pick the two fields, the days of warning (default 14) and
+the longest extension (default 180 days from today).
+
+- **Each day** (06:07 UTC, on one replica) the sponsor of every entry ending within the days of
+  warning is mailed, the `entry.expiring` webhook event is sent (`definitionId`, `dn`, `name`,
+  `endDate`, `daysLeft`, `sponsors`), and the notice is audited as `entry.expiring`.
+- **Sponsors** see their entries under **Sponsored entries** (shown once they sponsor
+  something) and move the end date out, never in, and at most the longest extension from
+  today, without write access to the definition. The change is an `entry.update` with
+  `details.via = "sponsor-renewal"`.
+- **Mail**: `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS`
+  (true) and `MAIL_FROM`; with the Helm chart, in `api.extraEnv`. Without `SMTP_HOST` nothing is
+  mailed; the notices are still audited and sent as webhook events. The mail server is not part
+  of the health checks.
+- syncd can read the container as a source and end each person's accounts on the date
+  (`effective_until`): see `examples/contractors-from-ldap.yaml` in syncd.
+
 ### Metrics
 *Metrics* (every signed-in user)
 
