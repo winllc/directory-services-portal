@@ -1,5 +1,6 @@
 package com.winllc.dsp.service;
 
+import com.winllc.dsp.util.LogSafe;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -54,10 +55,10 @@ public class Mailer {
         sender.getObject().send(m);
         delivered = true;
       } catch (MailException e) {
-        log.warn("Could not send mail \"{}\": {}", subject, e.getMessage());
+        log.warn("Could not send mail \"{}\": {}", LogSafe.of(subject), LogSafe.of(e.getMessage()));
       }
     } else {
-      log.info("Mail is not set up (SMTP_HOST): not sent: \"{}\" to {}", subject, to.size());
+      log.info("Mail is not set up (SMTP_HOST): not sent: \"{}\" to {}", LogSafe.of(subject), to.size());
     }
     synchronized (recent) {
       recent.addLast(new Sent(List.copyOf(to), subject, text, delivered));

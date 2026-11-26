@@ -59,12 +59,12 @@ public class GovernanceProperties {
 
   /** The console's address without a trailing slash. */
   public String base() {
-    return url == null ? "" : url.trim().replaceAll("/+$", "");
+    return url == null ? "" : withoutTrailingSlashes(url.trim());
   }
 
   /** Where a request is followed in the console. */
   public String requestLink(String requestId) {
-    String root = portalUrl != null && !portalUrl.isBlank() ? portalUrl.trim().replaceAll("/+$", "") : base();
+    String root = portalUrl != null && !portalUrl.isBlank() ? withoutTrailingSlashes(portalUrl.trim()) : base();
     return root + "/my/requests/" + requestId;
   }
 
@@ -87,5 +87,12 @@ public class GovernanceProperties {
     Map<String, String> map = systemMap();
     String key = directoryId == null ? "" : directoryId.toLowerCase(Locale.ROOT);
     return map.containsKey(key) ? map.get(key) : map.get("*");
+  }
+
+  /** {@code s} without the slashes it ends with (a loop, not a pattern that backtracks on many slashes). */
+  static String withoutTrailingSlashes(String s) {
+    int end = s.length();
+    while (end > 0 && s.charAt(end - 1) == '/') end--;
+    return s.substring(0, end);
   }
 }

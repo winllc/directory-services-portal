@@ -15,6 +15,7 @@ import com.winllc.dsp.service.Dates;
 import com.winllc.dsp.service.EntryService;
 import com.winllc.dsp.service.Mailer;
 import com.winllc.dsp.store.ConfigStore;
+import com.winllc.dsp.util.LogSafe;
 import com.winllc.dsp.web.ApiException;
 import com.winllc.dsp.webhooks.WebhookService;
 import java.time.Clock;
@@ -109,7 +110,7 @@ public class EntryExpiryService {
         found = entries.searchInNamespace(def, null, Filter.createPresenceFilter(x.dateAttribute()), SCAN_LIMIT,
             List.of(def.titleAttribute(), x.dateAttribute(), x.sponsorAttribute())).entries();
       } catch (RuntimeException e) {
-        log.warn("Entry expiry: could not read {}: {}", def.name(), e.getMessage());
+        log.warn("Entry expiry: could not read {}: {}", LogSafe.of(def.name()), LogSafe.of(e.getMessage()));
         continue;
       }
       for (DirectoryEntry e : found) {
