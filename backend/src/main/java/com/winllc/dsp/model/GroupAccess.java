@@ -2,6 +2,8 @@ package com.winllc.dsp.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.winllc.dsp.web.validation.LdapFilter;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.util.Locale;
@@ -20,7 +22,24 @@ import java.util.Locale;
  *       looked up but not requested. None: every group.</li>
  *   <li>{@code requireReason}: a request must say why.</li>
  *   <li>{@code allowLeave}: members may remove themselves.</li>
+ *   <li>{@code ownersManageOwners}: a group's owners may add and remove its owners (the owner
+ *       attribute must then be a multi-valued field of the form).</li>
+ *   <li>{@code requestExpiryDays}: an open request nobody answered is closed as expired after this
+ *       many days (none or 0: never; at most {@value #MAX_REQUEST_EXPIRY_DAYS}).</li>
+ *   <li>{@code openFilter}: groups matching this LDAP filter, among those that take requests, are
+ *       open: anyone who could ask joins at once, without approval. None: no group is open.</li>
+ *   <li>{@code maxMembershipDays}: the longest membership the portal grants (requests, joins,
+ *       members added by owners), in days: every such membership then gets an end date. None or 0:
+ *       no limit, and an end date is optional. At most {@value #MAX_MEMBERSHIP_DAYS}.</li>
+ *   <li>{@code containerOwnerAttribute}: the DN-valued attribute of an organizational unit (or
+ *       other container) of the namespace naming its owners (people, or groups whose members all
+ *       count): they create groups directly in it and delete the groups directly in it, without
+ *       write access to the definition. None: nobody does. There is no default: the standard
+ *       organizationalUnit class has no owner attribute (Active Directory has managedBy).</li>
  * </ul>
+ *
+ * <p>Settings added after the first release are objects, not primitives: definitions stored (and
+ * requests sent) without them must still be read, and mean what the portal did before.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record GroupAccess(
@@ -29,17 +48,48 @@ public record GroupAccess(
     @Size(max = 64) @Pattern(regexp = Patterns.ATTRIBUTE) String ownerAttribute,
     @Size(max = 1000) @LdapFilter String requestFilter,
     boolean requireReason,
-    boolean allowLeave) {
+    boolean allowLeave,
+    Boolean ownersManageOwners,
+    @Min(0) @Max(GroupAccess.MAX_REQUEST_EXPIRY_DAYS) Integer requestExpiryDays,
+    @Size(max = 1000) @LdapFilter String openFilter,
+    @Min(0) @Max(GroupAccess.MAX_MEMBERSHIP_DAYS) Integer maxMembershipDays,
+    @Size(max = 64) @Pattern(regexp = Patterns.ATTRIBUTE) String containerOwnerAttribute) {
 
   public static final String DEFAULT_OWNER_ATTRIBUTE = "owner";
+  /** Closed requests are kept for a year, so an open one waits no longer than that. */
+  public static final int MAX_REQUEST_EXPIRY_DAYS = 365;
+  /** No membership's end date is further away than this (ten years). */
+  public static final int MAX_MEMBERSHIP_DAYS = 3650;
 
   public String ownerAttributeOrDefault() {
     return ownerAttribute == null || ownerAttribute.isBlank() ? DEFAULT_OWNER_ATTRIBUTE : ownerAttribute.toLowerCase(Locale.ROOT);
   }
 
-  /** As stored: blanks dropped. */
+  /** Whether a group's owners may add and remove its owners. */
+  public boolean ownersManage() {
+    return Boolean.TRUE.equals(ownersManageOwners);
+  }
+
+  /** Days after which an open request expires; 0: never. */
+  public int requestExpiry() {
+    return requestExpiryDays == null ? 0 : Math.max(0, requestExpiryDays);
+  }
+
+  /** The longest membership the portal grants, in days; 0: no limit. */
+  public int maxMembership() {
+    return maxMembershipDays == null ? 0 : Math.max(0, maxMembershipDays);
+  }
+
+  /** The attribute naming a container's owners, in lower case; null: containers have no owners here. */
+  public String containerOwner() {
+    return containerOwnerAttribute == null || containerOwnerAttribute.isBlank() ? null : containerOwnerAttribute.trim().toLowerCase(Locale.ROOT);
+  }
+
+  /** As stored: blanks and settings that are off dropped. */
   public GroupAccess cleaned() {
-    return new GroupAccess(enabled, blank(memberAttribute), blank(ownerAttribute), blank(requestFilter), requireReason, allowLeave);
+    return new GroupAccess(enabled, blank(memberAttribute), blank(ownerAttribute), blank(requestFilter), requireReason, allowLeave,
+        ownersManage() ? Boolean.TRUE : null, requestExpiry() > 0 ? requestExpiry() : null, blank(openFilter),
+        maxMembership() > 0 ? maxMembership() : null, blank(containerOwnerAttribute));
   }
 
   private static String blank(String s) {

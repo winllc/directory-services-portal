@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Search, UserMinus, UserPlus, Users } from 'lucide-react';
-import type { GroupDetail } from '@dsp/shared';
-import { useGroup, useGroupAccessMembers, useGroupMutations, useGroupPeople, useGroupRequestsFor } from '../api/hooks';
-import { Alert, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
-import { GroupBadges, RequestAccessDialog } from '../components/groups/GroupParts';
+import { useId, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, CalendarClock, ChevronLeft, ChevronRight, Download, ListPlus, LogOut, Search, Trash2, UserMinus, UserPlus, Users } from 'lucide-react';
+import type { AccessRequest, GroupDetail, GroupMember, GroupPeopleResolved, GroupPerson, GroupSummary } from '@dsp/shared';
+import { downloadGroupMembers, useGroup, useGroupAccessMembers, useGroupHistory, useGroupMutations, useGroupRequestsFor } from '../api/hooks';
+import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, ErrorAlert, FormRow, Modal, PageHeader, Spinner, useDebounced, useToast } from '../components/ui';
+import { useFeature } from '../lib/license';
+import { day, EndDateField, expiredText, GroupBadges, JoinButton, PersonSearch, RequestAccessDialog, RequestStatus, when } from '../components/groups/GroupParts';
 import { RequestQueue } from './GroupsPage';
 
 /** One group: what it is, who owns it, the user's membership; for its owners, members and requests. */
@@ -13,6 +14,8 @@ export function GroupPage() {
   const [params] = useSearchParams();
   const dn = params.get('dn');
   const group = useGroup(definitionId, dn);
+  // Deleting is the directory editor's, as on the directory's own pages.
+  const editor = useFeature('directory-editor');
 
   if (group.isLoading) return <Spinner label="Loading…" />;
   if (!group.data) {
@@ -37,36 +40,63 @@ export function GroupPage() {
             <span className="muted">{d.group.definitionName}</span> <GroupBadges group={d.group} />
           </>
         }
+        actions={d.canDelete && editor.enabled && <DeleteGroup group={d.group} />}
       />
       <div className="split split-even">
         <Membership detail={d} />
-        <Card title="Owners" subtitle="They approve requests to join.">
-          {d.owners.length === 0 ? (
-            <p className="muted">This group has no owners: an administrator decides its requests.</p>
-          ) : (
-            <ul className="plain-list person-list">
-              {d.owners.map((o) => (
-                <li key={o.value}>
-                  {o.name}
-                  {o.dn && (
-                    <div className="muted small mono ellipsis" title={o.dn}>
-                      {o.dn}
-                    </div>
-                  )}
-                </li>
-              ))}
-              {d.moreOwners && <li className="muted small">and more</li>}
-            </ul>
-          )}
-        </Card>
+        <Owners detail={d} />
       </div>
       {d.group.canManage && definitionId && dn && (
         <>
           <GroupRequests definitionId={d.group.definitionId} dn={d.group.dn} count={d.pendingRequests} />
           <Members detail={d} />
+          <GroupHistory definitionId={d.group.definitionId} dn={d.group.dn} />
         </>
       )}
     </div>
+  );
+}
+
+/** Deletes the group, for an owner of the organizational unit it is in: asks first, naming the group. */
+function DeleteGroup({ group }: { group: GroupSummary }) {
+  const [confirming, setConfirming] = useState(false);
+  const { remove } = useGroupMutations();
+  const navigate = useNavigate();
+  const toast = useToast();
+  return (
+    <>
+      <Button variant="danger" icon={<Trash2 size={16} />} onClick={() => setConfirming(true)}>
+        Delete group
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        title={`Delete ${group.name}?`}
+        message={
+          <>
+            This permanently removes the group <strong>{group.name}</strong> (<code>{group.dn}</code>) from the directory. Its members lose the access it
+            gives, and open requests to join it are closed.
+          </>
+        }
+        confirmLabel="Delete group"
+        loading={remove.isPending}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() =>
+          remove.mutate(
+            { definitionId: group.definitionId, dn: group.dn },
+            {
+              onSuccess: () => {
+                toast.success(`${group.name} was deleted.`);
+                navigate('/groups');
+              },
+              onError: (e) => {
+                toast.error(e);
+                setConfirming(false);
+              },
+            },
+          )
+        }
+      />
+    </>
   );
 }
 
@@ -81,7 +111,7 @@ function Membership({ detail }: { detail: GroupDetail }) {
       <div className="stack">
         {g.member ? (
           <>
-            <p>You are a member of this group.</p>
+            <p>{g.memberUntil ? `You are a member of this group until ${day(g.memberUntil)}.` : 'You are a member of this group.'}</p>
             {detail.allowLeave && (
               <div>
                 <Button icon={<LogOut size={16} />} onClick={() => setLeaving(true)}>
@@ -89,6 +119,13 @@ function Membership({ detail }: { detail: GroupDetail }) {
                 </Button>
               </div>
             )}
+          </>
+        ) : g.open ? (
+          <>
+            <p>You aren't a member. This group is open: you can join at once, without approval.</p>
+            <div>
+              <JoinButton group={g} primary />
+            </div>
           </>
         ) : g.pendingRequestId ? (
           <>
@@ -113,7 +150,13 @@ function Membership({ detail }: { detail: GroupDetail }) {
         )}
         <p className="muted small">{detail.memberCount === null ? 'A large group.' : `${detail.memberCount} ${detail.memberCount === 1 ? 'member' : 'members'}.`}</p>
       </div>
-      <RequestAccessDialog group={g} requireReason={detail.requireReason} open={asking} onClose={() => setAsking(false)} />
+      <RequestAccessDialog
+        group={g}
+        requireReason={detail.requireReason}
+        maxMembershipDays={detail.maxMembershipDays}
+        open={asking}
+        onClose={() => setAsking(false)}
+      />
       <ConfirmDialog
         open={leaving}
         title={`Leave ${g.name}?`}
@@ -141,31 +184,15 @@ function Membership({ detail }: { detail: GroupDetail }) {
   );
 }
 
-function GroupRequests({ definitionId, dn, count }: { definitionId: string; dn: string; count: number }) {
-  const requests = useGroupRequestsFor(definitionId, dn, true);
-  const list = requests.data ?? [];
-  return (
-    <Card title={`Requests to join (${list.length || count})`}>
-      <ErrorAlert error={requests.error} />
-      {requests.isLoading ? <Spinner /> : list.length === 0 ? <p className="muted">No open requests.</p> : <RequestQueue requests={list} showGroup={false} />}
-    </Card>
-  );
-}
-
-function Members({ detail }: { detail: GroupDetail }) {
+/** Who owns the group; where the directory allows it, owners add and remove owners here. */
+function Owners({ detail }: { detail: GroupDetail }) {
   const g = detail.group;
   const toast = useToast();
-  const { members: change } = useGroupMutations();
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const q = useDebounced(search.trim(), 300);
-  const members = useGroupAccessMembers(g.definitionId, g.dn, q, page, true);
-  const [adding, setAdding] = useState('');
-  const who = useDebounced(adding.trim(), 300);
-  const people = useGroupPeople(g.definitionId, g.dn, who, who.length >= 2);
-  const [removing, setRemoving] = useState<{ value: string; name: string } | null>(null);
-  const data = members.data;
-  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const { owners: change } = useGroupMutations();
+  const [removing, setRemoving] = useState<GroupPerson | null>(null);
+  const manage = detail.canManageOwners;
+  // The last owner stays: someone has to decide the group's requests.
+  const removable = manage && (detail.owners.length > 1 || detail.moreOwners);
   const apply = (add: string[], remove: string[], done: string) =>
     change.mutate(
       { definitionId: g.definitionId, dn: g.dn, add, remove },
@@ -180,47 +207,223 @@ function Members({ detail }: { detail: GroupDetail }) {
         },
       },
     );
+  return (
+    <Card title="Owners" subtitle={manage ? 'They approve requests to join. You can add and remove owners.' : 'They approve requests to join.'}>
+      <div className="stack">
+        {detail.owners.length === 0 ? (
+          <p className="muted">This group has no owners: an administrator decides its requests.</p>
+        ) : (
+          <ul className="plain-list person-list">
+            {detail.owners.map((o) => (
+              <li key={o.value} className="person-result">
+                <span>
+                  {o.name}
+                  {o.dn && (
+                    <span className="muted small mono ellipsis" title={o.dn}>
+                      {' '}
+                      {o.dn}
+                    </span>
+                  )}
+                </span>
+                {removable && (
+                  <Button size="sm" variant="ghost" icon={<UserMinus size={14} />} aria-label={`Remove owner ${o.name}`} onClick={() => setRemoving(o)}>
+                    Remove
+                  </Button>
+                )}
+              </li>
+            ))}
+            {detail.moreOwners && <li className="muted small">and more</li>}
+          </ul>
+        )}
+        {manage && !removable && detail.owners.length === 1 && <p className="muted small">The last owner can't be removed. Add another one first.</p>}
+        {manage && (
+          <PersonSearch
+            definitionId={g.definitionId}
+            dn={g.dn}
+            label="Find someone to make an owner"
+            placeholder="Add an owner: type a name, login or e-mail…"
+            actionLabel="Make owner"
+            pending={change.isPending}
+            onPick={(p) => apply([p.dn ?? p.value], [], `${p.name} is now an owner.`)}
+          />
+        )}
+      </div>
+      <ConfirmDialog
+        open={!!removing}
+        title={`Remove ${removing?.name} as an owner?`}
+        message={`They no longer decide requests or manage the members of ${g.name}.`}
+        confirmLabel="Remove owner"
+        loading={change.isPending}
+        onCancel={() => setRemoving(null)}
+        onConfirm={() => removing && apply([], [removing.value], `${removing.name} is no longer an owner.`)}
+      />
+    </Card>
+  );
+}
+
+function GroupRequests({ definitionId, dn, count }: { definitionId: string; dn: string; count: number }) {
+  const requests = useGroupRequestsFor(definitionId, dn, true);
+  const list = requests.data ?? [];
+  return (
+    <Card title={`Requests to join (${list.length || count})`}>
+      <ErrorAlert error={requests.error} />
+      {requests.isLoading ? <Spinner /> : <RequestQueue requests={list} showGroup={false} empty={<p className="muted">No open requests.</p>} />}
+    </Card>
+  );
+}
+
+/** What became of a past request: who decided it, or that it expired or was withdrawn. */
+function outcome(r: AccessRequest) {
+  if (r.status === 'expired') return expiredText(r);
+  if (r.status === 'cancelled') return `Withdrawn by ${r.requesterName ?? r.requester}.`;
+  const until = r.status === 'approved' && r.grantedUntil ? `, until ${day(r.grantedUntil)}` : '';
+  return `By ${r.decidedByName ?? r.decidedBy ?? 'someone'}${until}.`;
+}
+
+/** The group's past requests, newest first: who asked and why, what became of each, when, and the note. */
+function GroupHistory({ definitionId, dn }: { definitionId: string; dn: string }) {
+  const [page, setPage] = useState(1);
+  const history = useGroupHistory(definitionId, dn, page, true);
+  const data = history.data;
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  return (
+    <Card title={`Past requests (${data?.total ?? '…'})`} subtitle="Decided, withdrawn and expired requests of the last year, newest first.">
+      <div className="stack">
+        <ErrorAlert error={history.error} />
+        {history.isLoading ? (
+          <Spinner />
+        ) : !data || data.items.length === 0 ? (
+          <p className="muted">No past requests.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table table-compact">
+              <thead>
+                <tr>
+                  <th>Who</th>
+                  <th>Reason</th>
+                  <th>Outcome</th>
+                  <th>When</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map(({ request: r }) => (
+                  <tr key={r.id}>
+                    <td>
+                      {r.requesterName ?? r.requester}
+                      {r.requesterDn && (
+                        <div className="muted small mono ellipsis" title={r.requesterDn}>
+                          {r.requesterDn}
+                        </div>
+                      )}
+                    </td>
+                    <td className="request-reason-cell">{r.reason ?? <span className="muted">—</span>}</td>
+                    <td>
+                      <RequestStatus status={r.status} />
+                      <div className="muted small">{outcome(r)}</div>
+                    </td>
+                    <td className="muted nowrap">{when(r.decidedAt ?? r.createdAt)}</td>
+                    <td className="request-reason-cell">{r.note ?? <span className="muted">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {pages > 1 && (
+          <div className="pagination">
+            <Button size="sm" variant="ghost" icon={<ChevronLeft size={16} />} disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              Newer
+            </Button>
+            <span className="muted small">
+              Page {page} of {pages}
+            </span>
+            <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage(page + 1)}>
+              Older <ChevronRight size={16} />
+            </Button>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function Members({ detail }: { detail: GroupDetail }) {
+  const g = detail.group;
+  const toast = useToast();
+  const { members: change } = useGroupMutations();
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const q = useDebounced(search.trim(), 300);
+  const members = useGroupAccessMembers(g.definitionId, g.dn, q, page, true);
+  const [removing, setRemoving] = useState<{ value: string; name: string } | null>(null);
+  const [until, setUntil] = useState('');
+  const [dating, setDating] = useState<GroupMember | null>(null);
+  const [pasting, setPasting] = useState(false);
+  // The member export is the directory editor's, as on the directory's own pages.
+  const exports = useFeature('directory-editor');
+  const id = useId();
+  const max = detail.maxMembershipDays;
+  const data = members.data;
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const apply = (add: string[], remove: string[], done: string) =>
+    change.mutate(
+      { definitionId: g.definitionId, dn: g.dn, add, remove, until: add.length ? until : undefined },
+      {
+        onSuccess: (r) => {
+          toast.success(r.added.length || r.removed.length ? done : 'Nothing changed: already so.');
+          setRemoving(null);
+        },
+        onError: (e) => {
+          toast.error(e);
+          setRemoving(null);
+        },
+      },
+    );
 
   return (
-    <Card title={`Members (${detail.memberCount ?? data?.total ?? '…'})`} subtitle="As an owner you can add and remove members directly.">
-      <div className="stack">
-        <div className="member-add">
-          <div className="search-box">
-            <UserPlus size={16} aria-hidden />
-            <input
-              className="input"
-              type="search"
-              placeholder="Add someone: type a name, login or e-mail…"
-              aria-label="Find someone to add"
-              value={adding}
-              onChange={(e) => setAdding(e.target.value)}
-            />
-          </div>
-          {who.length >= 2 && (
-            <ul className="plain-list person-results" aria-live="polite">
-              {people.isFetching && <li className="muted small">Searching…</li>}
-              {!people.isFetching && people.data?.length === 0 && <li className="muted small">No one matches “{who}”.</li>}
-              {people.data?.map((p) => (
-                <li key={p.value} className="person-result">
-                  <span>
-                    {p.name}
-                    {p.dn && <span className="muted small mono"> {p.dn}</span>}
-                  </span>
-                  <Button
-                    size="sm"
-                    loading={change.isPending}
-                    onClick={() => {
-                      apply([p.value], [], `${p.name} was added.`);
-                      setAdding('');
-                    }}
-                  >
-                    Add
-                  </Button>
-                </li>
-              ))}
-            </ul>
+    <Card
+      title={`Members (${detail.memberCount ?? data?.total ?? '…'})`}
+      subtitle="As an owner you can add and remove members directly."
+      actions={
+        <div className="toolbar-actions">
+          {exports.enabled && (
+            <Button
+              size="sm"
+              icon={<Download size={14} />}
+              onClick={() =>
+                downloadGroupMembers(g.definitionId, g.dn)
+                  .then((r) => r.truncated && toast.success(`Only the first ${r.count} members were exported.`))
+                  .catch((e) => toast.error(e))
+              }
+            >
+              Export CSV
+            </Button>
           )}
+          <Button size="sm" icon={<ListPlus size={14} />} onClick={() => setPasting(true)}>
+            Add from a list
+          </Button>
         </div>
+      }
+    >
+      <div className="stack">
+        <PersonSearch
+          definitionId={g.definitionId}
+          dn={g.dn}
+          label="Find someone to add"
+          placeholder="Add someone: type a name, login or e-mail…"
+          actionLabel="Add"
+          pending={change.isPending}
+          onPick={(p) => apply([p.value], [], `${p.name} was added.`)}
+        />
+        <EndDateField
+          id={`${id}-until`}
+          label="End date for people you add (optional)"
+          value={until}
+          onChange={setUntil}
+          maxDays={max}
+          hint={max ? `Their last day in the group. Memberships here last at most ${max} days; empty: that long.` : 'Their last day in the group. Empty: no end date.'}
+        />
 
         <div className="toolbar">
           <div className="search-box search-sm">
@@ -255,9 +458,15 @@ function Members({ detail }: { detail: GroupDetail }) {
                     </span>
                   )}
                 </span>
-                <Button size="sm" variant="ghost" icon={<UserMinus size={14} />} onClick={() => setRemoving({ value: m.value, name: m.name })}>
-                  Remove
-                </Button>
+                <div className="toolbar-actions">
+                  {m.until && <span className="muted small nowrap">until {day(m.until)}</span>}
+                  <Button size="sm" variant="ghost" icon={<CalendarClock size={14} />} aria-label={`End date for ${m.name}`} onClick={() => setDating(m)}>
+                    End date
+                  </Button>
+                  <Button size="sm" variant="ghost" icon={<UserMinus size={14} />} aria-label={`Remove ${m.name}`} onClick={() => setRemoving({ value: m.value, name: m.name })}>
+                    Remove
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -285,6 +494,209 @@ function Members({ detail }: { detail: GroupDetail }) {
         onCancel={() => setRemoving(null)}
         onConfirm={() => removing && apply([], [removing.value], `${removing.name} was removed.`)}
       />
+      <MemberEndDateDialog key={dating?.value ?? 'none'} group={g} member={dating} maxDays={max} onClose={() => setDating(null)} />
+      {pasting && <BulkAddDialog group={g} maxDays={max} onClose={() => setPasting(false)} />}
     </Card>
+  );
+}
+
+/** Sets, changes or removes a member's end date (it can't be removed where the directory limits memberships). */
+function MemberEndDateDialog({ group, member, maxDays, onClose }: { group: GroupSummary; member: GroupMember | null; maxDays?: number | null; onClose: () => void }) {
+  const id = useId();
+  const toast = useToast();
+  const { memberUntil } = useGroupMutations();
+  const [until, setUntil] = useState(member?.until ?? '');
+  if (!member) return null;
+  const details = (memberUntil.error as { details?: Record<string, string> } | null)?.details;
+  const close = () => {
+    memberUntil.reset();
+    onClose();
+  };
+  const save = (date: string) =>
+    memberUntil.mutate(
+      { definitionId: group.definitionId, dn: group.dn, member: member.value, until: date },
+      {
+        onSuccess: () => {
+          toast.success(date ? `${member.name} is a member until ${day(date)}.` : `${member.name}'s membership has no end date any more.`);
+          close();
+        },
+      },
+    );
+  return (
+    <Modal
+      open
+      onClose={close}
+      title={`End date for ${member.name}`}
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          {member.until && !maxDays && (
+            <Button loading={memberUntil.isPending} onClick={() => save('')}>
+              Remove end date
+            </Button>
+          )}
+          <Button variant="primary" loading={memberUntil.isPending} disabled={!until || until === member.until} onClick={() => save(until)}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        {!details?.until && <ErrorAlert error={memberUntil.error} />}
+        <EndDateField
+          id={`${id}-until`}
+          label="Member until"
+          value={until}
+          onChange={setUntil}
+          maxDays={maxDays}
+          error={details?.until}
+          hint={
+            maxDays
+              ? `Their last day in ${group.name}; the portal removes them the day after. At most ${maxDays} days from today.`
+              : `Their last day in ${group.name}; the portal removes them the day after.`
+          }
+        />
+      </div>
+    </Modal>
+  );
+}
+
+/** Most lines of a pasted list (the server's limit). */
+const MAX_PASTED = 200;
+
+/**
+ * Adds many people at once from a pasted list of logins, e-mail addresses or DNs: the list is
+ * looked up first, and the owner sees who was found, who was not and which lines are ambiguous
+ * before adding the people found.
+ */
+function BulkAddDialog({ group, maxDays, onClose }: { group: GroupSummary; maxDays?: number | null; onClose: () => void }) {
+  const id = useId();
+  const toast = useToast();
+  const { resolvePeople, members: change } = useGroupMutations();
+  const [text, setText] = useState('');
+  const [until, setUntil] = useState('');
+  const [result, setResult] = useState<GroupPeopleResolved | null>(null);
+  const lines = [...new Set(text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
+  const tooMany = lines.length > MAX_PASTED;
+  const toAdd = result?.found.filter((p) => !p.member) ?? [];
+  const details = (change.error as { details?: Record<string, string> } | null)?.details;
+  const check = () => resolvePeople.mutate({ definitionId: group.definitionId, dn: group.dn, lines }, { onSuccess: setResult });
+  const add = () =>
+    change.mutate(
+      { definitionId: group.definitionId, dn: group.dn, add: toAdd.map((p) => p.value), remove: [], until },
+      {
+        onSuccess: (r) => {
+          toast.success(`${r.added.length} ${r.added.length === 1 ? 'person was' : 'people were'} added to ${group.name}.`);
+          onClose();
+        },
+      },
+    );
+  return (
+    <Modal
+      open
+      wide
+      onClose={onClose}
+      title={`Add people to ${group.name} from a list`}
+      footer={
+        result ? (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={() => {
+                change.reset();
+                setResult(null);
+              }}
+            >
+              Back to the list
+            </Button>
+            <Button variant="primary" loading={change.isPending} disabled={!toAdd.length} onClick={add}>
+              {toAdd.length === 1 ? 'Add 1 person' : `Add ${toAdd.length} people`}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button variant="primary" loading={resolvePeople.isPending} disabled={!lines.length || tooMany} onClick={check}>
+              Check the list
+            </Button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <div className="stack">
+          {!details?.until && <ErrorAlert error={change.error} />}
+          <section aria-label="Found">
+            <h3 className="section-title">
+              Found ({result.found.length}){toAdd.length !== result.found.length && `, ${toAdd.length} to add`}
+            </h3>
+            {result.found.length === 0 ? (
+              <p className="muted">Nobody on the list was found.</p>
+            ) : (
+              <ul className="plain-list person-list">
+                {result.found.map((p) => (
+                  <li key={p.value} className="person-result">
+                    <span>
+                      {p.name}
+                      {p.dn && <span className="muted small mono"> {p.dn}</span>}
+                    </span>
+                    {p.member && <Badge>Already a member</Badge>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          {result.notFound.length > 0 && (
+            <section aria-label="Not found">
+              <h3 className="section-title">Not found ({result.notFound.length})</h3>
+              <ul className="plain-list person-list">
+                {result.notFound.map((l) => (
+                  <li key={l} className="mono small">
+                    {l}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {result.ambiguous.length > 0 && (
+            <section aria-label="Ambiguous">
+              <h3 className="section-title">Ambiguous ({result.ambiguous.length})</h3>
+              <p className="muted small">Several people match these lines. Use their login or DN instead.</p>
+              <ul className="plain-list person-list">
+                {result.ambiguous.map((a) => (
+                  <li key={a.line}>
+                    <span className="mono small">{a.line}</span>
+                    <div className="muted small">{a.matches.join(', ')}</div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {toAdd.length > 0 && (
+            <EndDateField
+              id={`${id}-until`}
+              label="End date (optional)"
+              value={until}
+              onChange={setUntil}
+              maxDays={maxDays}
+              error={details?.until}
+              hint={maxDays ? `Their last day in the group. Memberships here last at most ${maxDays} days; empty: that long.` : 'Their last day in the group. Empty: no end date.'}
+            />
+          )}
+        </div>
+      ) : (
+        <div className="stack">
+          <ErrorAlert error={resolvePeople.error} />
+          <FormRow
+            label="People to add"
+            htmlFor={`${id}-lines`}
+            error={tooMany ? `At most ${MAX_PASTED} lines at once: this list has ${lines.length}.` : undefined}
+            hint={`Logins, e-mail addresses or DNs, one per line (at most ${MAX_PASTED}). Nothing is added until you have seen who was found.`}
+          >
+            <textarea id={`${id}-lines`} className="input mono" rows={10} value={text} onChange={(e) => setText(e.target.value)} />
+          </FormRow>
+        </div>
+      )}
+    </Modal>
   );
 }

@@ -245,6 +245,27 @@ every new setting has a safe default. What is new:
 - The release bundle's `env.template` lists the new variables (`API_*`, `WEBHOOK*`, `EXPORT_*`,
   `IMPORT_*`, `BULK_MAX_MEMBERS`, `MAX_BODY_SIZE`); `upgrade.sh` keeps your `.env`.
 
+### Upgrade notes: group access enhancements
+
+Nothing needs changing: every new [Group access](#group-access) setting is off or empty until an
+administrator sets it, and stored definitions and requests are read as before. What is new:
+
+- Per definition: owners may change a group's owners, requests expire after a number of days,
+  open groups are joined without approval, and memberships can have an end date (with an
+  optional longest membership).
+- For owners on a group's page: adding people from a pasted list, exporting the members as CSV,
+  and the group's past requests. In *To review*, several requests are decided at once.
+- With the shared database, the first start creates `dsp_group_membership_expiry` (Flyway
+  migration V13). Alone, end dates are kept in `DATA_DIR/group-membership-expiries.json`.
+- New audit actions: `group.access-expired`, `group.membership-end-date` and
+  `group.membership-expired`; new `details.via` values on `entry.update`: `group-owners`,
+  `group-join` and `group-membership-expired` (by the system).
+- The demo directory has a sixth group, *social-club* (open to join).
+- Owners of an organizational unit create and delete the groups directly in it, once a
+  definition names the attribute that lists a unit's owners (empty until then: off). Both are
+  the usual `entry.create` and `entry.delete`, with the new `details.via` value
+  `group-container-owner`. In the demo Carol Chen owns `ou=groups` (by `seeAlso`).
+
 ## Releases
 
 Cut a release by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`. The CI `image` job
@@ -671,30 +692,108 @@ doesn't take the portal out of service. It is DOWN when none answers.
   grant on the definition: users see names, descriptions and owners, but only owners see members.
 - **Request access** with a reason (optional, or required per directory). **My requests** lists
   the user's requests with their answers. An open request can be withdrawn.
+- **Requests expire**, when the directory sets a number of days (off by default): an open request
+  nobody answered in that time is closed as *expired*. The requester sees that it expired, and
+  after how many days, and can ask again. A job checks every 15 minutes; with several API
+  instances one of them runs it and each request expires once. Like other scheduled work it
+  pauses while the license is read-only.
+- **Open groups**, when the directory names them with an LDAP filter (none by default): a group
+  that matches, and takes requests at all, is joined at once with **Join**, without a request or
+  approval. Meant for groups that give no access worth guarding.
 - **Owners approve.** A group's owner attribute (default `owner`) names its owners: people, or
   groups whose members all approve. Anyone who may edit the definition, administrators included,
   can approve too. *To review* lists the requests they can decide, and the menu shows how many
   are waiting. Approving adds the requester to the group's member field (their DN, or their login
   name for `memberUid`). Rejecting leaves the group as it is. Either way the requester sees the
-  decision and the owner's note. Nobody decides their own request.
+  decision and the owner's note. Nobody decides their own request. Several requests can be
+  ticked (or *Select all shown*) and approved or rejected together with one note, at most 50 at
+  once: each is decided on its own, and the answer lists those that could not be decided and
+  why (for example one someone else has answered meanwhile).
 - **Owners manage members** on the group's page: find people by name, login or e-mail to add
   them, and remove members. They don't need write access to the whole definition for this.
+  **Add from a list** takes pasted logins, e-mail addresses or DNs, one per line (at most 200):
+  the owner sees who was found, who was not and which lines several people match, then adds the
+  people found in one step, with an end date if they want. **Export CSV** downloads the group's
+  members (name, login, e-mail, DN, end date). Like the directory's member export it needs the
+  directory editor's license, guards cells against spreadsheet formulas, holds at most
+  `EXPORT_MAX_ENTRIES` members and is recorded as `data.exported`.
+- **Time-limited membership.** A request may ask for access until a date; the approver may
+  shorten it, not extend it. Owners can give the members they add an end date, and change or
+  remove it later in the member list. Dates are whole days in UTC: the member belongs to the
+  group through that day, and an hourly job removes them once it has passed (one instance runs
+  it; like other scheduled work it pauses while the license is read-only). The member list and
+  *My groups* show the end date.
+  - With a **longest membership** set for the directory (in days; empty by default: no limit),
+    every membership the portal grants ends within it: a request, an added member or a join
+    without a date gets the longest, and an end date can be moved but not removed.
+  - The portal keeps only the end dates it granted. Members added elsewhere have none. A record
+    whose member is no longer in the group is dropped, and adding the person again without a
+    date clears it.
+  - A member the directory won't let go (for example the last member of a group whose form
+    requires one) stays: `group.membership-expired` is recorded as failed, and the portal tries
+    again a day later.
+- **Owners manage owners**, where the directory allows it (off by default): on the group's page
+  they add people as owners and remove any owner, person or group. The last owner can't be
+  removed. Those who may edit the definition can do the same there.
+- **Past requests.** On the group's page its owners see the group's closed requests, newest
+  first, 20 a page: who asked and why, who approved or rejected it (or that it was withdrawn or
+  expired), when, and the note. As long as the portal keeps them (a year).
+- **Owners of an organizational unit create and delete its groups**, where the directory names
+  the attribute that lists a unit's owners (none by default, so this is off). The units are the
+  base DN's own entry and, with scope *sub*, the containers below it (`organizationalUnit`,
+  `organization`, `container`, `domain`, `builtinDomain`, `locality`, `country`, `nsContainer`).
+  The attribute names people, or groups whose members all count, as a group's owner attribute
+  does. They don't need write access to the whole definition for this.
+  - **New group** on the Group access page, for someone who owns a unit: they pick the unit if
+    they own several and fill in the directory's own form for a new entry, so its required
+    fields, its validation and the definition's filter apply. The group goes directly into that
+    unit, and the server refuses any other parent. The creator becomes the group's owner and,
+    where the form or the object class requires a member, its first member, unless they name
+    others.
+  - **Delete group** on the page of a group directly in a unit they own, after a confirmation
+    that names the group. The directory is asked who owns the unit at that moment. Owning a
+    unit gives nothing over the groups of the units below it. Open requests to join the group
+    are closed as rejected with the note *The group was deleted.*, and its end dates dropped.
+  - Owning a unit gives nothing else: no access to the directory's other pages, and no say over
+    the members of groups one doesn't own. Those who may edit the definition keep creating and
+    deleting in the directory editor, as before. Like that, both need the directory editor's
+    license, and a license that isn't read-only.
 - **My groups** lists the user's groups. Members can **leave** a group when its directory allows
   it; otherwise they ask the owners.
 - **Settings** (per definition): the member field (automatic: member, uniqueMember or memberUid),
   the owner attribute, an LDAP filter for the groups that take requests (for example
   `(!(cn=domain admins))`; the others can be looked up but not requested), whether a reason is
-  required, and whether members may leave. The definition must be read/write.
+  required, whether members may leave, whether owners may change owners (the owner attribute
+  must then be a multi-valued field of the form), the days after which an unanswered request
+  expires (empty: never; at most 365), an LDAP filter for open groups (for example
+  `(cn=social-*)`; empty: none), the longest membership in days (empty: no limit; at most
+  3650), and the owner attribute of organizational units (empty: off; there is no default,
+  because the standard `organizationalUnit` class has no owner attribute: Active Directory has
+  `managedBy`, other directories need a schema that allows one). The definition must be
+  read/write.
 - **Audit and webhooks.** Requests and decisions are audited (`group.access-requested`,
-  `group.access-cancelled`, `group.access-approved`, `group.access-rejected`). Every membership
-  change is the usual `entry.update` event, and its `details.via` says why someone without write
-  access could make it: `group-access-request`, `group-owner` or `group-leave`. Membership
-  changes also send the `group.membership_changed` webhook.
+  `group.access-cancelled`, `group.access-approved`, `group.access-rejected`, and
+  `group.access-expired` by the system). Every membership change is the usual `entry.update`
+  event, and its `details.via` says why someone without write access could make it:
+  `group-access-request`, `group-owner`, `group-leave` or `group-join` (an open group).
+  Membership changes also send the `group.membership_changed` webhook. A change of owners by an
+  owner is an `entry.update` with `details.via` `group-owners`. An end date set, changed or
+  removed is `group.membership-end-date`. A member removed after their end date is an
+  `entry.update` by the system with `details.via` `group-membership-expired`, the webhook, and a
+  `group.membership-expired` event. A group created or deleted by an owner of its organizational
+  unit is the usual `entry.create` or `entry.delete`, with `details.via` `group-container-owner`
+  and the `entry.changed` webhook an editor's create or delete sends; the open requests closed
+  with a deleted group are `group.access-rejected` with the same `via`.
 - Requests are kept in `group-access-requests.json` in the data directory, or in the shared
   database when one is configured. Closed requests are kept for a year (at most 5,000); the
-  audit trail keeps them for good.
-- The demo turns it on for *Groups*. Carol Chen co-owns *engineering*, and *directory-admins*
-  doesn't take requests.
+  audit trail keeps them for good. End dates are kept in `group-membership-expiries.json`, or
+  in the shared database's `dsp_group_membership_expiry` table (Flyway V13; the file is imported
+  once).
+- The demo turns it on for *Groups*. Carol Chen owns the unit `ou=groups` (the demo names a
+  unit's owners in `seeAlso`, the one DN attribute the standard class allows), so she creates
+  and deletes groups there. She also co-owns *engineering* (and may change its owners),
+  *directory-admins* doesn't take requests, *social-club* is open, and requests expire after 30
+  days.
 
 #### Governed mode
 
@@ -726,6 +825,11 @@ What changes for a governed directory:
 - **My requests** reads each open governed request's state from the console and mirrors it:
   completed becomes approved, rejected and failed become rejected, cancelled becomes cancelled;
   the link opens it in the governance portal. A governed request is withdrawn there, not here.
+- **End dates**: a request's *until* goes to the console as the item's end (`ends_at`, the
+  start of the day after); the console's workflow, not the portal, sets the membership's end.
+  The portal's `requestExpiryDays` doesn't expire governed requests: the console's timeouts
+  apply.
+- **Open groups** are not joined at once: in a governed directory every join is a request.
 - **Owners still manage members** directly. To tell the console about those changes, add a
   webhook (*Integrations → Webhooks*) for `group.membership_changed` to the console's
   `/api/v1/governance/ingest/dsp`, with the signing secret the console shows when you add the
@@ -785,8 +889,12 @@ a manager's `uid`) or its parent container, the first N characters, a regular ex
 group, or a date's year, quarter, month, week or day. Drop-down values are shown with their
 option labels (so `manager` DNs show as people's names). An extra LDAP filter narrows any chart.
 
-Every chart has a table view and a CSV download. Results are cached for
-`METRICS_CACHE_SECONDS` (**Refresh** recomputes them); charts that read the same directory share
+Every chart has a table view and a CSV download. Once computed, a page's results stay as they are
+while the portal is open in the browser: going back to the metrics home page, an overview or a
+dashboard shows them again, with the time they were computed, and does not compute them again.
+**Refresh** (**Refresh counts** on the home page) recomputes them; saving a dashboard recomputes
+that dashboard. After the browser page is reloaded, the server answers from its own cache for
+`METRICS_CACHE_SECONDS` and computes afresh after that. Charts that read the same directory share
 one paged scan of it. Charts that take longer than `METRICS_WAIT_MILLIS` to compute continue in
 the background (see [Background tasks](#background-tasks)).
 
@@ -1474,6 +1582,9 @@ upgrades its tables itself (Flyway, `backend/src/main/resources/db/migration`; t
 - **Webhooks**: the webhooks (secrets encrypted with `DSP_SECRETS_KEY`, which every instance needs)
   and their outbox are shared; an entry change's deliveries are written in its audit event's
   transaction, so an instance stopping loses none.
+- **Group access**: requests and the end dates of memberships (`dsp_group_membership_expiry`,
+  Flyway V13) are shared. The jobs that expire requests and end memberships run under a cluster
+  lock, and each request or membership is closed by one instance only.
 
 - **The license state** (installation id, license, revisions seen) moves into the database
   (`ens_license_*`, ENS license library 1.2.0's database store): every instance has the same

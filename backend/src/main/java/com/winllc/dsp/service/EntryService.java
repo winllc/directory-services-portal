@@ -148,6 +148,21 @@ public class EntryService {
         .orElseThrow(() -> new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Definition \"" + def.name() + "\" references a missing form"));
   }
 
+  /** Whether the object classes of the definition's form require the attribute (MUST, inherited ones included). */
+  public boolean requiredByClasses(DirectoryDefinition def, FormDefinition form, String attribute) {
+    SchemaIndex index = schema.mergedIndex(def.directory());
+    String primary = index.primaryAttributeName(attribute);
+    return index.classAttributes(form.objectClasses()).must().stream().anyMatch(a -> a.equalsIgnoreCase(primary));
+  }
+
+  /** Whether they allow it (MUST or MAY), as far as the schema says. */
+  public boolean allowedByClasses(DirectoryDefinition def, FormDefinition form, String attribute) {
+    SchemaIndex index = schema.mergedIndex(def.directory());
+    String primary = index.primaryAttributeName(attribute);
+    SchemaIndex.ClassAttributes attributes = index.classAttributes(form.objectClasses());
+    return java.util.stream.Stream.concat(attributes.must().stream(), attributes.may().stream()).anyMatch(a -> a.equalsIgnoreCase(primary));
+  }
+
   /**
    * The user's effective access. Read-only access for someone who is not an administrator
    * (everyone-can-read definitions, read grants, white-pages definitions) is the licensed
@@ -467,6 +482,19 @@ public class EntryService {
       values = values.stream().filter(held::contains).toList();
       if (values.isEmpty()) return new DirectoryOptions.Page(List.of(), false, null);
     }
+    return fieldOptionPage(def, field, q, values);
+  }
+
+  /**
+   * A drop down's options without checking the user's access: for callers that apply rules of
+   * their own (group access: the owner of an organizational unit filling in a new group's form).
+   */
+  public DirectoryOptions.Page optionPageInNamespace(DirectoryDefinition def, String fieldId, String q, List<String> values) {
+    FormField field = form(def).fields().stream().filter(f -> f.id().equals(fieldId)).findFirst().orElseThrow(() -> ApiException.notFound("Field not found"));
+    return fieldOptionPage(def, field, q, values);
+  }
+
+  private DirectoryOptions.Page fieldOptionPage(DirectoryDefinition def, FormField field, String q, List<String> values) {
     if (field.dropdown() instanceof DropdownSource.Static s) return new DirectoryOptions.Page(s.options(), false, null);
     if (!(field.dropdown() instanceof DropdownSource.Ldap src)) return new DirectoryOptions.Page(List.of(), false, null);
     LdapDirectory dir = ldap(def);
@@ -553,14 +581,29 @@ public class EntryService {
   }
 
   public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
+    return create(user, def, parentDn, input, null, Map.of());
+  }
+
+  /**
+   * As above, for a create the caller has already authorized ({@code reason} non-null: the owner of
+   * an organizational unit creating a group in it): the user's write access to the definition isn't
+   * required, and {@code parentDn} is the container the caller authorized, in the definition's
+   * create containers or not. The namespace, the form's validation, the definition's filter and the
+   * webhook apply, and the audit event says why ({@code details.via}). {@code extra}: attributes
+   * the caller sets where the form's values leave them out (the creator as the group's owner when
+   * the form has no owner field); the caller sees to it that the object classes allow them.
+   */
+  public DirectoryEntry create(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input, String reason,
+      Map<String, List<String>> extra) {
     AuditLog.Draft event = audit.event("entry.create").by(user).definition(def.id()).directory(directoryId(def)).target("entry", parentDn, null);
-    return audited("create", event, () -> doCreate(event, user, def, parentDn, input, null));
+    if (reason != null) event.detail("via", reason);
+    return audited("create", event, () -> doCreate(event, user, def, parentDn, input, null, reason, extra));
   }
 
   /** Checks a create as {@link #create} would (permission, container, validation, existing entry), writing nothing. */
   public Preview previewCreate(SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input) {
     PreviewHolder p = new PreviewHolder();
-    doCreate(audit.event("entry.create"), user, def, parentDn, input, p);
+    doCreate(audit.event("entry.create"), user, def, parentDn, input, p, null, Map.of());
     return p.result;
   }
 
@@ -583,12 +626,19 @@ public class EntryService {
   }
 
   private DirectoryEntry doCreate(AuditLog.Draft event, SessionUser user, DirectoryDefinition def, String parentDn, Map<String, Object> input,
-      PreviewHolder preview) {
-    require(user, def, AccessLevel.WRITE);
+      PreviewHolder preview, String reason, Map<String, List<String>> extra) {
     FormDefinition form = form(def);
-    List<String> allowed = def.createContainers().isEmpty() ? List.of(def.baseDn()) : def.createContainers();
-    String parent = parentDn != null && !parentDn.isBlank() ? parentDn.trim() : allowed.get(0);
-    if (allowed.stream().noneMatch(c -> Dns.equal(c, parent))) throw ApiException.badRequest("New entries cannot be created in that container");
+    String parent;
+    if (reason == null) {
+      require(user, def, AccessLevel.WRITE);
+      List<String> allowed = def.createContainers().isEmpty() ? List.of(def.baseDn()) : def.createContainers();
+      parent = parentDn != null && !parentDn.isBlank() ? parentDn.trim() : allowed.get(0);
+      if (allowed.stream().noneMatch(c -> Dns.equal(c, parent))) throw ApiException.badRequest("New entries cannot be created in that container");
+    } else {
+      if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
+      if (parentDn == null || !Dns.isValid(parentDn)) throw ApiException.badRequest("Container is outside of this directory");
+      parent = parentDn.trim();
+    }
     if (!Dns.isUnder(parent, def.baseDn(), false)) throw ApiException.badRequest("Container is outside of this directory");
     if ("one".equals(def.scope()) && !Dns.equal(parent, def.baseDn())) {
       throw ApiException.badRequest("This directory only contains direct children of its base DN");
@@ -606,6 +656,9 @@ public class EntryService {
       List<String> v = values.get(f.attribute().toLowerCase());
       if (v != null && !v.isEmpty()) attributes.put(f.attribute(), v);
     }
+    extra.forEach((attribute, v) -> {
+      if (!v.isEmpty() && attributes.keySet().stream().noneMatch(a -> a.equalsIgnoreCase(attribute))) attributes.put(attribute, v);
+    });
     List<String> titles = values.getOrDefault(def.titleAttribute().toLowerCase(), List.of());
     event.target("entry", dn, titles.isEmpty() ? rdnValues.get(0) : titles.get(0));
     event.changes(attributes.entrySet().stream().map(e -> change(e.getKey(), List.of(), e.getValue())).toList());
@@ -815,12 +868,15 @@ public class EntryService {
    * As above, for a change the caller has already authorized ({@code reason} non-null: a group's
    * owner approving an access request, a member leaving a group): the user's write access to the
    * definition isn't required, the rest applies, and the audit event says why
-   * ({@code details.via}).
+   * ({@code details.via}). {@code user} is null for a change the portal makes itself (a membership
+   * whose end date has passed): the event's actor is then the system.
    */
   public ValueChange changeValues(SessionUser user, DirectoryDefinition def, String dn, FormField field, List<String> add, List<String> remove,
       boolean dnValued, String reason) {
     AuditLog.Draft event = audit.event("entry.update").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
     if (reason != null) event.detail("via", reason);
+    // Without a user the portal itself makes the change (a scheduled job).
+    if (reason != null && user == null) event.system();
     return audited("update", event, () -> {
       if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
       if (reason == null) require(user, def, AccessLevel.WRITE);
@@ -862,9 +918,20 @@ public class EntryService {
   }
 
   public void remove(SessionUser user, DirectoryDefinition def, String dn) {
+    remove(user, def, dn, null);
+  }
+
+  /**
+   * As above, for a delete the caller has already authorized ({@code reason} non-null: the owner of
+   * an organizational unit deleting a group in it): the user's write access to the definition isn't
+   * required, the rest applies, and the audit event says why ({@code details.via}).
+   */
+  public void remove(SessionUser user, DirectoryDefinition def, String dn, String reason) {
     AuditLog.Draft event = audit.event("entry.delete").by(user).definition(def.id()).directory(directoryId(def)).target("entry", dn, null);
+    if (reason != null) event.detail("via", reason);
     audited("delete", event, () -> {
-      require(user, def, AccessLevel.WRITE);
+      if (reason == null) require(user, def, AccessLevel.WRITE);
+      else if (def.readOnly()) throw ApiException.forbidden("This directory is read only");
       FormDefinition form = form(def);
       DirectoryEntry current = loadEverything(def, form, dn);
       // Everything the entry held, on its form or not (secrets redacted), so a mistaken delete can

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useRef } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type {
   AnalysisDefinition,
@@ -26,14 +26,21 @@ import type {
   GroupMembers,
   ImportResult,
   MembershipChangeResult,
+  AccessDecisions,
   AccessRequest,
   AccessRequestView,
+  CreatedGroup,
+  GroupContainer,
   GroupDetail,
   GroupDirectory,
   GroupList,
+  GroupMember,
   GroupMemberPage,
+  GroupPeopleResolved,
   GroupPerson,
+  GroupRequestHistory,
   GroupRequestSummary,
+  NewGroupForm,
   Webhook,
   WebhookDelivery,
   WebhookInput,
@@ -165,41 +172,60 @@ export const useEntry = (id: string | undefined, dn: string | null) =>
     enabled: !!id && !!dn,
   });
 
-const optionsUrl = (definitionId: string, fieldId: string) =>
-  `/api/directories/${encodeURIComponent(definitionId)}/options/${encodeURIComponent(fieldId)}`;
+/**
+ * Where the drop downs of a form get their options: the directory's own endpoint, which needs
+ * access to the directory, or (`new-group`) group access's, for the owner of an organizational unit
+ * filling in the form of a new group.
+ */
+export type OptionsSource = 'directory' | 'new-group';
+export const OptionsSourceContext = createContext<OptionsSource>('directory');
+
+const optionsUrl = (source: OptionsSource, definitionId: string, fieldId: string) =>
+  source === 'new-group'
+    ? `/api/groups/${encodeURIComponent(definitionId)}/group/options/${encodeURIComponent(fieldId)}`
+    : `/api/directories/${encodeURIComponent(definitionId)}/options/${encodeURIComponent(fieldId)}`;
+
+const optionsKey = (source: OptionsSource, definitionId: string, fieldId: string): QueryKey =>
+  source === 'new-group' ? [...keys.groups, 'options', definitionId, fieldId] : keys.options(definitionId, fieldId);
 
 /** A drop down's options (directory-search drop downs in list mode: up to their limit). */
-export const useFieldOptions = (definitionId: string, fieldId: string, enabled: boolean) =>
-  useQuery({
-    queryKey: keys.options(definitionId, fieldId),
-    queryFn: () => api.get<OptionPage>(optionsUrl(definitionId, fieldId)),
+export const useFieldOptions = (definitionId: string, fieldId: string, enabled: boolean) => {
+  const source = useContext(OptionsSourceContext);
+  return useQuery({
+    queryKey: optionsKey(source, definitionId, fieldId),
+    queryFn: () => api.get<OptionPage>(optionsUrl(source, definitionId, fieldId)),
     enabled,
     staleTime: 30_000,
   });
+};
 
 /** Options matching typed text, searched in the directory. Keeps the previous results while typing. */
-export const useOptionSearch = (definitionId: string, fieldId: string, q: string, enabled: boolean) =>
-  useQuery({
-    queryKey: [...keys.options(definitionId, fieldId), 'q', q],
-    queryFn: () => api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}${qs({ q })}`),
+export const useOptionSearch = (definitionId: string, fieldId: string, q: string, enabled: boolean) => {
+  const source = useContext(OptionsSourceContext);
+  return useQuery({
+    queryKey: [...optionsKey(source, definitionId, fieldId), 'q', q],
+    queryFn: () => api.get<OptionPage>(`${optionsUrl(source, definitionId, fieldId)}${qs({ q })}`),
     enabled,
     staleTime: 30_000,
     placeholderData: (prev) => prev,
   });
+};
 
 /** Labels (and descriptions) of stored values, looked up without loading every option. */
-const optionLabelsQuery = (definitionId: string, fieldId: string, values: string[]) => ({
-  queryKey: [...keys.options(definitionId, fieldId), 'values', [...values].sort()],
+const optionLabelsQuery = (source: OptionsSource, definitionId: string, fieldId: string, values: string[]) => ({
+  queryKey: [...optionsKey(source, definitionId, fieldId), 'values', [...values].sort()],
   queryFn: () => {
     const p = new URLSearchParams();
     values.forEach((v) => p.append('value', v));
-    return api.get<OptionPage>(`${optionsUrl(definitionId, fieldId)}?${p.toString()}`);
+    return api.get<OptionPage>(`${optionsUrl(source, definitionId, fieldId)}?${p.toString()}`);
   },
   staleTime: 60_000,
 });
 
-export const useOptionLabels = (definitionId: string, fieldId: string, values: string[], enabled: boolean) =>
-  useQuery({ ...optionLabelsQuery(definitionId, fieldId, values), enabled: enabled && values.length > 0 });
+export const useOptionLabels = (definitionId: string, fieldId: string, values: string[], enabled: boolean) => {
+  const source = useContext(OptionsSourceContext);
+  return useQuery({ ...optionLabelsQuery(source, definitionId, fieldId, values), enabled: enabled && values.length > 0 });
+};
 
 /** Values per label request in useFieldLabels (keeps the query string short). */
 const LABELS_PER_REQUEST = 50;
@@ -217,7 +243,7 @@ export function useFieldLabels(definitionId: string, wanted: { fieldId: string; 
     return out;
   });
   const results = useQueries({
-    queries: chunks.map((c) => ({ ...optionLabelsQuery(definitionId, c.fieldId, c.values), enabled: !!definitionId })),
+    queries: chunks.map((c) => ({ ...optionLabelsQuery('directory', definitionId, c.fieldId, c.values), enabled: !!definitionId })),
   });
   const labels: Record<string, OptionItem[] | undefined> = {};
   chunks.forEach((c, i) => {
@@ -557,14 +583,25 @@ export function useJobMutations() {
  * the job computing it (202). While the job runs, {@code job} reports its progress; when it
  * succeeds its result replaces the pending answer in the cache, and the job is marked seen (this
  * page showed it, so the global notifier stays quiet).
+ *
+ * <p>With {@code keep}, an answer stays as it is until {@code refresh} is called, also while no
+ * page shows it: coming back to the page shows it again instead of asking the server to compute it
+ * once more. For the pages with a Refresh button and a bounded number of keys (not the explorer's
+ * ad-hoc requests). A pending answer is never kept: the page asks again and joins the job, or
+ * starts over if the job is gone.
  */
-export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise<T | PendingResponse>, opts: { enabled?: boolean; staleTime?: number } = {}) {
+export function useBackgroundQuery<T>(
+  queryKey: QueryKey,
+  fetcher: () => Promise<T | PendingResponse>,
+  opts: { enabled?: boolean; staleTime?: number; keep?: boolean } = {},
+) {
   const qc = useQueryClient();
   const query = useQuery<T | PendingResponse>({
     queryKey,
     queryFn: fetcher,
     enabled: opts.enabled ?? true,
-    staleTime: opts.staleTime ?? 30_000,
+    staleTime: opts.keep ? (q) => (q.state.data === undefined || isPending(q.state.data) ? 0 : Infinity) : (opts.staleTime ?? 30_000),
+    ...(opts.keep ? { gcTime: Infinity } : {}),
     placeholderData: (prev) => prev,
     retry: false,
   });
@@ -602,6 +639,8 @@ export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise
     error: query.error ?? jobError,
     isLoading: query.isLoading,
     isFetching: query.isFetching || (!!current && jobActive(current)),
+    /** When the answer shown was received (0 while there is none). */
+    updatedAt: data === undefined ? 0 : query.dataUpdatedAt,
     /** Recompute on the server (bypassing caches); the answer may again be a job. */
     refresh: async (fetchFresh: () => Promise<T | PendingResponse>) => {
       const r = await fetchFresh();
@@ -614,7 +653,10 @@ export function useBackgroundQuery<T>(queryKey: QueryKey, fetcher: () => Promise
 // Metrics
 // ---------------------------------------------------------------------------
 
-/** Results are cached on the server for a minute; "refresh" recomputes them. */
+/**
+ * Metric results stay on the page until the user refreshes them: visiting a page again does not
+ * recompute it. "refresh" recomputes on the server, bypassing its cache.
+ */
 const withRefresh = (url: string, refresh: boolean) => (refresh ? `${url}${url.includes('?') ? '&' : '?'}refresh=true` : url);
 
 export const useMetricSources = () =>
@@ -622,12 +664,12 @@ export const useMetricSources = () =>
 
 const summaryUrl = (refresh = false) => withRefresh('/api/metrics/summary', refresh);
 export const useMetricSummary = () =>
-  useBackgroundQuery<DirectorySummaryRow[]>(keys.metricSummary, () => api.get(summaryUrl()));
+  useBackgroundQuery<DirectorySummaryRow[]>(keys.metricSummary, () => api.get(summaryUrl()), { keep: true });
 export const fetchSummary = (refresh: boolean) => api.get<DirectorySummaryRow[] | PendingResponse>(summaryUrl(refresh));
 
 const overviewUrl = (id: string, refresh = false) => withRefresh(`/api/metrics/overview/${encodeURIComponent(id)}`, refresh);
 export const useOverview = (id: string | undefined) =>
-  useBackgroundQuery<OverviewResponse>(keys.overview(id ?? ''), () => api.get(overviewUrl(id!)), { enabled: !!id });
+  useBackgroundQuery<OverviewResponse>(keys.overview(id ?? ''), () => api.get(overviewUrl(id!)), { enabled: !!id, keep: true });
 export const fetchOverview = (id: string, refresh: boolean) => api.get<OverviewResponse | PendingResponse>(overviewUrl(id, refresh));
 
 export const useDashboards = () =>
@@ -643,7 +685,7 @@ export const useDashboard = (id: string | undefined) =>
 type DashboardResults = { results: Record<string, MetricOutcome> };
 const dashboardUrl = (id: string, refresh = false) => withRefresh(`/api/metrics/dashboards/${encodeURIComponent(id)}/results`, refresh);
 export const useDashboardResults = (id: string | undefined, enabled = true) =>
-  useBackgroundQuery<DashboardResults>(keys.dashboardResults(id ?? ''), () => api.get(dashboardUrl(id!)), { enabled: !!id && enabled });
+  useBackgroundQuery<DashboardResults>(keys.dashboardResults(id ?? ''), () => api.get(dashboardUrl(id!)), { enabled: !!id && enabled, keep: true });
 export const fetchDashboardResults = (id: string, refresh: boolean) => api.get<DashboardResults | PendingResponse>(dashboardUrl(id, refresh));
 
 /**
@@ -666,14 +708,21 @@ export interface DashboardInput {
 
 export function useDashboardMutations() {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['metrics'] });
+  // Only what the change touches: the other pages keep the results they show (see withRefresh).
+  const changed = (id?: string) => {
+    void qc.invalidateQueries({ queryKey: keys.dashboards });
+    if (id) {
+      void qc.invalidateQueries({ queryKey: keys.dashboard(id) });
+      void qc.invalidateQueries({ queryKey: keys.dashboardResults(id) });
+    }
+  };
   return {
-    create: useMutation({ mutationFn: (d: DashboardInput) => api.post<Dashboard>('/api/admin/dashboards', d), onSuccess: invalidate }),
+    create: useMutation({ mutationFn: (d: DashboardInput) => api.post<Dashboard>('/api/admin/dashboards', d), onSuccess: () => changed() }),
     update: useMutation({
       mutationFn: ({ id, ...d }: DashboardInput & { id: string }) => api.put<Dashboard>(`/api/admin/dashboards/${encodeURIComponent(id)}`, d),
-      onSuccess: invalidate,
+      onSuccess: (_, { id }) => changed(id),
     }),
-    remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/dashboards/${encodeURIComponent(id)}`), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (id: string) => api.del(`/api/admin/dashboards/${encodeURIComponent(id)}`), onSuccess: (_, id) => changed(id) }),
   };
 }
 
@@ -870,6 +919,10 @@ export const downloadMembers = (definitionId: string, dn: string, format: 'csv' 
   download(`/api/directories/${encodeURIComponent(definitionId)}/members/export?${dnParam(dn)}${attribute ? `&attribute=${encodeURIComponent(attribute)}` : ''}&format=${format}`,
     `members.${format}`);
 
+/** Download a group's members (name, login, e-mail, DN, end date) as CSV, for the group's owners. The server records the export. */
+export const downloadGroupMembers = (definitionId: string, dn: string) =>
+  download(`/api/groups/${encodeURIComponent(definitionId)}/members/export?${dnParam(dn)}`, 'members.csv');
+
 /** Failed polls in a row (a replica restarting, a proxy's 502) jobResult rides out before giving up. */
 const JOB_POLL_FAILURES = 10;
 
@@ -1013,6 +1066,32 @@ export const useGroupRequestsFor = (definitionId: string, dn: string, enabled: b
     enabled,
   });
 
+/** The organizational units the user owns, where they may create groups (needs the directory editor's license). */
+export const useGroupContainers = (enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'containers'],
+    queryFn: () => api.get<GroupContainer[]>('/api/groups/containers'),
+    enabled,
+    staleTime: 30_000,
+  });
+
+/** The form of a new group in a directory, for those who own one of its organizational units. */
+export const useNewGroupForm = (definitionId: string | undefined) =>
+  useQuery({
+    queryKey: [...keys.groups, 'new-group-form', definitionId],
+    queryFn: () => api.get<NewGroupForm>(`/api/groups/${encodeURIComponent(definitionId!)}/group/form`),
+    enabled: !!definitionId,
+  });
+
+/** A page of the group's past requests, for those who manage it. */
+export const useGroupHistory = (definitionId: string, dn: string, page: number, enabled: boolean) =>
+  useQuery({
+    queryKey: [...keys.groups, 'group-history', definitionId, dn, page],
+    queryFn: () => api.get<GroupRequestHistory>(`${groupUrl(definitionId, 'group/history', dn)}&${qs({ page }).slice(1)}`),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+
 /** `mine`: the user's requests; `review`: open ones they may decide; `decided`: the ones they decided. */
 export const useAccessRequests = (scope: 'mine' | 'review' | 'decided') =>
   useQuery({ queryKey: [...keys.groups, 'requests', scope], queryFn: () => api.get<AccessRequestView[]>(`/api/groups/requests?scope=${scope}`) });
@@ -1033,25 +1112,70 @@ export function useGroupMutations() {
     // Entry pages of the group show its members too.
     qc.invalidateQueries({ queryKey: ['entry'] });
   };
+  // A group that is new or gone: the directory's own lists show it too.
+  const listsChanged = () => {
+    refresh();
+    qc.invalidateQueries({ queryKey: ['entries'] });
+  };
   return {
+    /** Creates a group directly in an organizational unit the user owns, from the directory's form. */
+    create: useMutation({
+      mutationFn: (v: { definitionId: string; container: string; values: Values }) =>
+        api.post<CreatedGroup>(`/api/groups/${encodeURIComponent(v.definitionId)}/group`, { container: v.container, values: v.values }),
+      onSuccess: listsChanged,
+    }),
+    /** Deletes a group, for an owner of the organizational unit it is directly in. */
+    remove: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string }) => api.del(groupUrl(v.definitionId, 'group', v.dn)),
+      onSuccess: listsChanged,
+    }),
     request: useMutation({
-      mutationFn: (v: { definitionId: string; dn: string; reason?: string }) =>
-        api.post<AccessRequest>(groupUrl(v.definitionId, 'requests', v.dn), { reason: v.reason || undefined }),
+      mutationFn: (v: { definitionId: string; dn: string; reason?: string; until?: string }) =>
+        api.post<AccessRequest>(groupUrl(v.definitionId, 'requests', v.dn), { reason: v.reason || undefined, until: v.until || undefined }),
       onSuccess: refresh,
     }),
     cancel: useMutation({ mutationFn: (id: string) => api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(id)}/cancel`), onSuccess: refresh }),
     decide: useMutation({
-      mutationFn: (v: { id: string; approve: boolean; note?: string }) =>
-        api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(v.id)}/${v.approve ? 'approve' : 'reject'}`, { note: v.note || undefined }),
+      mutationFn: (v: { id: string; approve: boolean; note?: string; until?: string }) =>
+        api.post<AccessRequest>(`/api/groups/requests/${encodeURIComponent(v.id)}/${v.approve ? 'approve' : 'reject'}`, {
+          note: v.note || undefined,
+          until: (v.approve && v.until) || undefined,
+        }),
+      onSuccess: refresh,
+    }),
+    join: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'join', v.dn)),
+      onSuccess: refresh,
+    }),
+    /** Approves or rejects several requests with one note; the answer says what was decided and what was not. */
+    decideMany: useMutation({
+      mutationFn: (v: { ids: string[]; approve: boolean; note?: string }) =>
+        api.post<AccessDecisions>('/api/groups/requests/decide', { ids: v.ids, approve: v.approve, note: v.note || undefined }),
       onSuccess: refresh,
     }),
     leave: useMutation({
       mutationFn: (v: { definitionId: string; dn: string }) => api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'leave', v.dn)),
       onSuccess: refresh,
     }),
-    members: useMutation({
+    owners: useMutation({
       mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[] }) =>
-        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove }),
+        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'owners', v.dn), { add: v.add, remove: v.remove }),
+      onSuccess: refresh,
+    }),
+    members: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; add: string[]; remove: string[]; until?: string }) =>
+        api.post<MembershipChangeResult>(groupUrl(v.definitionId, 'members', v.dn), { add: v.add, remove: v.remove, until: v.until || undefined }),
+      onSuccess: refresh,
+    }),
+    /** Looks up a pasted list of people (logins, e-mail addresses or DNs) before adding them. */
+    resolvePeople: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; lines: string[] }) =>
+        api.post<GroupPeopleResolved>(groupUrl(v.definitionId, 'people/resolve', v.dn), { lines: v.lines }),
+    }),
+    /** Sets, changes or (without `until`) clears a member's end date. */
+    memberUntil: useMutation({
+      mutationFn: (v: { definitionId: string; dn: string; member: string; until?: string }) =>
+        api.post<GroupMember>(groupUrl(v.definitionId, 'members/until', v.dn), { member: v.member, until: v.until || undefined }),
       onSuccess: refresh,
     }),
   };

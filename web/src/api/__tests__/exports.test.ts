@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { downloadEntries, downloadMembers } from '../hooks';
+import { downloadEntries, downloadGroupMembers, downloadMembers } from '../hooks';
 
 interface Saved {
   name: string;
@@ -48,6 +48,17 @@ describe('exports', () => {
     expect(init?.method).toBe('POST');
     expect((init?.headers as Record<string, string>)['X-DSP-Request']).toBe('1');
     expect(saved).toEqual([{ name: 'members.ldif' }]);
+  });
+
+  it('posts the owners\' export of a group\'s members', async () => {
+    const { fetchMock, saved } = setUp(file('name,login,mail,dn,until\r\n', 'attachment; filename="engineering-members-2026-11-25.csv"', { 'X-DSP-Export-Count': '3' }));
+    const r = await downloadGroupMembers('def-groups', 'cn=eng,ou=groups,dc=x');
+    expect(r).toEqual({ count: 3, truncated: false });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/groups/def-groups/members/export?dn=cn%3Deng%2Cou%3Dgroups%2Cdc%3Dx');
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>)['X-DSP-Request']).toBe('1');
+    expect(saved).toEqual([{ name: 'engineering-members-2026-11-25.csv' }]);
   });
 
   it('reports the server error and saves nothing', async () => {

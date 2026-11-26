@@ -252,6 +252,19 @@ export interface GroupAccess {
   requestFilter?: string;
   requireReason: boolean;
   allowLeave: boolean;
+  /** A group's owners may add and remove its owners on the group page (default: off). */
+  ownersManageOwners?: boolean;
+  /** Days after which an open request nobody answered is closed as expired (none or 0: never). */
+  requestExpiryDays?: number;
+  /** Groups matching this LDAP filter (and taking requests) are joined at once, without approval. */
+  openFilter?: string;
+  /** The longest membership the portal grants, in days (none: no limit, an end date is optional). */
+  maxMembershipDays?: number;
+  /**
+   * The DN-valued attribute of an organizational unit (or other container) naming its owners, who
+   * create and delete the groups directly in it (none: nobody does; there is no default).
+   */
+  containerOwnerAttribute?: string;
 }
 
 export interface GroupDirectory {
@@ -261,6 +274,8 @@ export interface GroupDirectory {
   icon?: string;
   requireReason: boolean;
   allowLeave: boolean;
+  /** The longest membership the portal grants here, in days (none: no limit). */
+  maxMembershipDays?: number | null;
 }
 
 export interface GroupSummary {
@@ -273,7 +288,11 @@ export interface GroupSummary {
   owner: boolean;
   canManage: boolean;
   requestable: boolean;
+  /** Can be joined at once, without approval. */
+  open: boolean;
   pendingRequestId?: string;
+  /** The last day (`yyyy-MM-dd`, UTC) of the user's membership, when it was granted for a limited time. */
+  memberUntil?: string | null;
 }
 
 export interface GroupList {
@@ -299,17 +318,62 @@ export interface GroupDetail {
   allowLeave: boolean;
   /** Open requests (for those who manage the group). */
   pendingRequests: number;
+  /** The viewer may add and remove the group's owners. */
+  canManageOwners: boolean;
+  /** The longest membership the portal grants here, in days (none: no limit). */
+  maxMembershipDays?: number | null;
+  /** The viewer owns the organizational unit the group is directly in, and may delete the group. */
+  canDelete: boolean;
+}
+
+/** An organizational unit (or other container) the user owns: they may create groups directly in it. */
+export interface GroupContainer {
+  definitionId: string;
+  definitionName: string;
+  dn: string;
+  name: string;
+}
+
+/**
+ * The form of a new group, for the owner of an organizational unit. `prefill`: the values (by
+ * attribute, lower case) the group gets unless the creator gives others: the creator as its
+ * owner and, where a member is required, its first member.
+ */
+export interface NewGroupForm {
+  form: FormDefinition;
+  prefill: Record<string, string[]>;
+}
+
+export interface CreatedGroup {
+  definitionId: string;
+  dn: string;
+  name: string;
+}
+
+/** A member as the group's owners see it: `until` is the membership's last day (`yyyy-MM-dd`, UTC), if it has one. */
+export interface GroupMember extends GroupPerson {
+  until?: string | null;
+}
+
+/** A pasted list of people, looked up for a group's owners before they add them. */
+export interface GroupPeopleResolved {
+  /** Lines that name one person: `value` is what the member attribute holds; `member`: already in the group. */
+  found: { line: string; value: string; dn?: string; name: string; member: boolean }[];
+  /** Lines nobody matches. */
+  notFound: string[];
+  /** Lines several people match, with their names (the first few). */
+  ambiguous: { line: string; matches: string[] }[];
 }
 
 export interface GroupMemberPage {
-  items: GroupPerson[];
+  items: GroupMember[];
   total: number;
   page: number;
   pageSize: number;
   partial: boolean;
 }
 
-export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type AccessRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired';
 
 export interface AccessRequest {
   id: string;
@@ -330,6 +394,12 @@ export interface AccessRequest {
   /** Governed mode: the request's id in the governance console, and its state there as last read. */
   governanceId?: string;
   governanceState?: string;
+  /** For an expired request: the days it waited without an answer. */
+  expiredAfterDays?: number;
+  /** The last day (`yyyy-MM-dd`, UTC) of the access asked for; none: no end asked. */
+  until?: string;
+  /** The end date an approval gave the membership; none: no end. */
+  grantedUntil?: string;
 }
 
 export interface AccessRequestView {
@@ -338,6 +408,21 @@ export interface AccessRequestView {
   canDecide: boolean;
   /** Governed mode: where the request is followed in the governance console. */
   governanceUrl?: string;
+}
+
+/** A page of a group's past requests (decided, withdrawn, expired), newest first. */
+export interface GroupRequestHistory {
+  items: AccessRequestView[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** Several requests decided together: each on its own, with the reason for those that were not. */
+export interface AccessDecisions {
+  results: { id: string; ok: boolean; status?: AccessRequestStatus | null; error?: string | null; code?: number | null }[];
+  decided: number;
+  failed: number;
 }
 
 export interface GroupRequestSummary {

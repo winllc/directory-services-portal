@@ -116,11 +116,22 @@ public class GovernanceClient {
 
   /** Asks for {@code entitlement} on behalf of {@code login}, for themselves. */
   public Remote submit(String login, String entitlement, String reason) {
+    return submit(login, entitlement, reason, null);
+  }
+
+  /**
+   * As above, for access until the end of {@code until} (a day, UTC, as {@code yyyy-MM-dd}; null:
+   * no end asked): the item ends at the start of the next day.
+   */
+  public Remote submit(String login, String entitlement, String reason, String until) {
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("on_behalf_of", login);
     body.put("source", "dsp");
     body.put("reason", reason);
-    body.put("items", List.of(Map.of("entitlement_id", entitlement)));
+    Map<String, Object> item = new LinkedHashMap<>();
+    item.put("entitlement_id", entitlement);
+    if (until != null) item.put("ends_at", java.time.LocalDate.parse(until).plusDays(1) + "T00:00:00Z");
+    body.put("items", List.of(item));
     JsonNode j = call("POST", "/api/v1/governance/requests", body);
     return new Remote(j.get("id").asString(), j.path("state").asString(""), "");
   }

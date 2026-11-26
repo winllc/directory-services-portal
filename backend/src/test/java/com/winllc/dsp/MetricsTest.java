@@ -107,9 +107,10 @@ class MetricsTest extends ApiTestSupport {
     assertThat(created.get("rows").get(0).get("value").asDouble()).isEqualTo(8.0);
 
     JsonNode members = r.get("members").get("result");
-    assertThat(members.get("stats").get("count").asLong()).isEqualTo(5);
-    assertThat(members.get("stats").get("sum").asDouble()).isEqualTo(8.0);
-    assertThat(rows(members)).containsEntry("1", 3.0).containsEntry("2", 1.0).containsEntry("3", 1.0);
+    // The demo's six groups (social-club, the open one, has one member).
+    assertThat(members.get("stats").get("count").asLong()).isEqualTo(6);
+    assertThat(members.get("stats").get("sum").asDouble()).isEqualTo(9.0);
+    assertThat(rows(members)).containsEntry("1", 4.0).containsEntry("2", 1.0).containsEntry("3", 1.0);
 
     // "B-1000" is not a number: reported, not counted.
     JsonNode badges = r.get("badges").get("result");
